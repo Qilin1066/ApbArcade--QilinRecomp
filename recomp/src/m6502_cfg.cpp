@@ -112,7 +112,7 @@ Value join(const Value& a, const Value& b) {
                 value.root = -1;   // different functions of the same instance
                 break;
             }
-            value.map[i] = x >= 0 ? x : y;
+            value.map[i] = static_cast<std::int16_t>(x >= 0 ? x : y);
         }
     }
     return value;

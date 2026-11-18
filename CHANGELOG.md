@@ -11,6 +11,9 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-18
+The sound CPU. The 6502 program gets everything the T-11's has: MAME's core as the reference, a decoder verified on every opcode, control-flow analysis that resolves every jump table exactly, and a lifter whose instruction bodies are MAME's own microcode, checked against MAME's core on the game's functions (3,312 trials) and on every instruction form (23,520 trials). 0 mismatches.
+
 ### Added
 - **MAME's 6502 core as the reference sound CPU** (`third_party/mame-m6502`, BSD-3-Clause): MAME's opcode microcode (`om6502.lst`), its generator and the generated, cycle-exact `m6502.hxx`, unmodified, behind a bus interface that sees every bus cycle (opcode fetches, operand fetches, dummy reads, writes). `qilin_mame_m6502_generated` (CI, where Python is found) regenerates the sources and checks the vendored copies match.
 - **A full 6502 decoder** (`recomp/src/m6502_decoder.*`): all 256 NMOS opcodes, the undocumented ones marked as such, MAME's cycle counts and page-crossing penalties, control flow, MAME-format disassembly.

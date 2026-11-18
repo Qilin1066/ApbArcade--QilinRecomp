@@ -53,6 +53,8 @@ constexpr std::uint16_t irq_handler = 0x0400;
 constexpr std::uint16_t nmi_handler = 0x0500;
 constexpr std::uint16_t reset_handler = 0x0300;
 constexpr std::uint8_t stack = 0xf0;
+constexpr std::uint16_t pushed_word = 0x0100 + stack - 1;   // where a 2-byte push from S = stack lands
+constexpr std::uint16_t pushed_p = 0x0100 + stack - 2;      // and the P an interrupt pushes after it
 
 int failures = 0;
 int runs = 0;
@@ -241,13 +243,13 @@ void check_execution() {
                 fail(where + ": went to " + hex(run.npc, 4) + ", decoder says " + hex(expected_pc, 4));
             }
             // JSR pushes the address of its last byte; BRK skips the byte after it.
-            if (insn.flow == Flow::call && ram.get16(0x0100u + stack - 1u) != pc + 2) {
-                fail(where + ": pushed " + hex(ram.get16(0x0100u + stack - 1u), 4));
+            if (insn.flow == Flow::call && ram.get16(pushed_word) != pc + 2) {
+                fail(where + ": pushed " + hex(ram.get16(pushed_word), 4));
             }
-            if (insn.flow == Flow::brk && (ram.get16(0x0100u + stack - 1u) != pc + 2 ||
-                                           !(ram.bytes[0x0100u + stack - 2u] & m6502::flag_b))) {
-                fail(where + ": pushed " + hex(ram.get16(0x0100u + stack - 1u), 4) + " and P " +
-                     hex(ram.bytes[0x0100u + stack - 2u]));
+            if (insn.flow == Flow::brk && (ram.get16(pushed_word) != pc + 2 ||
+                                           !(ram.bytes[pushed_p] & m6502::flag_b))) {
+                fail(where + ": pushed " + hex(ram.get16(pushed_word), 4) + " and P " +
+                     hex(ram.bytes[pushed_p]));
             }
         }
     }
@@ -273,9 +275,9 @@ void check_interrupts() {
         if (cpu.npc() != (nmi ? nmi_handler : irq_handler)) {
             fail(std::string(name) + ": went to " + hex(cpu.npc(), 4));
         }
-        if (ram.get16(0x0100u + stack - 1u) != pc + 1 || (ram.bytes[0x0100u + stack - 2u] & m6502::flag_b)) {
-            fail(std::string(name) + ": pushed " + hex(ram.get16(0x0100u + stack - 1u), 4) + " and P " +
-                 hex(ram.bytes[0x0100u + stack - 2u]));
+        if (ram.get16(pushed_word) != pc + 1 || (ram.bytes[pushed_p] & m6502::flag_b)) {
+            fail(std::string(name) + ": pushed " + hex(ram.get16(pushed_word), 4) + " and P " +
+                 hex(ram.bytes[pushed_p]));
         }
         if (!(cpu.p() & m6502::flag_i)) {
             fail(std::string(name) + ": I is not set in the handler");

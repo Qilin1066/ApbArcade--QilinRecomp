@@ -132,12 +132,12 @@ int main(int argc, char** argv) {
         b.emit({0x4C, target & 0xff, target >> 8, 0x60});
     }
     b.begin();
-    const std::uint16_t indirect_target = b.pc + 3;
+    const auto indirect_target = static_cast<std::uint16_t>(b.pc + 3);
     b.emit({0x6C, 0x00, (data_area >> 8) + 1, 0x60});            // JMP ($7100) -> next RTS
     b.memory[data_area + 0x100] = static_cast<std::uint8_t>(indirect_target);
     b.memory[data_area + 0x101] = static_cast<std::uint8_t>(indirect_target >> 8);
     b.begin();
-    const std::uint16_t wrap_target = b.pc + 3;
+    const auto wrap_target = static_cast<std::uint16_t>(b.pc + 3);
     b.emit({0x6C, 0xFF, (data_area >> 8) + 2, 0x60});            // JMP ($72FF): high byte from $7200
     b.memory[data_area + 0x2FF] = static_cast<std::uint8_t>(wrap_target);
     b.memory[data_area + 0x200] = static_cast<std::uint8_t>(wrap_target >> 8);
@@ -160,7 +160,7 @@ int main(int argc, char** argv) {
     b.begin();
     {
         const std::uint16_t start = b.pc;
-        const std::uint16_t lo = data_area + 0x400, hi = data_area + 0x404;
+        constexpr std::uint16_t lo = data_area + 0x400, hi = data_area + 0x404;
         b.emit({0xA6, 0x40, 0xE0, 0x04, 0xB0, 0x0A,              // LDX $40; CPX #4; BCS out
                 0xBD, hi & 0xff, hi >> 8, 0x48,                  // LDA hi,X; PHA
                 0xBD, lo & 0xff, lo >> 8, 0x48, 0x60,            // LDA lo,X; PHA; RTS

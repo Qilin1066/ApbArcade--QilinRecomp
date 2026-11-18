@@ -77,6 +77,30 @@ Each function becomes `void fn_8288(rt::Board&, unsigned entry)` (`fn_4012_b1` f
 
 **Results:** 2,322 forms, 148,608 trials, **145,606 match, 0 mismatch**; 2,302 forms complete at least once. The other 20 can't return by construction (they overwrite the return address, use SP as the link register, or are reserved instructions, after which the analysis rightly doesn't continue). 17 s in CI. The planted `DEC` bug fails 121 trials across its forms.
 
+## The sound CPU (6502)
+The 6502 program goes through the same stages, each checked against MAME's own 6502 (`third_party/mame-m6502`).
+
+**Reference.** MAME's NMOS 6502 is cycle-exact microcode (`om6502.lst`) that MAME's `m6502make.py` turns into C++. The microcode, the generator and its output are vendored unmodified; `m6502_reference.*` runs them outside MAME's device framework behind a bus that sees every cycle. `qilin_mame_m6502_generated` regenerates the output where Python is found and checks the vendored copy.
+
+**Decoder** (`recomp/src/m6502_decoder.*`): all 256 opcodes, undocumented ones marked, MAME's cycles and page penalties, control flow, MAME-format disassembly. `qilin_m6502_decoder_check` compares every opcode with MAME's disassembler and core: cycles with and without a page crossing, branches not taken, taken and taken across a page, one bus access per cycle, the PC afterwards, and the IRQ, NMI and reset sequences.
+
+**Control flow** (`recomp/src/m6502_cfg.*`, `qilin cfg --cpu sound`). The sound program dispatches with the "RTS trick" (push a table entry, `RTS`) and hides data behind branches that are always taken, so exploration is driven by an abstract interpretation of A, X, Y, N/Z/C/V and the bytes each function has pushed:
+- Values are exact sets of bytes. Each also records the earlier value it was computed from and its value for each of that one's values, so a branch on "the class read from `$5DE3,Y`" narrows Y, and with it the handler table index and the argument read from `$5EBC,Y`. That's how the main loop's dispatcher (196 commands, 15 handler classes, then a second table per handler) is listed exactly.
+- A branch whose condition is known follows only its feasible edge; the lifted code still tests it and leaves through dispatch if it ever goes the other way.
+- Callers' registers flow into callee entries (the sequencer calls its opcode handler only with `A >= 0x80`, after `BPL`).
+- States are kept per stack depth, so an `RTS` shared by a plain return and a table jump (at `434B`) is both.
+- Discovery and interpretation are one fixpoint over states that only grow, so every edge an execution from the vectors can take is followed. Table slots that don't decode as code are left out and reported.
+
+**Result on rev 7:** 4,618 instructions (9.6 KB of the 48 KB ROM; the rest is music and speech data) in 66 functions, every table exact, nothing undocumented, no overlaps. One finding: at `42D9` an `RTS` runs with a byte still pushed, a latent bug in the game (the lifted code does what the chip does and goes through dispatch).
+
+**Lifter** (`recomp/src/m6502_lifter.*`, `qilin lift --cpu sound`). Each instruction's body is MAME's microcode for its opcode, read from the embedded `om6502.lst` and translated token by token: `m_A` becomes the local `a`, `read(...)` a board read that counts a cycle, `do_adc` MAME's helper in `recomp/runtime/m6502_rt.hpp`. Anything the microcode uses that lifted code doesn't model (BRK's interrupt flags, KIL) stops `qilin lift`. So dummy reads, page-crossing reads and decimal arithmetic are MAME's by construction. The PC after an instruction is a local the compiler folds; control then goes to the label of the successor it equals. Calls are native with checked returns, as for the T-11, and table `RTS`es go to their targets' labels.
+
+**Yielding.** The sound CPU will run inside the T-11's board service, so it must stop when its time slice ends, mid-function. At back edges, table dispatches and after at most 64 cycles of straight code, lifted 6502 code checks its cycles; the board may then take an interrupt (running the handler, which returns with `RTI`) or end the slice by setting `yielding`. The lifted code then writes its state back and every frame returns. `rt6502::dispatch` resumes later at any function start, return site, service point or table target, and a function whose caller was unwound returns to dispatch, which continues at the return site. No threads, fibers or assembly.
+
+**Difftest** (`qilin_sound_difftest`, needs your ROMs): every lifted function against MAME's core from random states (decimal mode one time in four), in random time slices of 1-400 cycles. 64 trials per function: 4,224 trials, **3,312 match, 0 mismatch**, 62 of 66 functions exercised, 238,378 yields and resumes. Set aside: 903 trials that wait on a device the test doesn't model, 9 where a random state sends the original into data. Planted bugs (decimal `ADC`, `PLA`'s dummy read) fail it.
+
+**Lifter check** (`qilin_sound_lifter_check`, in CI): 245 synthetic functions, one per instruction form, run 96 times each from edge values in slices of 1-24 cycles: **23,520 trials, 0 mismatch**, every form completes. Planted bugs in `CMP`'s carry and in page-crossing detection fail it.
+
 ## What was replaced, and why
 The first code (v0.1.0-v0.11.0) translated a reachable subset of T-11 instructions into one C++ function, with a label per instruction for every combination of PC and both bank registers. Its board models and instruction semantics were sound, but three things couldn't carry the full game:
 - **Code keyed by bank state.** A runtime bank write expanded everything after it 64 times, and both windows switching at run time would give up to 4,096 copies of the fixed ROM. Code is now keyed by its physical ROM address (`docs/roadmap-and-design-targets.md`).
@@ -86,6 +110,6 @@ The first code (v0.1.0-v0.11.0) translated a reachable subset of T-11 instructio
 The read-only scan it ran on the real ROMs (209 locations from reset, stopping at the coroutine call `JSR PC,@(SP)+` at `0x81EA`) is the starting point for the new analysis.
 
 ## Next
-1. Coverage: account for every byte of the fixed ROM and the code banks (code, table, data, unknown) with `qilin coverage`, and run the game on the reference CPU with the board models to confirm the dynamic targets (far calls through RAM pointers, bank entry slots) and seed any the analysis misses.
-2. The scheduler and the System 2 board behind `t11_rt.hpp`: scanline and VBLANK events, the watchdog, interrupts, the sound latches; then `apb` running the lifted code from reset.
-3. The 6502 sound program, decoded, lifted and checked the same way.
+1. The board and scheduler: System 2 behind `t11_rt.hpp` (scanline and VBLANK events, the watchdog, CP0-CP3, the sound latches and IN0) and the sound board behind `m6502_rt.hpp` (latch NMI, the 244 Hz IRQ, POKEY, YM2151 and TMS5220 status, the EEPROM), the sound CPU run in slices from the T-11's service.
+2. A reference run: both CPUs on MAME's cores with those board models, from reset through the start-up handshake, recording every executed address; it confirms the T-11's dynamic targets (far calls through RAM pointers, bank entry slots) and `qilin coverage` accounts for every ROM byte.
+3. `apb` running the lifted code of both CPUs from reset to the first frame.
