@@ -1,5 +1,38 @@
 # Changelog
 
+All notable changes to this project are recorded here, newest first. Past entries are never rewritten.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html), as in GBTGhoulies-Qilincomp:
+
+- **0.x.y** while the recompiler is being built. A **minor** bump (0.**x**) is a milestone, a **patch** bump (0.x.**y**) a fix.
+- **1.0.0** will be the first build that plays the game end to end at original settings.
+
+Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... VERSION ...)` in `CMakeLists.txt`, and `qilin --version` prints it. Entries before 0.12.0 predate this format and are kept as written.
+
+## [Unreleased]
+
+## [0.12.0] - 2026-11-18
+The project is rebuilt to GBTGhoulies-Qilincomp's requirements and layout. The T-11 decoder is complete and verified against MAME on every opcode word. The earlier translator is retired; `docs/recompiler-core.md` says why.
+
+### Added
+- **`qilin`**, the recompiler CLI: `qilin verify <rom-dir>` checks all 36 rev 7 files (size and SHA-1, in C++ instead of a CMake script); `qilin insns <rom-dir>` lists T-11 code at CPU addresses under chosen banks, in MAME's syntax with cycle counts.
+- **The ROM set loader** (`recomp/src/romset.*`): MAME's complete `apb` layout for all five regions (byte lanes, `ROM_CONTINUE` pieces, the inverted sprite region, zero fill), with every problem named.
+- **A full T-11 decoder** (`recomp/src/t11_decoder.*`): every instruction the chip executes, EIS and `MARK` decoded as traps, MAME's cycle counts, MAME-format disassembly.
+- **MAME's T-11 core as the reference CPU** (`third_party/mame-t11`, BSD-3-Clause): MAME's opcode files unmodified, behind a bus interface that traces every cycle and counts cycles as MAME does.
+- **`qilin_t11_decoder_check`** (CI): disassembly, length, cycles and traps of all 65,536 opcode words against MAME's disassembler and core. All agree.
+- **Board model tests against MAME's definitions:** the bank table, the palette formula on every value, and the Slapstic 110 on random bus traffic against a transcription of MAME's state machine (0 mismatches).
+- **The System 2 memory map** as code (`sys2::area`), from MAME's `main_map`, mirrors included.
+- **Design documents:** `docs/roadmap-and-design-targets.md` (the Ghoulies requirements as they apply to System 2), `docs/system2.md` (the board, from MAME), `docs/recompiler-core.md`, `docs/naming.md`.
+
+### Changed
+- **Layout and naming follow GBTGhoulies-Qilincomp:** `recomp/src`, `recomp/runtime`, `recomp/tests`, `tools/check`, `third_party`; `qilin` and `QILIN_*` in place of `apb-t11-aot` and `APB_*`.
+- **The renderer is GBTGhoulies-Qilincomp's** Vulkan 1.3 renderer (dynamic rendering, synchronization2, volk loading, validation-checked in CI), without depth and stencil, which 2D System 2 video doesn't use.
+- **Vulkan headers and volk are vendored**, so a clone builds offline; configure no longer downloads anything.
+- **CI** runs on every push, with the same six configurations as GBTGhoulies-Qilincomp.
+
+### Removed
+- **The PC-and-bank translator** (`apb-t11-aot`), its ROM and jump-table map files, and the CMake ROM verifier. Code generation is being rebuilt around physical ROM addresses (`docs/roadmap-and-design-targets.md`).
+
 ## 0.11.0
 
 - Compile MOVB, BISB, indexed byte clears, and word predecrement for the banked CPU. Read mapped ROM data using the active banks for register-based byte and word operands.

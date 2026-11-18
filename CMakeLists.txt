@@ -1,80 +1,114 @@
 cmake_minimum_required(VERSION 3.25)
-if(CMAKE_HOST_APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "Minimum macOS version for the runtime")
+# macOS: what players run (the runtime) is built for macOS 10.15, the oldest
+# macOS a Vulkan 1.3 MoltenVK runs on, so it avoids std::format, which Apple's
+# libc++ only has from 13.3. The developer tools (qilin, the tests) need 13.3
+# and are built for it.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
-project(ApbArcade-QilinComp VERSION 0.11.0 LANGUAGES CXX)
+# The single source of the version number (see CHANGELOG.md for the scheme).
+project(ApbArcadeQilinComp VERSION 0.12.0 LANGUAGES C CXX)
 
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "A 64-bit C++ toolchain is required.")
-endif()
+# ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14)
-    message(FATAL_ERROR "GCC 14 or later is required.")
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19)
-    message(FATAL_ERROR "Clang 19 or later is required.")
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
-    message(FATAL_ERROR "Xcode 16 or later is required.")
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND MSVC_VERSION LESS 1940)
-    message(FATAL_ERROR "Visual Studio 2022 17.10 or later is required.")
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "A 64-bit toolchain is required: 32-bit hosts are out of scope")
 endif()
 
-option(APB_WERROR "Treat project warnings as errors" OFF)
+# Minimum compilers for the C++23 language and library features we use:
+# GCC 14, Clang 19, Xcode 16 (AppleClang 16), Visual Studio 2022 17.10
+# (std::expected, std::print, std::ranges::to, std::string::contains).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14)
+    message(FATAL_ERROR "GCC ${CMAKE_CXX_COMPILER_VERSION} is too old: C++23 <print> needs GCC 14 or newer")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19)
+    # Clang 18 lacks the C++20 concepts level libstdc++ requires for std::expected.
+    message(FATAL_ERROR "Clang ${CMAKE_CXX_COMPILER_VERSION} is too old: needs Clang 19 or newer")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
+    message(FATAL_ERROR "AppleClang ${CMAKE_CXX_COMPILER_VERSION} is too old: needs Xcode 16 or newer")
+elseif(MSVC AND MSVC_VERSION LESS 1940)
+    message(FATAL_ERROR "MSVC ${MSVC_VERSION} is too old: needs Visual Studio 2022 17.10 or newer")
+endif()
+
+option(QILIN_WERROR "Treat warnings in our own code as errors" OFF)
+
+# ---- Warnings for our own targets ----
+add_library(qilin_warnings INTERFACE)
 if(MSVC)
-    add_compile_options(/W4 /permissive- /utf-8)
-    if(APB_WERROR)
-        add_compile_options(/WX)
+    target_compile_options(qilin_warnings INTERFACE /W4 /permissive- /utf-8 /Zc:__cplusplus /Zc:preprocessor)
+    # fopen/strerror etc. are standard C++; MSVC's "use the _s variants" advice is not.
+    target_compile_definitions(qilin_warnings INTERFACE _CRT_SECURE_NO_WARNINGS)
+    if(QILIN_WERROR)
+        target_compile_options(qilin_warnings INTERFACE /WX)
     endif()
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic)
-    if(APB_WERROR)
-        add_compile_options(-Werror)
+    target_compile_options(qilin_warnings INTERFACE -Wall -Wextra -Wpedantic -Wshadow)
+    if(QILIN_WERROR)
+        target_compile_options(qilin_warnings INTERFACE -Werror)
     endif()
 endif()
 
-include(CTest)
-option(APB_BUILD_VULKAN_PROBE "Build the Vulkan 1.3 offscreen render probe" ON)
-option(APB_TEST_VULKAN "Run the Vulkan probe with CTest on this machine" OFF)
-
-add_library(apb_t11_state INTERFACE)
-target_include_directories(apb_t11_state INTERFACE "${PROJECT_SOURCE_DIR}/include")
-target_compile_features(apb_t11_state INTERFACE cxx_std_23)
-
-if(NOT CMAKE_CROSSCOMPILING)
-    add_executable(apb-t11-aot tools/t11_aot.cpp tools/t11_image.cpp)
-    target_link_libraries(apb-t11-aot PRIVATE apb_t11_state)
-    target_compile_definitions(apb-t11-aot PRIVATE APB_VERSION="${PROJECT_VERSION}")
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS 13.3)
-        # Apple's libc++ exposes std::format from macOS 13.3.
-        target_compile_options(apb-t11-aot PRIVATE -mmacosx-version-min=13.3)
-        target_link_options(apb-t11-aot PRIVATE -mmacosx-version-min=13.3)
+# Developer tools on macOS: macOS 13.3 or later (std::format).
+function(qilin_tool target)
+    if(APPLE)
+        target_compile_options(${target} PRIVATE -mmacosx-version-min=13.3)
+        target_link_options(${target} PRIVATE -mmacosx-version-min=13.3)
     endif()
-    if(BUILD_TESTING)
-        add_subdirectory(tests)
-    endif()
+endfunction()
+
+# ---- Runtime headers the generated code includes (board devices, CPU state) ----
+add_library(qilin_runtime INTERFACE)
+target_include_directories(qilin_runtime INTERFACE recomp/runtime)
+
+# ---- Recompiler core ----
+add_library(qilin_core STATIC
+    recomp/src/romset.cpp
+    recomp/src/t11_decoder.cpp
+)
+target_include_directories(qilin_core PUBLIC recomp/src)
+target_link_libraries(qilin_core PUBLIC qilin_runtime PRIVATE qilin_warnings)
+qilin_tool(qilin_core)
+
+add_executable(qilin recomp/src/main.cpp)
+target_link_libraries(qilin PRIVATE qilin_core qilin_warnings)
+target_compile_definitions(qilin PRIVATE QILIN_VERSION="${PROJECT_VERSION}")
+qilin_tool(qilin)
+
+# ---- Tests (no game files needed) ----
+enable_testing()
+add_executable(qilin_tests recomp/tests/tests.cpp)
+target_link_libraries(qilin_tests PRIVATE qilin_core qilin_warnings)
+qilin_tool(qilin_tests)
+add_test(NAME qilin_tests COMMAND qilin_tests)
+
+# ---- Reference: MAME's T-11 core and disassembler (BSD-3-Clause), for checks only ----
+add_library(qilin_mame_t11 STATIC third_party/mame-t11/t11_reference.cpp third_party/mame-t11/t11dasm.cpp)
+target_include_directories(qilin_mame_t11 PUBLIC third_party/mame-t11 tools/check/mame_shim)
+if(MSVC)
+    target_compile_options(qilin_mame_t11 PRIVATE /W0)
+else()
+    target_compile_options(qilin_mame_t11 PRIVATE -w)
 endif()
+qilin_tool(qilin_mame_t11)
 
-if(APB_BUILD_VULKAN_PROBE)
-    include(FetchContent)
-    # Use the C headers without configuring the upstream C++ module target.
-    FetchContent_Declare(
-        VulkanHeaders
-        URL https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/29f979ee5aa58b7b005f805ea8df7a855c39ff37
-        URL_HASH SHA256=dfc96c55d7e481c42b917706ff52205d47c0f0957c8c2a60766ee781f16d18bd
-        TLS_VERIFY ON
-        SOURCE_SUBDIR include
-    )
-    FetchContent_MakeAvailable(VulkanHeaders)
-    add_executable(apb-vulkan-probe src/vulkan_probe.cpp)
-    target_compile_definitions(apb-vulkan-probe PRIVATE VK_NO_PROTOTYPES)
-    target_include_directories(apb-vulkan-probe SYSTEM PRIVATE "${vulkanheaders_SOURCE_DIR}/include")
-    target_link_libraries(apb-vulkan-probe PRIVATE ${CMAKE_DL_LIBS})
-    if(BUILD_TESTING AND APB_TEST_VULKAN AND NOT CMAKE_CROSSCOMPILING)
-        add_test(NAME vulkan.offscreen COMMAND apb-vulkan-probe)
-        set_tests_properties(vulkan.offscreen PROPERTIES TIMEOUT 30 FAIL_REGULAR_EXPRESSION "Validation Error|VUID-")
-    endif()
-elseif(APB_TEST_VULKAN)
-    message(FATAL_ERROR "APB_TEST_VULKAN requires APB_BUILD_VULKAN_PROBE.")
-endif()
+# The decoder against MAME on all 65,536 opcode words.
+add_executable(qilin_t11_decoder_check tools/check/t11_decoder_check.cpp)
+target_link_libraries(qilin_t11_decoder_check PRIVATE qilin_core qilin_mame_t11 qilin_warnings)
+qilin_tool(qilin_t11_decoder_check)
+add_test(NAME qilin_t11_decoder_check COMMAND qilin_t11_decoder_check)
+
+# ---- Renderer: Vulkan 1.3, loaded at run time through volk (no SDK or link-time Vulkan needed) ----
+add_library(qilin_volk STATIC third_party/volk/volk.c)
+target_include_directories(qilin_volk PUBLIC third_party/volk third_party/vulkan-headers/include)
+target_link_libraries(qilin_volk PUBLIC ${CMAKE_DL_LIBS})
+add_library(qilin_gfx STATIC recomp/runtime/gfx/renderer.cpp recomp/runtime/gfx/png.cpp)
+target_include_directories(qilin_gfx PUBLIC recomp/runtime/gfx)
+target_link_libraries(qilin_gfx PUBLIC qilin_volk PRIVATE qilin_warnings)
+add_executable(qilin_gfx_tests recomp/runtime/gfx/gfx_tests.cpp)
+target_link_libraries(qilin_gfx_tests PRIVATE qilin_gfx qilin_warnings)
+add_test(NAME qilin_gfx_tests COMMAND qilin_gfx_tests)
+set_tests_properties(qilin_gfx_tests PROPERTIES SKIP_RETURN_CODE 77)

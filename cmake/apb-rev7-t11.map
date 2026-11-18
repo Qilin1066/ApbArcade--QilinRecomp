@@ -1,6 +1,0 @@
-# Physical byte offset | even byte lane | odd byte lane
-# APB arcade rev 7. The verifier in this directory checks the ROM digests.
-008000 | 136051-2126.7l | 136051-2127.7n
-010000 | 136051-7128.6f | 136051-7129.6n
-030000 | 136051-1130.6j | 136051-1131.6p
-070000 | 136051-1132.6l | 136051-1133.6s

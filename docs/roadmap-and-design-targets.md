@@ -1,0 +1,53 @@
+# APB — Recomp Roadmap & Design Targets
+
+The requirements and scope are those of GBTGhoulies-Qilincomp, applied to an arcade board instead of an Xbox. Where the hardware differs, this document says how the same principle applies.
+
+**Guiding principle: efficiency and reliability come first.** Every design choice is judged on whether it makes the game cheaper to run on low-end hardware and whether it fails loudly and predictably instead of silently misbehaving.
+
+## Targets
+- **Game:** *APB — All Points Bulletin* (Atari Games, 1987), the rev 7 ROM set (MAME `apb`). The board is Atari System 2: a DEC T-11 main CPU at 10 MHz, a 6502 sound CPU at 1.79 MHz, a YM2151, two POKEYs, a TMS5220 for speech, Slapstic 137412-110 video-memory banking, and a portrait (ROT270) 512 × 384 raster. Controls are a steering wheel and pedals, read through an ADC0809.
+- **Platforms:** 64-bit Windows, Linux and macOS (Intel and Apple Silicon), on x86-64 or ARM64, with Vulkan. See *Hardware scope* below.
+- **Language:** **C++23** throughout (recompiler, generated code and runtime). Minimum compilers: GCC 14, Clang 19, Xcode 16, Visual Studio 2022 17.10.
+- **Graphics API:** **Vulkan 1.3, and only Vulkan**, with only the optional features and limits that Mesa's v3dv driver on a Pi 4 provides, so one render path works everywhere (MoltenVK on macOS). See *Vulkan baseline* below.
+- **Reference:** MAME running the original ROMs is ground truth for behaviour, timing, video and audio. Its source is the specification wherever the hardware documentation is silent, and its T-11 core is vendored (`third_party/mame-t11`) as the reference CPU for every check.
+- **Enhancement example target:** 3440 × 1440 (21:9) at 144 Hz, without changing game timing.
+
+## Architecture
+- **Game code:** static recompilation, T-11 and 6502 machine code → **generated C++**, compiled ahead of time for each target. No interpreter, no JIT. Hand-written C++ can replace a lifted function through an override table, and is checked against the lifted original.
+- **Decoder:** our own, table-driven, for the full T-11 instruction set (EIS and MARK decode, and trap as on the chip). **Verified against MAME's disassembler and core on all 65,536 opcode words** in CI: disassembly, length, cycle count and traps (`qilin_t11_decoder_check`). The 6502 gets the same treatment.
+- **Code identity:** a code location is its **physical ROM address** (an offset in MAME's `maincpu` region), never a CPU address paired with the bank registers. Code in the fixed ROM exists once, whatever the banks hold; code in a bank window exists once per bank it lives in. The bank registers are runtime state. Control that enters a window from outside it dispatches on the window's current bank to the lifted code for that bank, and traps with the bank and address if there is none. (The earlier design keyed code by PC and both banks, which copied the fixed ROM up to 4,096 times.)
+- **Register model:** guest registers are host locals inside each lifted function, synced to the CPU state only at calls, returns, interrupt service points and device accesses that need them. Flags are separate bools, computed only where a liveness pass shows something reads them.
+- **Calls and returns:** `JSR` to a known target is a native C++ call; `RTS` is a native return, and the caller checks the return address it gets back. A return anywhere else (coroutines such as `JSR PC,@(SP)+`, which APB uses at `0x81EA`, or a handler that rewrites its frame) unwinds to the dispatcher, which continues at that address if it is a known entry and traps with the address otherwise. The native stack never grows with coroutine switches.
+- **Fail loudly:** an instruction that doesn't decode, an operand form the lifter doesn't handle, a computed target with no lifted code, or a bus access to an address nothing models is a diagnostic naming the instruction, its physical address and the banks — at build time where it can be known then, at run time otherwise. Never a guess.
+- **Timing:** every instruction carries MAME's cycle count. Lifted code counts cycles in a local and services the board (scanline and VBLANK events, the sound CPU, the watchdog, interrupts) when the count runs out, at the end of a basic block or within at most a fixed number of cycles in a long straight run. Interrupts are taken at those points, as MAME takes them at the start of a timeslice, instead of being polled on every instruction.
+- **Bus effects:** reads and writes keep the T-11's bus order, including the dummy read MAME's T-11 makes before `MOV`, `CLR` and `SXT` write memory. The Slapstic watches every bus cycle (its alternate sequence starts on any address), so every access goes past it; the check is a branch on its state, folded away where the address is known not to matter.
+- **Control flow:** recursive descent from the reset vector, `JSR` targets and the interrupt vectors the game installs; jump tables sized by analysis, not declared by hand. `qilin coverage` accounts for every ROM byte as code, table, padding or unknown, and CI holds the line on unknown bytes in lifted code.
+- **Board:** the System 2 devices are native C++ (`recomp/runtime/system2.hpp`), each checked against MAME's definition. Video is rendered from the board's RAM (playfield, motion objects, alphanumerics, palette) through Vulkan, not by emulating video hardware cycle by cycle.
+- **Audio:** the 6502 program is recompiled the same way; the YM2151, POKEYs and TMS5220 are native C++ against MAME's models, mixed on a thread of their own and output through SDL3.
+- **Input:** SDL3 for keyboard and gamepads, with an analogue stick or wheel mapped to the steering ADC and triggers to the pedals; the cabinet's coin, start and service switches available. EEPROM (2804) persisted to a file.
+- **Threads:** audio mixing and Vulkan submission off the game thread.
+- **Portability rules:** no inline asm or intrinsics in the runtime; little-endian hosts; ARM64 builds from day one. The runtime avoids `std::format` (macOS 10.15); the developer tools may use it (macOS 13.3).
+
+## Hardware scope
+**Supported: 64-bit hosts with a Vulkan 1.3 driver:** Windows and Linux on x86-64 or ARM64; macOS on Intel and Apple Silicon through MoltenVK (macOS 10.15 or later for the runtime); ARM boards with Vulkan 1.3 drivers such as the Raspberry Pi 4 and newer (Mesa v3dv 24.3 or later).
+
+**Out of scope:** anything without Vulkan 1.3, and 32-bit hosts.
+
+### Vulkan baseline: 1.3
+Vulkan 1.3 core is the floor; optional features and limits come from v3dv on a Pi 4. The renderer is shared with GBTGhoulies-Qilincomp: dynamic rendering (no render pass objects), synchronization2, extended dynamic state, timeline semaphores for frame pacing. It checks what it uses at start-up and fails with a clear message rather than taking a fallback path.
+
+**Low-end reference:** a Raspberry Pi 4–class board. It is what efficiency is measured against and tested on, not a floor.
+
+## Settings, not platform branches
+Enhancements live behind a settings file with presets:
+- *Cabinet:* original 512 × 384 portrait raster, integer-scaled and letterboxed, original 60.1 Hz timing.
+- *Desktop:* larger integer scales, optional rotation, high-refresh presentation of the same game frames.
+
+## Roadmap
+1. **Foundations** ✅ (v0.12.0): ROM set verified against MAME's digests, C++23 and CI on six configurations, the vendored Vulkan 1.3 renderer, the System 2 device models checked against MAME, MAME's T-11 core vendored as the reference CPU, and a full T-11 decoder verified against MAME on every opcode word.
+2. **CPU coverage:** bank-aware analysis keyed by physical address; function discovery (reset, calls, installed vectors); jump tables by analysis; `qilin coverage`. Then the lifter (functions, locals, flag liveness, cycle counts, checked returns) and a **differential test of every lifted function against MAME's T-11 core** on random states: registers, flags, the bus trace in order, and cycles. The same for the 6502.
+3. **Native startup:** the scheduler and board services; reach the first original frame with sound and input synchronized. Record the first unsupported address or board operation on every failure.
+4. **Playable at original settings:** parity with MAME, cabinet controls, EEPROM, the device matrix; measure low-end performance before adding quality settings.
+5. **Display settings:** presets for cabinet and desktop output; integer scaling, larger outputs and high-refresh presentation against the original layout and timing.
+
+Releases are tagged `vX.Y.Z`; `1.0.0` is the first build that plays the game end to end at original settings.

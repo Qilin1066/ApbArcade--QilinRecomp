@@ -1,75 +1,80 @@
 # ApbArcade-QilinComp
 
-Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with the verified rev 7 ROM set. The project follows the Ghoulies project requirements for ahead-of-time C++23, Vulkan 1.3, low-end performance, and 64-bit portability. The runtime design calls for precompiled host code for both the DEC T‑11 main program and the 6502 sound program. ROMs, generated code, and locally built binaries stay with the user's copy. [GBTGhoulies-Qilincomp](https://github.com/Tecboy1066/GBTGhoulies-Qilincomp)
+A static recompilation of **APB — All Points Bulletin** (Atari Games, 1987, Atari System 2 arcade hardware) into portable C++23 with a Vulkan 1.3 renderer, aimed at 64-bit Windows, Linux and macOS, on x86-64 or ARM64. It follows the requirements and scope of [GBTGhoulies-Qilincomp](https://github.com/Tecboy1066/GBTGhoulies-Qilincomp): efficiency first, with a Raspberry Pi 4–class board as the reference for typical low-end hardware, not a floor; anything with a Vulkan 1.3 driver is in scope, Macs included through MoltenVK.
 
-## Current checkpoint
+> **No game data is included, and none ever will be.** You need your own copy of the rev 7 ROM set (MAME's `apb`). The tools read it from a directory you give them. `.gitignore` keeps ROMs, and anything generated from them, out of the repo.
 
-- The verifier checks the sizes and SHA‑1 digests of all 36 rev 7 files.
-- The T‑11 tool translates flat and banked System 2 test programs into C++23. CTest runs both programs natively and verifies bank switches, absolute memory operands, and build-time diagnostics.
-- Native System 2 code can strobe the watchdog through its mirrored low-byte port. The watchdog takes board-clock ticks from the host and holds a reset request when its timer expires.
-- Native code writes the IRQ enable mask and acknowledges board interrupts. An eligible IRQ saves the T‑11 stack frame and returns the handler address to the host.
-- Native word operations support register-indirect, autoincrement, indexed, and indexed-deferred operands in low RAM, palette RAM, and video RAM. A bus diagnostic reports both the instruction PC and the unsupported address.
-- The compiler resolves declared PC-relative ROM jump tables to precompiled branches. Native probes exercise dispatch, out-of-range indices, and the word operations BIT, BIC, and BIS.
-- Register-driven bank writes dispatch to precompiled paths. The native probe checks every hardware selector value and fetches the switch instruction's last operand under the old bank mapping.
-- CPU bus accesses drive the Slapstic-controlled video memory view. The synthetic probe switches views and checks that writes and byte clears reach the selected page.
-- The 256 palette words support mirrored reads and writes. The palette decoder converts the stored color and intensity fields to 8-bit RGB.
-- The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
+## Status
 
-The read-only rev 7 scan follows the startup byte loop, the sound-reset write, and two nested calls from reset. It analyzes 209 PC and bank combinations before reaching an indirect subroutine call at 0x81EA. Native tests use synthetic ROMs to verify byte lanes, ROM bank selection, sound latches, and subroutine returns. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+Roadmap step 2, **CPU coverage**, is starting on a verified foundation.
 
-The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
+| Piece | State |
+|---|---|
+| ROM set: all 36 rev 7 files, MAME's load layout for every region | ✅ size and SHA-1 checked (`qilin verify`) |
+| Reference CPU: MAME's T-11 core, vendored unmodified behind a traced bus | ✅ |
+| T-11 decoder (full instruction set, cycle counts, MAME-format disassembly) | ✅ agrees with MAME on all 65,536 opcode words: text, length, cycles and traps |
+| Board models: memory map, ROM banks, Slapstic 110, palette, interrupt latches, watchdog, sound latches | ✅ each checked against MAME's definitions |
+| Renderer: Vulkan 1.3 (shared with GBTGhoulies-Qilincomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
+| Analysis keyed by physical ROM address, coverage, lifter, differential test against MAME's core | 🔨 next (`docs/recompiler-core.md`) |
+| 6502 sound program, sound chips, video, input | to do |
 
-## Target platforms
+## Versions and changes
 
-| Platform | Target |
-| --- | --- |
-| Windows and Linux | x86‑64 and ARM64 with a Vulkan 1.3 driver |
-| Raspberry Pi 4 | 64-bit Linux and Mesa V3DV 24.3 or newer. Reference hardware for efficiency and frame pacing |
-| macOS | Intel and Apple Silicon with a Metal GPU and a Vulkan 1.3-capable MoltenVK build. The Intel runtime deployment target is macOS 10.15. The developer compiler tool uses macOS 13.3 or later for libc++ formatting |
+Releases are tagged `vX.Y.Z` on GitHub, and every release is recorded in [`CHANGELOG.md`](CHANGELOG.md). Past entries are kept, never rewritten. The version lives in one place, `project(... VERSION ...)` in `CMakeLists.txt`, and `qilin --version` prints it. While the recompiler is being built, a minor bump (0.**x**) marks a milestone and a patch bump (0.x.**y**) a fix. 1.0.0 will be the first build that plays the game.
 
-## Build and test
+## Building
 
-Use CMake 3.25 or later with GCC 14, Clang 19, Xcode 16, or Visual Studio 2022 17.10 or later. CMake fetches pinned Khronos Vulkan headers on first configure. Set `FETCHCONTENT_SOURCE_DIR_VULKANHEADERS` to an existing Vulkan-Headers checkout for an offline configure. The probe loads Vulkan at launch and builds with just the headers. On macOS set `APB_VULKAN_LIBRARY` to the installed MoltenVK library or SDK loader if it is outside the loader's search path.
+The whole project (recompiler, runtime and generated code) is **C++23**. You need CMake ≥ 3.25 and one of:
 
-~~~sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAPB_TEST_VULKAN=ON
-cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure
-~~~
+| Compiler | Minimum | Notes |
+|---|---|---|
+| GCC | 14 | Debian 13 / Raspberry Pi OS (Trixie) and Ubuntu 24.04 (`g++-14`) have it |
+| Clang | 19 | Older Clang can't use libstdc++'s `std::expected` |
+| Apple Clang | Xcode 16 | |
+| MSVC | Visual Studio 2022 17.10 | |
 
-Keep `APB_TEST_VULKAN` off on machines without a Vulkan driver. Set `APB_BUILD_VULKAN_PROBE=OFF` for a CPU-only build. On a multi-config generator, look for `apb-t11-aot` under the selected configuration directory.
+CMake stops with a clear message if the compiler is older. There are no other dependencies: the Vulkan headers and volk are vendored, and Vulkan itself is loaded at run time.
 
-Verify your unpacked ROM directory locally.
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
 
-~~~powershell
-cmake "-DROM_DIR=D:/APB Arcade Project" -P cmake/verify-roms.cmake
-~~~
+CI builds and tests with warnings as errors on Linux x64 (GCC 14 and Clang 19), Linux ARM64 (GCC 14), macOS ARM64 and x64 (the runtime built for macOS 10.15) and Windows x64 (MSVC). The renderer test skips (exit 77) on a machine without Vulkan.
 
-Translate a small flat, little-endian T‑11 image and link the output with a host runner that includes `qilin/t11.hpp`. The origin is both the load and entry address. The subset covers MOV, CMP, ADD, SUB, CLR, CLRB, INC, DEC, TST, NOP, direct JMP, relative branches, SOB, and HALT as a probe stop. Flat code accepts R0–R6 and immediate sources for data operations. The output uses C++ operations and direct native control flow. The execution budget bounds the probe.
+## Using it
 
-~~~sh
-build/apb-t11-aot --version
-build/apb-t11-aot build/tests/fixtures/Release/loop.bin 0x0200 build/loop.cpp
-~~~
+```sh
+build/qilin verify "D:/APB Arcade Project"                       # all 36 files, size and SHA-1
+build/qilin insns  "D:/APB Arcade Project" --from 8000 --to 8100 # T-11 listing (MAME syntax, cycles)
+build/qilin insns  "D:/APB Arcade Project" --banks 3,12 --from 4000 --to 4100
+```
 
-Inspect the rev 7 reset entry against the verified local ROMs.
+## Layout
 
-~~~powershell
-build/apb-t11-aot --inspect-system2 cmake/apb-rev7-t11.map "D:/APB Arcade Project" 0x8000 --jump-tables cmake/apb-rev7-jumps.map
-~~~
+| Path | What |
+|---|---|
+| `recomp/src/` | Recompiler core: `romset` (the rev 7 set), `t11_decoder`, `main` (the `qilin` CLI) |
+| `recomp/runtime/` | Runtime headers the generated code includes: `system2.hpp`, the board as the T-11 sees it |
+| `recomp/runtime/gfx/` | The renderer: Vulkan 1.3, loaded at run time |
+| `recomp/tests/` | Unit tests; they need no game files |
+| `tools/check/` | Checks against MAME: the decoder on every opcode word |
+| `third_party/` | Vendored: the Vulkan headers and volk (as in GBTGhoulies-Qilincomp) and MAME's T-11 core (the reference CPU). See `third_party/README.md` |
+| `docs/` | Design targets, the board, the recompiler's status, naming |
 
-Generate a C++23 translation unit for the banked test image. The resulting `run_system2` entry takes CPU registers and low RAM, and reports the stopping address and both bank numbers.
+## Design targets (short version)
 
-~~~sh
-build/apb-t11-aot --system2 build/tests/fixtures/Release/system2.map build/tests/fixtures/Release 0x8200 build/system2.cpp --jump-tables tests/system2-jumps.map
-~~~
+- **Efficiency and reliability come first.** Every choice is judged by whether it makes the game cheaper to run on low-end hardware, and whether it fails loudly instead of misbehaving quietly.
+- **Static recompilation, T-11 and 6502 → C++, compiled ahead of time.** No interpreter and no JIT. Hand-written C++ can override any lifted function.
+- **Code is identified by its physical ROM address**, so banked code exists once per bank, and bank registers are runtime state.
+- **Vulkan 1.3 and only Vulkan**, with the feature set of a Pi 4's v3dv driver, so one render path runs on everything. macOS runs through MoltenVK.
+- **Ground truth is MAME** running the original ROMs; its T-11 core is the reference every check runs against.
 
-Each line in a System 2 map contains a physical hexadecimal byte offset, the even byte lane filename, and the odd byte lane filename, separated by `|`. Filenames are resolved under the ROM directory. Both selector windows start at bank 0. Immediate selector writes give the compiler one successor bank. A write with a runtime value expands all 64 candidate banks for the selected window. An instruction fetch from a missing ROM entry reports its PC and banks.
-
-Each line in the optional jump-table map contains the hexadecimal address of an `ADD d(Rn),PC` instruction and a decimal entry count, separated by `|`. The compiler reads that many consecutive ROM words at the displacement in the current bank context and interprets them as offsets from the PC after the extension word. It validates each target before generating code. An out-of-range native table read reports the instruction PC, both banks, and the effective word address.
+See `docs/roadmap-and-design-targets.md` for the full design and roadmap, and `docs/system2.md` for the hardware.
 
 ## References
 
-- ROM names, sizes, digests, and board details come from the MAME Atari System 2 driver. [MAME driver](https://github.com/mamedev/mame/blob/master/src/mame/atari/atarisy2.cpp)
-- T‑11 instruction semantics come from Digital Equipment Corporation's documentation. [DCT11 User's Guide](https://www.bitsavers.org/pdf/dec/pdp11/t11/T11_UsersMan.pdf)
-- Driver capabilities depend on the installed build of Mesa or MoltenVK. [Mesa 24.3 release notes](https://docs.mesa3d.org/relnotes/24.3.0.html) · [MoltenVK 1.3.0 runtime guide](https://github.com/KhronosGroup/MoltenVK/blob/v1.3.0/Docs/MoltenVK_Runtime_UserGuide.md)
+- Board, memory map, ROM layout and devices: MAME's Atari System 2 driver ([atarisy2.cpp](https://github.com/mamedev/mame/blob/master/src/mame/atari/atarisy2.cpp), [slapstic.cpp](https://github.com/mamedev/mame/blob/master/src/mame/atari/slapstic.cpp)).
+- T-11: MAME's core ([src/devices/cpu/t11](https://github.com/mamedev/mame/tree/master/src/devices/cpu/t11)) and DEC's [DCT11 User's Guide](https://www.bitsavers.org/pdf/dec/pdp11/t11/T11_UsersMan.pdf).
+- Vulkan drivers: [Mesa 24.3](https://docs.mesa3d.org/relnotes/24.3.0.html), [MoltenVK](https://github.com/KhronosGroup/MoltenVK).

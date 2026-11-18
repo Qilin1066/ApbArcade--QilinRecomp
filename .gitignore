@@ -1,16 +1,19 @@
+# Build output
 /build/
 /build-*/
-/generated/
-/roms/
 /out/
-136051-*
 /CMakeUserPresets.json
+
+# Game data, and anything generated from it, never goes in the repository.
+/roms/
+/gen/
+136051-*
 *.bin
 *.rom
 *.zip
 *.7z
+
+# Host binaries
 *.exe
 *.obj
 *.o
-/CMakeFiles/
-/CMakeCache.txt
