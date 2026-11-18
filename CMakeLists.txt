@@ -198,3 +198,24 @@ target_include_directories(qilin_lifter_check PRIVATE tools/difftest "${QILIN_FI
 target_link_libraries(qilin_lifter_check PRIVATE qilin_core qilin_mame_t11 qilin_runtime qilin_warnings)
 qilin_tool(qilin_lifter_check)
 add_test(NAME qilin_lifter_check COMMAND qilin_lifter_check "${QILIN_FIXTURE_DIR}")
+
+# ---- The 6502 lifter against MAME's 6502 core, every instruction form (no game files; in CI) ----
+add_executable(qilin_sound_lifter_fixture tools/check/sound_lifter_fixture.cpp)
+target_link_libraries(qilin_sound_lifter_fixture PRIVATE qilin_core qilin_warnings)
+qilin_tool(qilin_sound_lifter_fixture)
+set(QILIN_SOUND_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/sound_lifter_fixture")
+set(QILIN_SOUND_FIXTURE_SOURCES "${QILIN_SOUND_FIXTURE_DIR}/sound_dispatch.cpp")
+foreach(k RANGE 0 7)
+    list(APPEND QILIN_SOUND_FIXTURE_SOURCES "${QILIN_SOUND_FIXTURE_DIR}/sound_${k}.cpp")
+endforeach()
+add_custom_command(
+    OUTPUT ${QILIN_SOUND_FIXTURE_SOURCES} "${QILIN_SOUND_FIXTURE_DIR}/sound_lifted.hpp" "${QILIN_SOUND_FIXTURE_DIR}/program.bin"
+    COMMAND qilin_sound_lifter_fixture "${QILIN_SOUND_FIXTURE_DIR}"
+    DEPENDS qilin_sound_lifter_fixture
+    VERBATIM
+)
+add_executable(qilin_sound_lifter_check tools/check/sound_lifter_check.cpp ${QILIN_SOUND_FIXTURE_SOURCES})
+target_include_directories(qilin_sound_lifter_check PRIVATE tools/difftest6502 "${QILIN_SOUND_FIXTURE_DIR}")
+target_link_libraries(qilin_sound_lifter_check PRIVATE qilin_core qilin_mame_m6502 qilin_runtime qilin_warnings)
+qilin_tool(qilin_sound_lifter_check)
+add_test(NAME qilin_sound_lifter_check COMMAND qilin_sound_lifter_check "${QILIN_SOUND_FIXTURE_DIR}")

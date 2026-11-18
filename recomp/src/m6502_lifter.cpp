@@ -219,15 +219,17 @@ void FunctionWriter::instruction(std::uint16_t pc, const m6502::Node& node) {
             if (members_.contains(target)) table_targets_.insert(target);
         }
         straight_ = 0;
-        line("switch (pc) {");
-        for (const auto target : node.table) {
-            if (members_.contains(target)) {
-                referenced_.insert(target);
-                line(std::format("case {}: goto {};", hex(target), label(target)));
+        if (std::ranges::any_of(node.table, [&](std::uint16_t t) { return members_.contains(t); })) {
+            line("switch (pc) {");
+            for (const auto target : node.table) {
+                if (members_.contains(target)) {
+                    referenced_.insert(target);
+                    line(std::format("case {}: goto {};", hex(target), label(target)));
+                }
             }
+            line("default: break;");
+            line("}");
         }
-        line("default: break;");
-        line("}");
         leave();
         break;
     case Transfer::ret:
