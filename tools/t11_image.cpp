@@ -84,6 +84,47 @@ Address parse_address(std::string_view text) {
     return static_cast<Address>(*address);
 }
 
+JumpTables read_jump_tables(const std::filesystem::path& path, const std::filesystem::path& output) {
+    if (!output.empty() && std::filesystem::exists(output) && std::filesystem::equivalent(path, output)) {
+        throw std::runtime_error("jump-table map and output must be different files");
+    }
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("cannot open jump-table map " + path.string());
+    }
+    JumpTables tables;
+    unsigned line_number = 0;
+    for (std::string storage; std::getline(in, storage);) {
+        ++line_number;
+        const auto line = trim(storage);
+        if (line.empty() || line.starts_with('#')) {
+            continue;
+        }
+        const auto bar = line.find('|');
+        if (bar == std::string_view::npos) {
+            throw std::runtime_error(std::format("jump-table map line {} must contain PC|entry count", line_number));
+        }
+        const auto pc = parse_hex(trim(line.substr(0, bar)));
+        const auto count_text = trim(line.substr(bar + 1));
+        if (!pc || *pc >= address_space_size || (*pc & 1u) != 0 || count_text.empty()) {
+            throw std::runtime_error(std::format("invalid PC or entry count in jump-table map line {}", line_number));
+        }
+        unsigned count{};
+        const auto count_end = count_text.data() + count_text.size();
+        const auto [end, error] = std::from_chars(count_text.data(), count_end, count, 10);
+        if (error != std::errc{} || end != count_end || count == 0 || count > address_space_size / 2) {
+            throw std::runtime_error(std::format("invalid entry count in jump-table map line {}", line_number));
+        }
+        if (!tables.emplace(static_cast<Address>(*pc), count).second) {
+            throw std::runtime_error(std::format("duplicate jump-table site in line {}", line_number));
+        }
+    }
+    if (!in.eof()) {
+        throw std::runtime_error("cannot read jump-table map " + path.string());
+    }
+    return tables;
+}
+
 FlatImage::FlatImage(const std::filesystem::path& path, Address origin, const std::filesystem::path& output)
     : origin_(origin), bytes_(read_bytes(path, address_space_size - origin, output)) {
     if (bytes_.size() % 2 != 0) {

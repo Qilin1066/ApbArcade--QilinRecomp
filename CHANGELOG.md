@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+- Resolve declared indexed ROM jump tables into native branches and diagnose out-of-range table accesses.
+- Compile word BIT, BIC, and BIS and test the result and condition flags in a synthetic native program.
+- Resolve four rev 7 targets at 0xF15E and advance the read-only scan to the register-sourced bank selector write at 0xF2C4.
+
 ## 0.8.0
 
 - Compile indexed-deferred T‑11 word operands with aligned pointer and data bus accesses.

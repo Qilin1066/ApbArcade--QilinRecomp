@@ -1,0 +1,3 @@
+# Instruction PC (hex) | ROM entries (decimal)
+# The startup loop initializes R5 to 3, doubles it for the index, and decrements through zero.
+F15E | 4

@@ -116,12 +116,21 @@ void write_system2(const std::filesystem::path& dir) {
         0,                       // fail: HALT
         0011676, 5,              // indexed_deferred: MOV (SP),@5(SP)
         0017601, 5,              // MOV @5(SP),R1
+        0013702, 0x0500,         // MOV @#0x0500,R2 (host-supplied test index)
+        0066207, 0x8400,         // 0x60aa: ADD 0x8400(R2),PC
+        0012702, 0xa010,         // 0x60ae: first target
+        0,                       // HALT
+        0012702, 0x8000,         // 0x60b4: second target
+        0052702, 0x0020,         // BIS #0x0020,R2
+        0042702, 0x8000,         // BIC #0x8000,R2
+        0032702, 0x8000,         // BIT #0x8000,R2
         0,                       // HALT
     };
     constexpr std::uint16_t control[]{0000137, 0x6046};
     constexpr std::uint16_t select_zero[]{0x11ad};
     constexpr std::uint16_t select_two[]{0x22bd};
     constexpr std::uint16_t constant[]{0x8122};
+    constexpr std::uint16_t jump_offsets[]{0, 6, 0xffee, 1}; // Last word lies outside the declared span.
     constexpr std::uint16_t unsupported_board[]{
         0010037, 0x1400,     // 0x8240: register value written to the bank selector
         0012737, 1, 0x1500,  // 0x8244: unsupported device write
@@ -138,6 +147,7 @@ void write_system2(const std::filesystem::path& dir) {
     write_pair(map, dir, 0x080c0, "select-two", select_two);
     write_pair(map, dir, 0x08200, "fixed ROM", fixed_rom);
     write_pair(map, dir, 0x08240, "unsupported-board", unsupported_board);
+    write_pair(map, dir, 0x08400, "jump-offsets", jump_offsets);
     write_pair(map, dir, 0x0f000, "constant", constant);
     write_pair(map, dir, 0x10000, "bank0", bank0);
     write_pair(map, dir, 0x12000, "bank1", bank1);

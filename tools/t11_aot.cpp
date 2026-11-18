@@ -28,6 +28,7 @@ struct Instruction {
     unsigned words = 1;
     std::string body;
     std::vector<Location> successors;
+    std::vector<Location> jump_table_words{};
 };
 
 std::string label(Location where) {
@@ -125,7 +126,7 @@ std::string read_absolute(const aot::System2Image& image, Location where, Addres
     return std::format("board.read_data_word(0x{:04X})", address);
 }
 
-enum class WordOp { move, compare, add, subtract };
+enum class WordOp { move, compare, test_bits, clear_bits, set_bits, add, subtract };
 
 bool register_memory(unsigned operand) {
     const auto mode = operand & 070;
@@ -166,6 +167,7 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
     unsigned words = 1;
     const auto source = (opcode >> 6) & 077;
     const auto destination = opcode & 077;
+    const bool reads_only = op == WordOp::compare || op == WordOp::test_bits;
     const bool indirect = Image::banked && (register_memory(source) || register_memory(destination));
     std::string setup;
     if (indirect) {
@@ -228,12 +230,12 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
     auto next = where.advance(static_cast<int>(2 * words));
     if (destination <= 6) {
         dst = register_value(destination);
-    } else if (destination == immediate_pc && op == WordOp::compare) {
+    } else if (destination == immediate_pc && reads_only) {
         dst = std::format("0x{:04X}", extension());
         next = where.advance(static_cast<int>(2 * words));
     } else if constexpr (Image::banked) {
         if (register_memory(destination)) {
-            dst_address = memory_address(destination, "destination", op != WordOp::compare);
+            dst_address = memory_address(destination, "destination", !reads_only);
             next = where.advance(static_cast<int>(2 * words));
             dst = std::format("board.read_data_word({})", dst_address);
         } else if (destination == absolute_pc) {
@@ -256,7 +258,7 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
                     return finish(next, value);
                 }
             }
-            if (op == WordOp::compare) {
+            if (reads_only) {
                 dst = read_absolute(image, where, address);
             } else {
                 require_data_address(where, address, "write");
@@ -285,6 +287,12 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
         return finish(next, store(std::format("ops::move(s.flags, {})", src)));
     case WordOp::compare:
         return finish(next, std::format("ops::subtract(s.flags, {}, {})", src, dst));
+    case WordOp::test_bits:
+        return finish(next, std::format("ops::move(s.flags, static_cast<std::uint16_t>({} & {}))", dst, src));
+    case WordOp::clear_bits:
+        return finish(next, store(std::format("ops::move(s.flags, static_cast<std::uint16_t>({} & ~{}))", dst, src)));
+    case WordOp::set_bits:
+        return finish(next, store(std::format("ops::move(s.flags, static_cast<std::uint16_t>({} | {}))", dst, src)));
     case WordOp::add:
         return finish(next, store(std::format("ops::add(s.flags, {}, {})", dst, src)));
     case WordOp::subtract:
@@ -293,10 +301,68 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
     unsupported(where, opcode, Image::banked);
 }
 
+Instruction decode_indexed_pc_add(const aot::System2Image& image, Location where, unsigned reg_number,
+                                  unsigned count) {
+    const auto base = image.word(where, 2);
+    const auto next = where.advance(4);
+    const auto end = static_cast<unsigned>(base) + 2u * count;
+    if (base < 0x4000 || (base & 1u) != 0 || end > 0x10000u) {
+        throw std::runtime_error("jump table must fit in aligned System 2 ROM at " + aot::describe(where, true));
+    }
+
+    Instruction result{2, {}, {}};
+    std::set<Location> targets;
+    std::string offsets;
+    for (unsigned address = base; address < end; address += 2) {
+        const auto slot = where.at(static_cast<Address>(address));
+        const auto offset = image.word(slot);
+        const auto target = next.advance(static_cast<std::int16_t>(offset));
+        if (target.pc < 0x4000 || (target.pc & 1u) != 0 || (target.pc >= base && target.pc < end)) {
+            throw std::runtime_error(std::format("invalid jump-table target 0x{:04X} from ROM slot 0x{:04X} at {}",
+                                                 target.pc, slot.pc, aot::describe(where, true)));
+        }
+        static_cast<void>(image.word(target));
+        if (!offsets.empty()) {
+            offsets += ", ";
+        }
+        offsets += std::format("0x{:04X}", offset);
+        result.jump_table_words.push_back(slot);
+        targets.insert(target);
+    }
+    result.successors.assign(targets.begin(), targets.end());
+    const auto invalid_slot = std::format(
+        "return {{StopReason::jump_table, 0x{:04X}, Banks{{{}, {}}}, 0, table_address}};\n",
+        where.pc, where.banks[0], where.banks[1]);
+    result.body = "    {\n" + observe(where.advance(2).pc) +
+        std::format("        const auto table_address = word_address(static_cast<std::uint16_t>({} + 0x{:04X}u));\n"
+                    "        if (table_address < 0x{:04X} || table_address > 0x{:04X}) {}\n"
+                    "        constexpr std::array<std::uint16_t, {}> offsets{{{}}};\n"
+                    "        const auto offset = board.read_rom_word(table_address, offsets[(table_address - 0x{:04X}) / 2]);\n"
+                    "        switch (ops::add(s.flags, 0x{:04X}, offset)) {{\n",
+                    reg(reg_number), base, base, end - 2, invalid_slot, count, offsets, base, next.pc);
+    for (const auto target : result.successors) {
+        result.body += std::format("        case 0x{:04X}: {}", target.pc, jump(target));
+    }
+    result.body += "        default: " + invalid_slot + "        }\n    }\n";
+    return result;
+}
+
 template <typename Image>
-Instruction decode(const Image& image, Location where) {
+Instruction decode(const Image& image, Location where, const aot::JumpTables& tables) {
     const auto opcode = image.word(where);
     const auto next = where.advance(2);
+
+    if constexpr (Image::banked) {
+        const auto source = (opcode >> 6) & 077;
+        if ((opcode & 0170077) == 0060007 && (source & 070) == 060 && (source & 7) < 7) {
+            const auto table = tables.find(where.pc);
+            if (table == tables.end()) {
+                throw std::runtime_error("computed jump at " + aot::describe(where, true) +
+                                         " needs a declaration in --jump-tables");
+            }
+            return decode_indexed_pc_add(image, where, source & 7, table->second);
+        }
+    }
 
     if (opcode == 0000000) {
         return {1, "    " + stop("halt", where), {}};
@@ -335,6 +401,9 @@ Instruction decode(const Image& image, Location where) {
     switch (opcode & 0170000) {
     case 0010000: return decode_word_op(image, where, opcode, WordOp::move);
     case 0020000: return decode_word_op(image, where, opcode, WordOp::compare);
+    case 0030000: return decode_word_op(image, where, opcode, WordOp::test_bits);
+    case 0040000: return decode_word_op(image, where, opcode, WordOp::clear_bits);
+    case 0050000: return decode_word_op(image, where, opcode, WordOp::set_bits);
     case 0060000: return decode_word_op(image, where, opcode, WordOp::add);
     case 0160000: return decode_word_op(image, where, opcode, WordOp::subtract);
     }
@@ -396,9 +465,11 @@ Instruction decode(const Image& image, Location where) {
 using Program = std::map<Location, Instruction>;
 
 template <typename Image>
-Program analyze(const Image& image, Location entry) {
+Program analyze(const Image& image, Location entry, const aot::JumpTables& tables,
+                std::ostream* report = nullptr) {
     Program decoded;
     std::set<Location> operands;
+    std::set<Location> table_words;
     std::vector<Location> pending{entry};
     const auto overlap = [](Location where) {
         return std::runtime_error("branch enters operand word at " + aot::describe(where, Image::banked));
@@ -414,14 +485,28 @@ Program analyze(const Image& image, Location entry) {
             if (operands.contains(where)) {
                 throw overlap(where);
             }
+            if (table_words.contains(where)) {
+                throw std::runtime_error("branch enters jump table at " + aot::describe(where, Image::banked));
+            }
 
-            auto instruction = decode(image, where);
+            auto instruction = decode(image, where, tables);
             for (unsigned index = 1; index < instruction.words; ++index) {
                 const auto operand = where.advance(static_cast<int>(2 * index));
-                if (decoded.contains(operand)) {
+                if (decoded.contains(operand) || table_words.contains(operand)) {
                     throw overlap(operand);
                 }
                 operands.insert(operand);
+            }
+            for (const auto slot : instruction.jump_table_words) {
+                if (slot == where || decoded.contains(slot) || operands.contains(slot)) {
+                    throw std::runtime_error("jump table overlaps an instruction at " + aot::describe(slot, Image::banked));
+                }
+                table_words.insert(slot);
+            }
+            if (report && !instruction.jump_table_words.empty()) {
+                *report << std::format("Resolved {} ROM table entries to {} targets at {}.\n",
+                                       instruction.jump_table_words.size(), instruction.successors.size(),
+                                       aot::describe(where, Image::banked)) << std::flush;
             }
             pending.insert(pending.end(), instruction.successors.begin(), instruction.successors.end());
             decoded.emplace(where, std::move(instruction));
@@ -485,10 +570,12 @@ int main(int argc, char** argv) {
     }
     const bool inspect = mode == "--inspect-system2";
     const bool banked = inspect || mode == "--system2";
-    if (argc != (inspect ? 5 : banked ? 6 : 4)) {
+    const auto required = inspect ? 5 : banked ? 6 : 4;
+    const bool with_tables = banked && argc == required + 2 && std::string_view(argv[required]) == "--jump-tables";
+    if (argc != required && !with_tables) {
         std::cerr << "Usage: apb-t11-aot <image.bin> <hex-origin> <output.cpp>\n"
-                  << "       apb-t11-aot --system2 <rom-map> <rom-dir> <hex-entry> <output.cpp>\n"
-                  << "       apb-t11-aot --inspect-system2 <rom-map> <rom-dir> <hex-entry>\n";
+                  << "       apb-t11-aot --system2 <rom-map> <rom-dir> <hex-entry> <output.cpp> [--jump-tables <map>]\n"
+                  << "       apb-t11-aot --inspect-system2 <rom-map> <rom-dir> <hex-entry> [--jump-tables <map>]\n";
         return 2;
     }
     try {
@@ -496,10 +583,11 @@ int main(int argc, char** argv) {
             const Location entry{aot::parse_address(argv[4])};
             const std::filesystem::path output = inspect ? std::filesystem::path{} : argv[5];
             const aot::System2Image image(argv[2], argv[3], output);
+            const auto tables = with_tables ? aot::read_jump_tables(argv[required + 1], output) : aot::JumpTables{};
             if (inspect) {
                 std::cout << "Inspecting T-11 entry " << aot::describe(entry, true) << ".\n" << std::flush;
             }
-            const auto decoded = analyze(image, entry);
+            const auto decoded = analyze(image, entry, tables, inspect ? &std::cout : nullptr);
             if (!inspect) {
                 write_program(output, entry, decoded, banked);
             }
@@ -508,7 +596,7 @@ int main(int argc, char** argv) {
             const Location entry{aot::parse_address(argv[2])};
             const std::filesystem::path output = argv[3];
             const aot::FlatImage image(argv[1], entry.pc, output);
-            const auto decoded = analyze(image, entry);
+            const auto decoded = analyze(image, entry, {});
             write_program(output, entry, decoded, banked);
             std::cout << "Translated " << decoded.size() << " reachable T-11 instructions.\n";
         }

@@ -5,6 +5,7 @@
 #include <compare>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -13,6 +14,7 @@
 namespace qilin::t11::aot {
 
 using Address = std::uint16_t;
+using JumpTables = std::map<Address, unsigned>;
 
 struct Location {
     Address pc;
@@ -31,6 +33,7 @@ struct Location {
 
 [[nodiscard]] std::string describe(Location where, bool banked);
 [[nodiscard]] Address parse_address(std::string_view text);
+[[nodiscard]] JumpTables read_jump_tables(const std::filesystem::path& path, const std::filesystem::path& output);
 
 class FlatImage {
 public:

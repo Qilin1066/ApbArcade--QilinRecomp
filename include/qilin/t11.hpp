@@ -68,7 +68,7 @@ struct System2State {
     }
 };
 
-enum class StopReason { halt, budget, watchdog, interrupt, interrupt_stack, memory_read, memory_write };
+enum class StopReason { halt, budget, watchdog, interrupt, interrupt_stack, memory_read, memory_write, jump_table };
 
 struct Stop {
     StopReason reason;

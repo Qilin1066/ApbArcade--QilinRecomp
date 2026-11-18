@@ -9,11 +9,12 @@ Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with
 - Native System 2 code can strobe the watchdog through its mirrored low-byte port. The watchdog takes board-clock ticks from the host and holds a reset request when its timer expires.
 - Native code writes the IRQ enable mask and acknowledges board interrupts. An eligible IRQ saves the T‑11 stack frame and returns the handler address to the host.
 - Native word operations support register-indirect, autoincrement, indexed, and indexed-deferred operands in low RAM, palette RAM, and video RAM. A bus diagnostic reports both the instruction PC and the unsupported address.
+- The compiler resolves declared PC-relative ROM jump tables to precompiled branches. Native probes exercise dispatch, out-of-range indices, and the word operations BIT, BIC, and BIS.
 - CPU bus accesses drive the Slapstic-controlled video memory view. The synthetic probe switches views and checks that writes and byte clears reach the selected page.
 - The 256 palette words support mirrored reads and writes. The palette decoder converts the stored color and intensity fields to 8-bit RGB.
 - The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
 
-The read-only scan of the verified rev 7 ROM decoded 75 reachable locations from reset at 0x8000. It passed the indexed-deferred write at 0xF156 and stopped at a computed transfer at PC 0xF15E. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+The read-only scan of the verified rev 7 ROM resolved four jump-table targets at PC 0xF15E and analyzed 140 reachable locations from reset at 0x8000. It stopped at a bank-selector write to 0x1402 at PC 0xF2C4 that takes its value from a register. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
 
 The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
 
@@ -53,16 +54,18 @@ build/apb-t11-aot build/tests/fixtures/Release/loop.bin 0x0200 build/loop.cpp
 Inspect the rev 7 reset entry against the verified local ROMs.
 
 ~~~powershell
-build/apb-t11-aot --inspect-system2 cmake/apb-rev7-t11.map "D:/APB Arcade Project" 0x8000
+build/apb-t11-aot --inspect-system2 cmake/apb-rev7-t11.map "D:/APB Arcade Project" 0x8000 --jump-tables cmake/apb-rev7-jumps.map
 ~~~
 
 Generate a C++23 translation unit for the banked test image. The resulting `run_system2` entry takes CPU registers and low RAM, and reports the stopping address and both bank numbers.
 
 ~~~sh
-build/apb-t11-aot --system2 build/tests/fixtures/Release/system2.map build/tests/fixtures/Release 0x8200 build/system2.cpp
+build/apb-t11-aot --system2 build/tests/fixtures/Release/system2.map build/tests/fixtures/Release 0x8200 build/system2.cpp --jump-tables tests/system2-jumps.map
 ~~~
 
 Each line in a System 2 map contains a physical hexadecimal byte offset, the even byte lane filename, and the odd byte lane filename, separated by `|`. Filenames are resolved under the ROM directory. Both selector windows start at bank 0. Direct selector writes with immediate values change the bank context of the following instruction.
+
+Each line in the optional jump-table map contains the hexadecimal address of an `ADD d(Rn),PC` instruction and a decimal entry count, separated by `|`. The compiler reads that many consecutive ROM words at the displacement in the current bank context and interprets them as offsets from the PC after the extension word. It validates each target before generating code. An out-of-range native table read reports the instruction PC, both banks, and the effective word address.
 
 ## References
 

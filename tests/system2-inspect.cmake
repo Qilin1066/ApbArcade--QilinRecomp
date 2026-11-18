@@ -4,12 +4,13 @@ set(map "${FIXTURE_DIR}/system2.map")
 set(reject_output "${FIXTURE_DIR}/system2-rejected.cpp")
 
 execute_process(
-    COMMAND "${TRANSLATOR}" --inspect-system2 "${map}" "${FIXTURE_DIR}" 0x8200
+    COMMAND "${TRANSLATOR}" --inspect-system2 "${map}" "${FIXTURE_DIR}" 0x8200 --jump-tables "${JUMP_MAP}"
     RESULT_VARIABLE status
     OUTPUT_VARIABLE report
     ERROR_VARIABLE error
 )
-if(NOT status STREQUAL "0" OR NOT report MATCHES "Analyzed 67 reachable T-11 locations")
+if(NOT status STREQUAL "0" OR NOT report MATCHES "Analyzed 75 reachable T-11 locations"
+    OR NOT report MATCHES "Resolved 3 ROM table entries to 3 targets at 0x60AA")
     message(FATAL_ERROR "Unexpected System 2 inspection result\n${report}\n${error}")
 endif()
 
@@ -17,6 +18,7 @@ function(expect_failure layout entry diagnostic)
     file(REMOVE "${reject_output}")
     execute_process(
         COMMAND "${TRANSLATOR}" --system2 "${layout}" "${FIXTURE_DIR}" "${entry}" "${reject_output}"
+            ${ARGN}
         RESULT_VARIABLE status
         ERROR_VARIABLE error
     )
@@ -32,6 +34,14 @@ expect_failure("${map}" 0x824a "unsupported System 2 word read at 0x1700 from 0x
 expect_failure("${map}" 0x8250 "unsupported System 2 byte write at 0x1801 from 0x8250 (banks 00/00)")
 expect_failure("${map}" 0x8254 "unsupported System 2 word read at 0x1800 from 0x8254 (banks 00/00)")
 expect_failure("${map}" 0x825a "unsupported System 2 byte write at 0x1601 from 0x825A (banks 00/00)")
+expect_failure("${map}" 0x8200 "computed jump at 0x60AA (banks 01/23) needs a declaration")
+
+set(invalid_jumps "${FIXTURE_DIR}/invalid-jump-tables.map")
+file(WRITE "${invalid_jumps}" "60AA|4\n")
+expect_failure("${map}" 0x8200 "invalid jump-table target 0x60AF from ROM slot 0x8406"
+    --jump-tables "${invalid_jumps}")
+file(WRITE "${invalid_jumps}" "60AA|3\n60AA|3\n")
+expect_failure("${map}" 0x8200 "duplicate jump-table site in line 2" --jump-tables "${invalid_jumps}")
 
 set(fixed "008200 | fixed ROM-even.bin | fixed ROM-odd.bin\n")
 set(invalid "${FIXTURE_DIR}/invalid-system2.map")

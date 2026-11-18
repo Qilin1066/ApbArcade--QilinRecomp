@@ -188,10 +188,10 @@ bool test_indirect_words() {
     auto board = indirect_test_board();
     const auto stop = qilin::t11::run_system2(board, 128);
     const auto& flags = board.cpu.flags;
-    if (stop.reason != StopReason::halt || stop.address != 0x60a6 || board.cpu.r[5] != 0x030d ||
+    if (stop.reason != StopReason::halt || stop.address != 0x60b2 || board.cpu.r[5] != 0x030d ||
         board.ram[0x180] != 0x0301 || board.ram[0x181] != 11 || board.ram[0x182] != 11 ||
         board.ram[0x183] != 4 || board.ram[0x184] != 11 || board.ram[0x186] != 10 ||
-        !flags.n || flags.z || flags.v || !flags.c || board.cpu.r[4] != 0x11ad ||
+        !flags.n || flags.z || flags.v || flags.c || board.cpu.r[4] != 0x11ad || board.cpu.r[2] != 0xa010 ||
         board.cpu.r[3] != 0xfff4 || board.ram[2] != 0 || board.ram[0x187] != 0x11ad ||
         board.video.bank() != 0 || board.video.read_window(0x2100) != 0xabcd ||
         board.cpu.r[0] != 0x4b2d || board.palette.read_word(0x1086) != 0x002d ||
@@ -242,6 +242,40 @@ bool test_indexed_deferred_faults() {
            write_stop.memory_address == 0x4000 && write_stop.banks == Banks{1, 35} &&
            bad_target.cpu.r[6] == 0x0400 && bad_target.ram[0x202] == 0x4001 &&
            bad_target.palette.read_word(0x1088) == 0 && bad_target.cpu.flags.c;
+}
+
+bool test_computed_jump() {
+    using qilin::t11::Banks;
+    auto second = indirect_test_board();
+    second.ram[0x280] = 3; // The word bus rounds the odd index down to the second slot.
+    const auto second_stop = qilin::t11::run_system2(second, 128);
+    if (second_stop.reason != StopReason::halt || second_stop.address != 0x60c4 ||
+        second_stop.banks != Banks{1, 35} || second.cpu.r[2] != 0x0020 ||
+        second.cpu.flags.n || !second.cpu.flags.z || second.cpu.flags.v || second.cpu.flags.c) {
+        return false;
+    }
+
+    auto backward = indirect_test_board();
+    backward.ram[0x280] = 4;
+    const auto back_stop = qilin::t11::run_system2(backward, 128);
+    const auto& flags = backward.cpu.flags;
+    if (back_stop.reason != StopReason::halt || back_stop.address != 0x609c ||
+        back_stop.banks != Banks{1, 35} || flags.n || flags.z || flags.v || !flags.c) {
+        return false;
+    }
+
+    for (const auto index : {std::uint16_t{6}, std::uint16_t{0xffff}}) {
+        auto missing = indirect_test_board();
+        missing.ram[0x280] = index;
+        const auto stop = qilin::t11::run_system2(missing, 128);
+        const auto expected_address = index == 6 ? 0x8406 : 0x83fe;
+        if (stop.reason != StopReason::jump_table || stop.address != 0x60aa ||
+            stop.memory_address != expected_address || stop.banks != Banks{1, 35} ||
+            missing.cpu.r[2] != index || !missing.cpu.flags.c) {
+            return false;
+        }
+    }
+    return true;
 }
 
 int test_system2() {
@@ -318,6 +352,10 @@ int test_system2() {
     }
     if (!test_indexed_deferred_faults()) {
         std::cerr << "Indexed-deferred access failed to report the correct bus address.\n";
+        return 1;
+    }
+    if (!test_computed_jump()) {
+        std::cerr << "Unexpected result from checked ROM jump-table dispatch.\n";
         return 1;
     }
     std::cout << "Native System 2 code passed bank, watchdog, IRQ, video-memory, and palette checks.\n";
