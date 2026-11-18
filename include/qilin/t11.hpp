@@ -28,7 +28,7 @@ inline constexpr unsigned system2_ram_size = 0x1000;
 }
 
 [[nodiscard]] constexpr bool is_system2_data_word(std::uint16_t address) noexcept {
-    return address < system2_ram_size || system2::is_video_ram(address);
+    return address < system2_ram_size || system2::is_palette_ram(address) || system2::is_video_ram(address);
 }
 
 struct System2State {
@@ -38,11 +38,15 @@ struct System2State {
     system2::Interrupts interrupts{};
     std::uint8_t psw_control = 0xe0;
     system2::VideoMemory video{};
+    system2::PaletteRam palette{};
 
     [[nodiscard]] constexpr std::uint16_t read_data_word(std::uint16_t address) noexcept {
         video.observe(address);
         if (address < system2_ram_size) {
             return ram[address / 2];
+        }
+        if (system2::is_palette_ram(address)) {
+            return palette.read_word(address);
         }
         return system2::is_video_ram(address) ? video.read_window(address) : 0xffff;
     }
@@ -51,6 +55,8 @@ struct System2State {
         video.observe(address);
         if (address < system2_ram_size) {
             ram[address / 2] = value;
+        } else if (system2::is_palette_ram(address)) {
+            palette.write_word(address, value);
         } else if (system2::is_video_ram(address)) {
             video.write_window(address, value);
         }

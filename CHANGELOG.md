@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0
+
+- Map the 256-word System 2 palette and its mirror in the native bus.
+- Decode palette RGB and shared intensity, and test mirrored reads, word writes, and byte clears.
+- Compile register negate and arithmetic shift left.
+- Advance the read-only rev 7 scan to the indexed-deferred operand at 0xF156.
+
 ## 0.6.0
 
 - Track Slapstic 110 selection and route the System 2 video window to separate pages.

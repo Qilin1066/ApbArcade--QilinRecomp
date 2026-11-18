@@ -5,6 +5,45 @@
 
 namespace qilin::system2 {
 
+[[nodiscard]] constexpr bool is_palette_ram(std::uint16_t address) noexcept {
+    return address >= 0x1000 && address < 0x1400;
+}
+
+struct Rgb8 {
+    std::uint8_t red;
+    std::uint8_t green;
+    std::uint8_t blue;
+
+    constexpr bool operator==(const Rgb8&) const noexcept = default;
+};
+
+class PaletteRam {
+public:
+    [[nodiscard]] constexpr std::uint16_t read_word(std::uint16_t address) const noexcept {
+        return words_[(address & 0x01ffu) / 2];
+    }
+
+    constexpr void write_word(std::uint16_t address, std::uint16_t value) noexcept {
+        words_[(address & 0x01ffu) / 2] = value;
+    }
+
+    [[nodiscard]] constexpr Rgb8 color(std::uint8_t index) const noexcept {
+        const auto raw = words_[index];
+        const auto level = static_cast<unsigned>(raw & 0x0f);
+        // The shared intensity DAC has a black level and weighted steps.
+        const auto intensity = level == 0 ? 0u : 115u + ((level & 8) ? 78u : 0u) +
+            ((level & 4) ? 37u : 0u) + ((level & 2) ? 17u : 0u) + ((level & 1) ? 9u : 0u);
+        constexpr std::array<unsigned, 16> drive{0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 14, 15, 15};
+        const auto component = [&](unsigned shift) {
+            return static_cast<std::uint8_t>((drive[(raw >> shift) & 0x0f] * intensity) / 16);
+        };
+        return {component(12), component(8), component(4)};
+    }
+
+private:
+    std::array<std::uint16_t, 256> words_{};
+};
+
 [[nodiscard]] constexpr bool is_video_ram(std::uint16_t address) noexcept {
     return address >= 0x2000 && address < 0x4000;
 }

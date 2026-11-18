@@ -151,6 +151,24 @@ constexpr bool test_video_selection() {
 
 static_assert(test_video_selection());
 
+constexpr bool test_palette_ram() {
+    using qilin::system2::Rgb8;
+    qilin::t11::System2State board;
+    board.write_data_word(0x1000, 0xfff0);
+    board.write_data_word(0x1002, 0xf0f1);
+    board.write_data_word(0x1286, 0x4b2d);
+    board.write_data_word(0x13fe, 0xffff);
+    return board.read_data_word(0x1200) == 0xfff0 &&
+           board.read_data_word(0x1086) == 0x4b2d &&
+           board.read_data_word(0x11fe) == 0xffff &&
+           board.palette.color(0) == Rgb8{0, 0, 0} &&
+           board.palette.color(1) == Rgb8{116, 0, 116} &&
+           board.palette.color(0x43) == Rgb8{89, 194, 59} &&
+           board.palette.color(0xff) == Rgb8{240, 240, 240};
+}
+
+static_assert(test_palette_ram());
+
 bool test_indirect_words() {
     qilin::t11::System2State board;
     board.cpu.r[5] = 0x0301;
@@ -162,12 +180,14 @@ bool test_indirect_words() {
     board.ram[0x186] = 10;
     const auto stop = qilin::t11::run_system2(board, 64);
     const auto& flags = board.cpu.flags;
-    if (stop.reason != StopReason::halt || stop.address != 0x6080 || board.cpu.r[5] != 0x030d ||
+    if (stop.reason != StopReason::halt || stop.address != 0x609a || board.cpu.r[5] != 0x030d ||
         board.ram[0x180] != 0x0301 || board.ram[0x181] != 11 || board.ram[0x182] != 11 ||
         board.ram[0x183] != 4 || board.ram[0x184] != 11 || board.ram[0x186] != 10 ||
         !flags.n || flags.z || flags.v || !flags.c || board.cpu.r[4] != 0x11ad ||
-        board.cpu.r[3] != 6 || board.ram[2] != 0 || board.ram[0x187] != 0x11ad ||
-        board.video.bank() != 0 || board.video.read_window(0x2100) != 0xabcd) {
+        board.cpu.r[3] != 0xfff4 || board.ram[2] != 0 || board.ram[0x187] != 0x11ad ||
+        board.video.bank() != 0 || board.video.read_window(0x2100) != 0xabcd ||
+        board.cpu.r[0] != 0x4b2d || board.palette.read_word(0x1086) != 0x002d ||
+        board.palette.color(0x43) != qilin::system2::Rgb8{0, 0, 59}) {
         return false;
     }
     board.video.observe(0x8000);
@@ -177,22 +197,22 @@ bool test_indirect_words() {
     }
 
     qilin::t11::System2State bad_write;
-    bad_write.cpu.r[5] = 0x0ffd;
-    bad_write.ram[0x7ff] = 0x8080;
+    bad_write.cpu.r[5] = 0x3ffd;
+    bad_write.video.write_window(0x3ffe, 0x8080);
     const auto write_stop = qilin::t11::run_system2(bad_write, 64);
     if (write_stop.reason != StopReason::memory_write || write_stop.address != 0x6034 ||
-        write_stop.memory_address != 0x1000 || write_stop.banks != qilin::t11::Banks{1, 35} ||
-        bad_write.cpu.r[5] != 0x0fff || bad_write.ram[0x7fe] != 0x0ffd ||
-        bad_write.ram[0x7ff] != 0x8080 || bad_write.cpu.flags.n) {
+        write_stop.memory_address != 0x4000 || write_stop.banks != qilin::t11::Banks{1, 35} ||
+        bad_write.cpu.r[5] != 0x3fff || bad_write.video.read_window(0x3ffc) != 0x3ffd ||
+        bad_write.video.read_window(0x3ffe) != 0x8080 || bad_write.cpu.flags.n) {
         return false;
     }
 
     qilin::t11::System2State bad_read;
-    bad_read.cpu.r[5] = 0x0fff;
+    bad_read.cpu.r[5] = 0x3fff;
     const auto read_stop = qilin::t11::run_system2(bad_read, 64);
     return read_stop.reason == StopReason::memory_read && read_stop.address == 0x6034 &&
-           read_stop.memory_address == 0x1000 && read_stop.banks == qilin::t11::Banks{1, 35} &&
-           bad_read.cpu.r[5] == 0x1001 && bad_read.ram[0x7ff] == 0x0fff;
+           read_stop.memory_address == 0x4000 && read_stop.banks == qilin::t11::Banks{1, 35} &&
+           bad_read.cpu.r[5] == 0x4001 && bad_read.video.read_window(0x3ffe) == 0x3fff;
 }
 
 int test_system2() {
@@ -267,7 +287,7 @@ int test_system2() {
         std::cerr << "Unexpected result from native register-indirect memory access.\n";
         return 1;
     }
-    std::cout << "Native System 2 code passed bank, watchdog, IRQ, and video-memory checks.\n";
+    std::cout << "Native System 2 code passed bank, watchdog, IRQ, video-memory, and palette checks.\n";
     return 0;
 }
 

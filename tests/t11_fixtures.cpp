@@ -89,7 +89,7 @@ void write_system2(const std::filesystem::path& dir) {
         0162715, 1,              // SUB #1,(R5)
         0062525,                 // ADD (R5)+,(R5)+
         0021527, 9,              // CMP (R5),#9
-        0001040,                 // BNE fail
+        0001055,                 // BNE fail
         0000137, 0x8000,         // JMP @#0x8000 (arm on instruction fetch)
         0013704, 0x8080,         // MOV @#0x8080,R4 (view 0)
         0012737, 0xabcd, 0x2100, // MOV #0xabcd,@#0x2100
@@ -100,10 +100,17 @@ void write_system2(const std::filesystem::path& dir) {
         0013704, 0x8000,         // MOV @#0x8000,R4 (arm)
         0013704, 0x8080,         // MOV @#0x8080,R4 (view 0)
         0023727, 0x2100, 0xabcd, // CMP @#0x2100,#0xabcd
-        0001010,                 // BNE fail
+        0001025,                 // BNE fail
+        0012737, 0x4b2d, 0x1086, // MOV #0x4b2d,@#0x1086
+        0013700, 0x1286,         // MOV @#0x1286,R0 (same palette word)
+        0105037, 0x1287,         // CLRB @#0x1287 (palette high byte)
+        0023727, 0x1086, 0x002d, // CMP @#0x1086,#0x002d
+        0001012,                 // BNE fail
         0013765, 0x8080, 3,      // MOV @#0x8080,3(R5)
         0016503, 0xfffb,         // MOV -5(R5),R3
         0005023,                 // CLR (R3)+
+        0005403,                 // NEG R3
+        0006303,                 // ASL R3
         0022515,                 // CMP (R5)+,(R5)
         0,                       // success: HALT
         0,                       // fail: HALT

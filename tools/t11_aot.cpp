@@ -374,7 +374,9 @@ Instruction decode(const Image& image, Location where) {
     case 0105000: return sequential(next, 1, std::format("{} = ops::clear_byte(s.flags, {}, false)", dst, dst));
     case 0005200: return sequential(next, 1, std::format("{} = ops::increment(s.flags, {})", dst, dst));
     case 0005300: return sequential(next, 1, std::format("{} = ops::decrement(s.flags, {})", dst, dst));
+    case 0005400: return sequential(next, 1, std::format("{} = ops::subtract(s.flags, 0, {})", dst, dst));
     case 0005700: return sequential(next, 1, std::format("ops::test(s.flags, {})", dst));
+    case 0006300: return sequential(next, 1, std::format("{} = ops::add(s.flags, {}, {})", dst, dst, dst));
     }
     unsupported(where, opcode, Image::banked);
 }
