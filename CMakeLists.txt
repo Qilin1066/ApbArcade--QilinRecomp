@@ -228,3 +228,13 @@ target_include_directories(qilin_sound_lifter_check PRIVATE tools/difftest6502 "
 target_link_libraries(qilin_sound_lifter_check PRIVATE qilin_core qilin_mame_m6502 qilin_runtime qilin_warnings)
 qilin_tool(qilin_sound_lifter_check)
 add_test(NAME qilin_sound_lifter_check COMMAND qilin_sound_lifter_check "${QILIN_SOUND_FIXTURE_DIR}")
+
+# ---- Native run: both CPUs' lifted code on the board model (needs your ROMs and both lifts) ----
+#   qilin lift <rom-dir> --seeds S --out gen && qilin lift <rom-dir> --cpu sound --out gen-sound
+#   cmake -B build -DQILIN_GEN_DIR=$PWD/gen -DQILIN_SOUND_GEN_DIR=$PWD/gen-sound && build/qilin_run <rom-dir>
+if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
+    add_executable(qilin_run tools/run/run.cpp recomp/runtime/game/game.cpp ${QILIN_GEN_SOURCES} ${QILIN_SOUND_GEN_SOURCES})
+    target_include_directories(qilin_run PRIVATE recomp/runtime/game "${QILIN_GEN_DIR}" "${QILIN_SOUND_GEN_DIR}")
+    target_link_libraries(qilin_run PRIVATE qilin_core qilin_board qilin_runtime qilin_warnings)
+    qilin_tool(qilin_run)
+endif()

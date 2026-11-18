@@ -112,6 +112,7 @@ private:
     void leave(const std::string& pc);          // write state back and return, PC = pc
     void call(const std::string& target, std::optional<Loc> static_target, std::uint16_t return_pc);
     void service_point(std::uint16_t resume_pc);
+    void table_switch(const cfg::Node& node, const std::string& pc);   // goto a table's targets, else fall through
 
     const cfg::Program& program_;
     Loc entry_;
@@ -261,6 +262,32 @@ void FunctionWriter::service_point(std::uint16_t resume_pc) {
     line(std::format("if (ic <= 0) [[unlikely]] {{ resume = {}; goto service; }}", index));
     body_ += std::format("S{}:\n", index);
     straight_cycles_ = 0;
+}
+
+// A jump through a table: a loop can run through it, so the board gets its
+// turn here too (the resume address is the computed one), then the targets
+// in this function are gotos; anything else falls through to leave().
+void FunctionWriter::table_switch(const cfg::Node& node, const std::string& pc) {
+    line("if (ic <= 0) [[unlikely]] {");
+    line(std::format("    QL_SYNC(); c.r[7] = {}; b.service();", pc));
+    line(std::format("    if (c.r[7] != {}) return;", pc));
+    line("    QL_LOAD();");
+    line("}");
+    straight_cycles_ = 0;
+    std::set<std::uint16_t> done;
+    std::string cases;
+    for (const auto& target : node.next) {
+        if (done.insert(target.pc).second && members_.contains(target)) {
+            referenced_.insert(target);
+            cases += std::format("    case {}: goto {};\n", hex(target.pc), label(target));
+        }
+    }
+    if (!cases.empty()) {
+        line(std::format("switch ({}) {{", pc));
+        out() += cases;   // indented like the case lines above
+        line("default: break;");
+        line("}");
+    }
 }
 
 // A call: write back, call, and continue only if the callee came back here
@@ -423,6 +450,8 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
                 if (static_target->pc <= at_.pc) service_point(static_target->pc);
                 transfer(*static_target);
             } else {
+                // JMP @X(Rn) through a table the analysis sized goes straight to its targets.
+                if (node.flow == Flow::table) table_switch(node, target);
                 leave(target);
             }
             return ok_;
@@ -615,18 +644,7 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
     if (writes_pc) {
         // The new PC: through a table the analysis sized, or computed.
         line("t = static_cast<std::uint16_t>(res);");
-        if (node.flow == Flow::table) {
-            line("switch (t) {");
-            std::set<std::uint16_t> done;
-            for (const auto& target : node.next) {
-                if (done.insert(target.pc).second && members_.contains(target)) {
-                    referenced_.insert(target);
-                    line(std::format("case {}: goto {};", hex(target.pc), label(target)));
-                }
-            }
-            line("default: break;");
-            line("}");
-        }
+        if (node.flow == Flow::table) table_switch(node, "t");
         leave("t");
         return ok_;
     }
@@ -657,14 +675,29 @@ std::string FunctionWriter::write(std::vector<std::pair<Loc, unsigned>>& entries
         instruction(nodes.at(member));
         code += "@@" + label(member) + "@@\n" + body_;
     }
-    // Entries dispatch may use: the function's start, and each return site in it.
-    std::vector<Loc> resume_sites;
+    // Entries dispatch may use: the function's start, each return site in it,
+    // and each place a service point resumes at. An interrupt handler can
+    // return somewhere other than where it interrupted (APB's switches
+    // tasks), so code interrupted at a service point must be re-enterable.
+    std::set<Loc> sites;
     for (const auto& member : members_) {
-        if (member != entry_ && program_.return_sites().contains(member)) {
-            resume_sites.push_back(member);
-            referenced_.insert(member);
+        if (member != entry_ && program_.return_sites().contains(member)) sites.insert(member);
+    }
+    // A table jump can service the board (and so be interrupted) before it
+    // goes to its target, which is then where the code resumes.
+    for (const auto& member : members_) {
+        const auto& node = program_.nodes().at(member);
+        if (node.flow != Flow::table) continue;
+        for (const auto& target : node.next) {
+            if (target != entry_ && members_.contains(target)) sites.insert(target);
         }
     }
+    for (const auto& [pc, where] : resumes_) {
+        const Loc resume{pc, static_cast<std::uint8_t>(Loc{pc, 0}.window() == where.window() ? where.bank : 0)};
+        if (resume != entry_ && members_.contains(resume)) sites.insert(resume);
+    }
+    std::vector<Loc> resume_sites(sites.begin(), sites.end());
+    for (const auto& site : resume_sites) referenced_.insert(site);
     referenced_.insert(entry_);
     // Emit only labels something jumps to.
     std::string text;

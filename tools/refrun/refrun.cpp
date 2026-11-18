@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
     std::vector<std::uint64_t> coins;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
     int pedal = -1, steer = 0;
-    std::string seeds_out;
+    std::string seeds_out, log_path;
     std::vector<cfg::Loc> initial_seeds;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string_view flag = argv[i];
@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
         else if (flag == "--quantum") quantum = static_cast<std::int64_t>(std::max<std::uint64_t>(number, 1));
         else if (flag == "--coin") coins.push_back(number);
         else if (flag == "--seeds-out") seeds_out = value;
+        else if (flag == "--log") log_path = value;
         else if (flag == "--seeds") {
             const auto loaded = cfg::read_seeds(std::string(value));
             if (!loaded) {
@@ -135,6 +136,8 @@ int main(int argc, char** argv) {
     }
 
     sys2::Machine m(set->region(rom::Region::main_cpu), set->region(rom::Region::sound_cpu));
+    std::vector<sys2::Machine::LogEntry> log;
+    if (!log_path.empty()) m.log = &log;
     MainBus main_bus(m);
     SoundBus sound_bus(m);
     t11_device t11(main_bus, 0x36ff);
@@ -253,6 +256,10 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!log_path.empty()) {
+        std::ofstream out(log_path, std::ios::trunc);
+        for (const auto& e : log) out << std::format("{} {:02X} {}\n", e.what, e.value, e.time);
+    }
     std::print("\n{} frames ({:.1f} s of game time): {} T-11 and {} 6502 instructions.\n", m.frames(),
                static_cast<double>(m.main_time) / 1e7, main_instructions, sound_instructions);
     std::print("Sound CPU released from reset {} times; first command at frame {}, first reply at frame {}; "

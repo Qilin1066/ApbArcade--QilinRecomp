@@ -73,6 +73,7 @@ std::uint16_t Machine::main_read16(std::uint16_t address) {
         p2portwr_ = false;
         mainlatch_.pending = false;
         ++counters.sound_reply_reads;
+        if (log) log->push_back({'r', mainlatch_.data, main_time});
         return static_cast<std::uint16_t>(0xff00 | mainlatch_.data);
     case Area::video:
         return video_.read_window(address);
@@ -138,8 +139,10 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         break;
     case Area::sound_command:
         if (low) {
+            if (!soundlatch_.pending) ++nmi_edges_;
             soundlatch_ = {static_cast<std::uint8_t>(data), true};
             ++counters.sound_commands;
+            if (log) log->push_back({'C', soundlatch_.data, main_time});
         }
         break;
     case Area::xscroll:
@@ -165,6 +168,7 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
 void Machine::sound_reset_w(std::uint8_t data) {
     const bool reset = (data & 1) != 0;
     if (reset && !sound_reset_) ++counters.sound_resets;
+    if (log && reset != sound_reset_) log->push_back({'S', static_cast<std::uint8_t>(reset), main_time});
     sound_reset_ = reset;
     // sndrst_6502_w(0), coincount_w(0), switch_6502_w(0)
     sndrst_state_ = false;
@@ -197,6 +201,7 @@ std::uint8_t Machine::sound_read(std::uint16_t address) {
         p2portrd_ = (interrupt_enable_ & 1) != 0;
         soundlatch_.pending = false;
         ++counters.sound_command_reads;
+        if (log) log->push_back({'c', soundlatch_.data, main_time});
         return soundlatch_.data;
     default:
         return 0x00;   // unmapped, and the write-only registers at 0x1870-0x187F
@@ -235,9 +240,13 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
             p2portwr_ = (interrupt_enable_ & 2) != 0;
             mainlatch_ = {value, true};
             ++counters.sound_replies;
+            if (log) log->push_back({'R', value, main_time});
             return;
         case 0x6: coin_counters_ = value; return;
-        case 0x8: sound_irq_ = false; return;
+        case 0x8:
+            if (log) log->push_back({'A', 0, main_time});
+            sound_irq_ = false;
+            return;
         case 0xa: mixer_ = value; return;
         case 0xc: switch_bits_ = value; return;
         case 0xe: {
@@ -263,6 +272,7 @@ std::int64_t Machine::next_event() const noexcept {
 
 void Machine::apply_pending_enable() {
     if (pending_enable_ >= 0) {
+        if (log && interrupt_enable_ != pending_enable_) log->push_back({'E', static_cast<std::uint8_t>(pending_enable_), main_time});
         interrupt_enable_ = static_cast<std::uint8_t>(pending_enable_);
         pending_enable_ = -1;
     }
@@ -279,11 +289,13 @@ void Machine::run_events(std::int64_t now) {
             if (line == vblank_line) {
                 video_int_ = (interrupt_enable_ & 8) != 0;
                 ++frames_;
+                if (log) log->push_back({'F', sound_ram_[0x02], t});   // a frame, with the sound program's status
             }
             next_scanline_event_ = line + 64 <= vblank_line ? t + 64 * cycles_per_scanline
                                                             : t - line * cycles_per_scanline + cycles_per_frame;
         } else if (t == next_sound_irq_) {
             if (!sound_reset_) sound_irq_ = true;   // MAME's periodic interrupt skips a CPU held in reset
+            if (log && !sound_reset_) log->push_back({'Q', 0, t});
             next_sound_irq_ += sound_irq_period;
         } else {
             watchdog_expired_ = true;

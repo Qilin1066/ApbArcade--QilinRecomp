@@ -22,6 +22,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace qilin::sys2 {
 
@@ -77,6 +78,8 @@ public:
     std::uint8_t main_read8(std::uint16_t address);
     void main_write8(std::uint16_t address, std::uint8_t value);
     [[nodiscard]] std::uint8_t bank(int window) const noexcept { return bank_[window]; }
+    // The two bank registers, for lifted code to compare against its own bank.
+    [[nodiscard]] std::uint8_t* bank_registers() noexcept { return bank_; }
 
     // ---- Sound CPU bus. ----
     std::uint8_t sound_read(std::uint16_t address);
@@ -87,6 +90,10 @@ public:
     [[nodiscard]] bool sound_held_in_reset() const noexcept { return sound_reset_; }
     [[nodiscard]] bool sound_irq_line() const noexcept { return sound_irq_; }
     [[nodiscard]] bool sound_nmi_line() const noexcept { return soundlatch_.pending; }
+    // Rising edges of that line so far: a command written to an empty latch.
+    // A driver that samples the line between slices can miss a fall and rise
+    // in between; the count can't be missed.
+    [[nodiscard]] std::uint64_t sound_nmi_edges() const noexcept { return nmi_edges_; }
 
     // ---- Time. The driver keeps these current. ----
     std::int64_t main_time = 0;    // main-CPU cycles since power-on
@@ -98,6 +105,17 @@ public:
     bool take_watchdog_expiry() noexcept;           // true once after the watchdog ran out
 
     // ---- For tools. ----
+    // An optional log of the traffic between the CPUs, to compare runs:
+    // what happened ('C' command written, 'c' command read, 'R' reply
+    // written, 'r' reply read, 'S' sound reset line, 'E' interrupt enable,
+    // 'Q' the sound IRQ asserted, 'A' it acknowledged),
+    // the value, and the main-CPU time.
+    struct LogEntry {
+        char what;
+        std::uint8_t value;
+        std::int64_t time;
+    };
+    std::vector<LogEntry>* log = nullptr;
     struct Counters {
         std::uint64_t sound_commands = 0, sound_command_reads = 0, sound_replies = 0, sound_reply_reads = 0;
         std::uint64_t sound_resets = 0, watchdog_strobes = 0, eeprom_writes = 0;
@@ -108,6 +126,9 @@ public:
     [[nodiscard]] std::uint16_t yscroll() const noexcept { return yscroll_; }
     [[nodiscard]] std::uint8_t last_sound_command() const noexcept { return soundlatch_.data; }
     [[nodiscard]] std::uint8_t last_sound_reply() const noexcept { return mainlatch_.data; }
+    [[nodiscard]] std::uint8_t interrupt_enable() const noexcept { return interrupt_enable_; }
+    [[nodiscard]] const std::array<std::uint8_t, 0x1000>& sound_ram() const noexcept { return sound_ram_; }
+    [[nodiscard]] const std::array<std::uint8_t, 0x1000>& main_ram() const noexcept { return main_ram_; }
 
 private:
     void main_write(std::uint16_t address, std::uint16_t data, std::uint16_t mask);
@@ -130,6 +151,7 @@ private:
 
     // Between the CPUs.
     Latch soundlatch_;   // main -> sound: its pending flag is the 6502's NMI
+    std::uint64_t nmi_edges_ = 0;
     Latch mainlatch_;    // sound -> main
 
     // Sound board.
