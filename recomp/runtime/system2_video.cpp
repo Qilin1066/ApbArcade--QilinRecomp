@@ -1,6 +1,7 @@
 #include "system2_video.hpp"
 
 #include <algorithm>
+#include <cstring>
 
 namespace qilin::sys2 {
 
@@ -39,30 +40,43 @@ Graphics::Graphics(std::span<const std::uint8_t> tiles, std::span<const std::uin
     decode(tiles, 8, true, 16, 128, tiles_, tile_count_);             // pflayout
     decode(sprites, 16, true, 32, 512, sprites_, sprite_count_);      // molayout
     decode(chars, 8, false, 16, 128, chars_, char_count_);            // anlayout
+    char_rows_.assign(char_count_, 0);
+    for (unsigned c = 0; c < char_count_; ++c)
+        for (unsigned y = 0; y < 8; ++y)
+            for (unsigned x = 0; x < 8; ++x)
+                if (chars_[c * 64 + y * 8 + x]) char_rows_[c] = static_cast<std::uint8_t>(char_rows_[c] | 1u << y);
 }
 
+// The renderer works a row at a time and touches only what's there: tiles
+// a span of pixels at a time, alphanumeric rows that have a visible pixel,
+// and in the motion-object bitmap only the spans objects were drawn to. The
+// result is pixel for pixel what MAME's screen_update makes.
 void render(const Machine& machine, const Graphics& graphics, Frame& frame, int first, int last) {
     constexpr int W = Frame::width, H = Frame::height;
     first = std::max(first, 0);
     last = std::min(last, H - 1);
     if (first > last) return;
     const auto& pages = machine.video().pages();
-    thread_local std::array<std::uint8_t, W * H> priority;
-    thread_local std::array<std::uint16_t, W * H> mo;
-
-    // Playfield: opaque, its category into the priority map.
     const int sx = machine.playfield_scroll_x(), sy = machine.playfield_scroll_y();
     const unsigned banks[2] = {machine.playfield_tile_bank(0), machine.playfield_tile_bank(1)};
+    auto playfield_data = [&](int tx, int ty) {
+        const unsigned index = static_cast<unsigned>((ty >> 3) * 128 + (tx >> 3));
+        return index < 0x1000 ? pages[1][index] : pages[2][index & 0xfff];
+    };
+
+    // Playfield: opaque, 8 pixels of a tile at a time.
     for (int y = first; y <= last; ++y) {
         const int ty = (y + sy) & 511;
-        for (int x = 0; x < W; ++x) {
+        std::uint16_t* out = &frame.pens[static_cast<std::size_t>(y) * W];
+        for (int x = 0; x < W;) {
             const int tx = (x + sx) & 1023;
-            const unsigned index = static_cast<unsigned>((ty / 8) * 128 + tx / 8);
-            const std::uint16_t data = index < 0x1000 ? pages[1][index] : pages[2][index & 0xfff];
+            const std::uint16_t data = playfield_data(tx, ty);
             const unsigned code = (banks[(data >> 10) & 1] << 10) | (data & 0x3ff);
-            const unsigned color = (data >> 11) & 7;
-            frame.pens[y * W + x] = static_cast<std::uint16_t>(128 + color * 16 + graphics.tile(code)[(ty & 7) * 8 + (tx & 7)]);
-            priority[y * W + x] = static_cast<std::uint8_t>((~data >> 14) & 3);
+            const auto base = static_cast<std::uint16_t>(128 + ((data >> 11) & 7) * 16);
+            const std::uint8_t* pixels = graphics.tile(code) + (ty & 7) * 8;
+            const int from = tx & 7, n = std::min(8 - from, W - x);
+            for (int i = 0; i < n; ++i) out[x + i] = static_cast<std::uint16_t>(base + pixels[from + i]);
+            x += n;
         }
     }
 
@@ -70,7 +84,11 @@ void render(const Machine& machine, const Graphics& graphics, Frame& frame, int 
     // does for APB's configuration: linked from entry 0, drawn in list order,
     // 16 pixels wide, a set neighbor bit placing one 16 pixels right of the
     // one before, positions wrapped against MAME's 640 x 416 screen bitmap.
-    std::fill(mo.begin() + first * W, mo.begin() + (last + 1) * W, std::uint16_t{0xffff});
+    // The bitmap is all 0xFFFF between calls; spans drawn are noted per row.
+    thread_local std::vector<std::uint16_t> mo(static_cast<std::size_t>(W) * H, 0xffff);
+    std::array<std::int16_t, H> span_from, span_to;
+    std::fill(span_from.begin() + first, span_from.begin() + last + 1, std::int16_t{W});
+    std::fill(span_to.begin() + first, span_to.begin() + last + 1, std::int16_t{-1});
     constexpr int bitmap_width = 640, bitmap_height = 416;
     std::array<bool, 256> visited{};
     int last_xpos = 0;
@@ -90,37 +108,64 @@ void render(const Machine& machine, const Graphics& graphics, Frame& frame, int 
         ypos &= 511;
         if (xpos >= bitmap_width) xpos -= 1024;
         if (ypos >= bitmap_height) ypos -= 512;
+        if (xpos <= -16 || xpos >= W) continue;
+        const int px0 = std::max(0, -xpos), px1 = std::min(16, W - xpos);
         for (int t = 0; t < height; ++t, ++code) {
             const int top = ypos + t * 16;
             if (top <= first - 16) continue;
             if (top > last) break;
-            if (xpos <= -16 || xpos >= W) continue;
             const std::uint8_t* pixels = graphics.sprite(code);
             for (int py = std::max(0, first - top); py < 16 && top + py <= last; ++py) {
                 const int y = top + py;
-                for (int px = std::max(0, -xpos); px < 16 && xpos + px < W; ++px) {
-                    const auto pen = pixels[py * 16 + (hflip ? 15 - px : px)];
-                    if (pen != 15) mo[y * W + xpos + px] = static_cast<std::uint16_t>(pen + color);
+                std::uint16_t* row = &mo[static_cast<std::size_t>(y) * W + xpos];
+                const std::uint8_t* src = pixels + py * 16;
+                bool any = false;
+                for (int px = px0; px < px1; ++px) {
+                    const auto pen = src[hflip ? 15 - px : px];
+                    if (pen != 15) {
+                        row[px] = static_cast<std::uint16_t>(pen + color);
+                        any = true;
+                    }
+                }
+                if (any) {
+                    span_from[y] = static_cast<std::int16_t>(std::min<int>(span_from[y], xpos + px0));
+                    span_to[y] = static_cast<std::int16_t>(std::max<int>(span_to[y], xpos + px1 - 1));
                 }
             }
         }
     }
-    for (int i = first * W; i < (last + 1) * W; ++i) {
-        if (mo[i] == 0xffff) continue;
-        const int mo_priority = mo[i] >> 12;
-        if (((mo_priority + priority[i]) & 2) != 0) {
-            if (!(frame.pens[i] & 0x08)) frame.pens[i] = mo[i] & 0x0fff;   // high-priority playfield pens 8-15 win
-        } else {
-            frame.pens[i] = mo[i] & 0x0fff;
+    // MAME's merge: a motion object loses only to playfield pens 8-15 of a
+    // tile whose priority category, with the object's, has bit 1 set.
+    for (int y = first; y <= last; ++y) {
+        if (span_to[y] < 0) continue;
+        const int ty = (y + sy) & 511;
+        std::uint16_t* row = &mo[static_cast<std::size_t>(y) * W];
+        std::uint16_t* out = &frame.pens[static_cast<std::size_t>(y) * W];
+        for (int x = span_from[y]; x <= span_to[y]; ++x) {
+            const std::uint16_t m = row[x];
+            if (m == 0xffff) continue;
+            row[x] = 0xffff;
+            const int category = (~playfield_data((x + sx) & 1023, ty) >> 14) & 3;
+            if (((m >> 12) + category) & 2) {
+                if (!(out[x] & 0x08)) out[x] = m & 0x0fff;
+            } else {
+                out[x] = m & 0x0fff;
+            }
         }
     }
 
-    // Alphanumerics on top, pen 0 transparent.
+    // Alphanumerics on top, pen 0 transparent; rows with nothing visible skipped.
     for (int y = first; y <= last; ++y) {
-        for (int x = 0; x < W; ++x) {
-            const std::uint16_t data = pages[0][(y / 8) * 64 + x / 8];
-            const unsigned pen = graphics.character(data & 0x3ff)[(y & 7) * 8 + (x & 7)];
-            if (pen != 0) frame.pens[y * W + x] = static_cast<std::uint16_t>(64 + ((data >> 13) & 7) * 4 + pen);
+        const std::uint16_t* cells = &pages[0][(y >> 3) * 64];
+        std::uint16_t* out = &frame.pens[static_cast<std::size_t>(y) * W];
+        const unsigned r = static_cast<unsigned>(y & 7);
+        for (int c = 0; c < 64; ++c) {
+            const std::uint16_t data = cells[c];
+            if (!(graphics.character_rows(data & 0x3ffu) >> r & 1)) continue;
+            const std::uint8_t* pixels = graphics.character(data & 0x3ffu) + r * 8;
+            const auto base = static_cast<std::uint16_t>(64 + ((data >> 13) & 7) * 4);
+            for (int i = 0; i < 8; ++i)
+                if (pixels[i]) out[c * 8 + i] = static_cast<std::uint16_t>(base + pixels[i]);
         }
     }
 }
@@ -130,6 +175,7 @@ void Video::draw_through(const Machine& machine, int scanline) {
     if (scanline < next_line_) return;
     if (!only_.empty() && std::ranges::find(only_, frames_) == only_.end()) return;
     render(machine, graphics_, *drawing_, next_line_, scanline);
+    ++bands_;
     next_line_ = scanline + 1;
 }
 
@@ -155,6 +201,22 @@ std::vector<std::uint8_t> to_rgba(const Frame& frame, const PaletteRam& palette)
         }
     }
     return out;
+}
+
+void to_bgra(const Frame& frame, const PaletteRam& palette, std::uint32_t* out) {
+    constexpr unsigned W = Frame::width, H = Frame::height;
+    std::array<std::uint32_t, 256> lookup;
+    for (unsigned i = 0; i < 256; ++i) {
+        const auto c = palette.color(static_cast<std::uint8_t>(i));
+        const std::array<std::uint8_t, 4> bytes{c.blue, c.green, c.red, 255};
+        std::memcpy(&lookup[i], bytes.data(), 4);
+    }
+    // ROT270, as to_rgba: source row y becomes destination column y, read bottom to top.
+    for (unsigned y = 0; y < H; ++y) {
+        const std::uint16_t* row = &frame.pens[y * W];
+        std::uint32_t* column = out + y + (W - 1) * H;
+        for (unsigned x = 0; x < W; ++x, column -= H) *column = lookup[row[x] & 0xff];
+    }
 }
 
 } // namespace qilin::sys2

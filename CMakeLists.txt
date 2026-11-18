@@ -233,13 +233,39 @@ target_link_libraries(qilin_sound_lifter_check PRIVATE qilin_core qilin_mame_m65
 qilin_tool(qilin_sound_lifter_check)
 add_test(NAME qilin_sound_lifter_check COMMAND qilin_sound_lifter_check "${QILIN_SOUND_FIXTURE_DIR}")
 
-# ---- Native run: both CPUs' lifted code on the board model (needs your ROMs and both lifts) ----
+# ---- The game: both CPUs' lifted code on the board model (needs your ROMs and both lifts) ----
 #   qilin lift <rom-dir> --seeds S --out gen && qilin lift <rom-dir> --cpu sound --out gen-sound
-#   cmake -B build -DQILIN_GEN_DIR=$PWD/gen -DQILIN_SOUND_GEN_DIR=$PWD/gen-sound && build/qilin_run <rom-dir>
+#   cmake -B build -DQILIN_GEN_DIR=$PWD/gen -DQILIN_SOUND_GEN_DIR=$PWD/gen-sound
+#   build/apb <rom-dir>          the game, in a window
+#   build/qilin_run <rom-dir>    headless, with scripted inputs
+option(QILIN_FETCH_SDL3 "Fetch SDL3 (pinned release, linked statically) when no installed SDL3 is found" ON)
 if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
-    add_executable(qilin_run tools/run/run.cpp recomp/runtime/game/game.cpp ${QILIN_GEN_SOURCES} ${QILIN_SOUND_GEN_SOURCES})
-    target_include_directories(qilin_run PRIVATE recomp/runtime/game "${QILIN_GEN_DIR}" "${QILIN_SOUND_GEN_DIR}")
+    add_library(qilin_game STATIC recomp/runtime/game/game.cpp ${QILIN_GEN_SOURCES} ${QILIN_SOUND_GEN_SOURCES})
+    target_include_directories(qilin_game PUBLIC recomp/runtime/game "${QILIN_GEN_DIR}" "${QILIN_SOUND_GEN_DIR}")
+    target_link_libraries(qilin_game PUBLIC qilin_board qilin_runtime PRIVATE qilin_warnings)
+
+    add_executable(qilin_run tools/run/run.cpp)
     target_include_directories(qilin_run PRIVATE tools/common)
-    target_link_libraries(qilin_run PRIVATE qilin_core qilin_video qilin_gfx qilin_board qilin_runtime qilin_warnings)
+    target_link_libraries(qilin_run PRIVATE qilin_game qilin_core qilin_video qilin_gfx qilin_warnings)
     qilin_tool(qilin_run)
+
+    # SDL3 for the window and input: an installed one, else fetched at a
+    # pinned release and linked statically, else no apb (with a message).
+    find_package(SDL3 CONFIG QUIET)
+    if(NOT SDL3_FOUND AND QILIN_FETCH_SDL3)
+        include(FetchContent)
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+        set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(SDL3 GIT_REPOSITORY https://github.com/libsdl-org/SDL.git GIT_TAG release-3.4.20 GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(SDL3)
+        set(SDL3_FOUND TRUE)
+    endif()
+    if(SDL3_FOUND)
+        add_executable(apb recomp/runtime/app/apb.cpp)
+        target_link_libraries(apb PRIVATE qilin_game qilin_core qilin_video qilin_gfx SDL3::SDL3 qilin_warnings)
+    else()
+        message(STATUS "apb: not built (no SDL3 found and QILIN_FETCH_SDL3 is OFF)")
+    endif()
 endif()

@@ -29,13 +29,15 @@ public:
         return true;
     }
     [[nodiscard]] bool empty() const noexcept { return wanted_.empty(); }
+    // Draws every frame, as the game does (--draw: to measure what video costs).
+    bool draw_all = false;
     void attach(const rom::RomSet& set, sys2::Machine& machine) {
-        if (wanted_.empty()) return;
+        if (wanted_.empty() && !draw_all) return;
         graphics_ = std::make_unique<sys2::Graphics>(set);
         video_ = std::make_unique<sys2::Video>(*graphics_);
         std::vector<std::uint64_t> frames;
         for (const auto& w : wanted_) frames.push_back(w.frame);
-        video_->draw_only(std::move(frames));
+        if (!draw_all) video_->draw_only(std::move(frames));
         machine.video_sink = video_.get();
     }
     // Call when frames may have completed. False if a file couldn't be written.
@@ -56,6 +58,8 @@ public:
         }
         return ok;
     }
+
+    [[nodiscard]] const sys2::Video* video() const noexcept { return video_.get(); }
 
 private:
     struct Wanted {

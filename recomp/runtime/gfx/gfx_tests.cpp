@@ -2,6 +2,7 @@
 // checked by reading the frames back. Exits 77 (skipped) without Vulkan.
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "gfx.hpp"
 
@@ -62,6 +63,18 @@ int main(int argc, char** argv) {
     r->present();
     front = r->read_front_buffer();
     CHECK(pixel_is(front, 10, 10, 128, 128, 128, 255) || pixel_is(front, 10, 10, 127, 127, 127, 255));
+
+    // CPU pixels into the back buffer (B, G, R, A in memory), then a clear of part of it.
+    std::vector<uint32_t> pixels(64 * 48);
+    for (uint32_t i = 0; i < pixels.size(); ++i) pixels[i] = 0xff000000u | (i % 64) << 16 | (i / 64) << 8 | 0x33;
+    r->write_back_buffer(pixels.data());
+    const gfx::Rect corner{0, 0, 2, 2};
+    r->clear(&corner, 1, red);
+    back = r->read_back_buffer();
+    CHECK(pixel_is(back, 10, 20, 10, 20, 0x33, 255) && pixel_is(back, 63, 47, 63, 47, 0x33, 255));
+    CHECK(pixel_is(back, 1, 1, 255, 0, 0, 255) && pixel_is(back, 2, 2, 2, 2, 0x33, 255));
+    r->present();
+    CHECK(pixel_is(r->read_front_buffer(), 5, 6, 5, 6, 0x33, 255));
 
     if (argc > 1) CHECK(gfx::write_png(argv[1], front));
     CHECK(r->validation_errors() == 0);

@@ -23,7 +23,8 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | Sound lifter (`qilin lift --cpu sound`): MAME's microcode as the instruction bodies; yields and resumes mid-function | ✅ all 66 functions; difftest 3,312 trials, 0 mismatches; every instruction form (in CI): 23,520 trials, 0 mismatches |
 | The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode and a credited game, 20,000 frames each, about 60× real time, no unlifted code |
 | Video: the CPU reference renderer (playfield, motion objects, alphanumerics, MAME's priority rule and partial updates) | ✅ boot screens, high scores and gameplay render; `--frame-out FRAME:FILE` saves a frame as a PNG |
-| Video through Vulkan, the `apb` executable with input | 🔨 next |
+| Video through Vulkan: CPU frames uploaded and shown in a window, scaled by whole numbers | ✅ tested on Mesa's software driver with validation, under a virtual X server |
+| The `apb` executable: window and input on SDL3, the EEPROM saved | 🔨 written, not yet built or played here (SDL3 couldn't be fetched in this environment) |
 | Sound chips | to do |
 
 ## Versions and changes
@@ -81,6 +82,31 @@ cmake -S . -B build -DQILIN_SOUND_GEN_DIR="$PWD/gen-sound"
 cmake --build build --target qilin_sound_difftest
 build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--only 5066]
 ```
+
+### Playing it
+
+Seeds first: entries only a run of the game can find (see `docs/recompiler-core.md`). Two reference runs, attract mode and then a credited game, each 20,000 frames, find all 36 that rev 7 needs (about a minute). Then lift both CPUs and build with the lifted code; `apb` needs SDL3, which CMake uses if it's installed and otherwise fetches (release 3.4.20, linked statically; `-DQILIN_FETCH_SDL3=OFF` to never fetch).
+
+```sh
+build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --seeds-out attract.seeds
+build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --coin 1500 --coin 1560 --press 0008:1700 --pedal 63 --steer 1 --seeds attract.seeds --seeds-out apb.seeds
+build/qilin lift "D:/APB Arcade Project" --seeds apb.seeds --out gen
+build/qilin lift "D:/APB Arcade Project" --cpu sound --out gen-sound
+cmake -S . -B build -DQILIN_GEN_DIR="$PWD/gen" -DQILIN_SOUND_GEN_DIR="$PWD/gen-sound" -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target apb qilin_run
+build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N]
+```
+
+| Cabinet | Keyboard | Gamepad |
+|---|---|---|
+| Steering wheel | Left / Right | left stick |
+| Gas pedal | Up | right trigger |
+| Button 1 / 2 / 3 (MAME's numbering) | Left Ctrl or Z / Left Alt or X / Space or C | A / B / X |
+| Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
+| Self-test switch | F2 (toggles) | |
+| Quit | Escape | |
+
+The EEPROM (high scores, audits, settings) is saved in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs and `--draw 1` draws every frame to measure what video costs.
 
 ## Layout
 

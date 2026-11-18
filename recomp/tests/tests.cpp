@@ -579,6 +579,21 @@ void test_video() {
     m.main_write16(0x1700, 3 << 6);
     sys2::render(m, g, *frame, 0, 0);
     CHECK(frame->pens[5] == 128 + 14 && frame->pens[0] == 128 && frame->pens[8 * sys2::Frame::width] == 128 + 14);
+
+    // The two colour conversions agree, rotation included.
+    frame->pens[3] = 200;
+    m.main_write16(0x1000 + 200 * 2, 0xf84f);   // RRRRGGGGBBBBIIII: a bright red-orange
+    m.main_write16(0x1000 + 128 * 2, 0x123c);
+    CHECK(m.palette().color(200).red > m.palette().color(200).green && m.palette().color(128).blue > 0);
+    const auto rgba = sys2::to_rgba(*frame, m.palette());
+    std::vector<std::uint32_t> bgra(sys2::Frame::width * sys2::Frame::height);
+    sys2::to_bgra(*frame, m.palette(), bgra.data());
+    bool same = true;
+    for (std::size_t i = 0; i < bgra.size(); ++i) {
+        const std::uint8_t* p = reinterpret_cast<const std::uint8_t*>(&bgra[i]);
+        same = same && p[0] == rgba[i * 4 + 2] && p[1] == rgba[i * 4 + 1] && p[2] == rgba[i * 4] && p[3] == 255;
+    }
+    CHECK(same);
 }
 
 int main() {

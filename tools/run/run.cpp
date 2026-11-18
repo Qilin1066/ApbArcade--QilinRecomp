@@ -2,7 +2,10 @@
 // scheduled by recomp/runtime/game, from power-on for a number of frames.
 //
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
-//             [--frame-out FRAME:FILE]...
+//             [--frame-out FRAME:FILE]... [--draw 1]
+//
+// --draw 1 draws every frame with the reference renderer, as apb does, to
+// measure what video costs.
 //
 // The inputs are qilin_refrun's, so runs of the two can be compared.
 //
@@ -45,6 +48,7 @@ int main(int argc, char** argv) {
         std::from_chars(value.data(), value.data() + value.size(), number);
         if (flag == "--frames") frames = number;
         else if (flag == "--log") log_path = value;
+        else if (flag == "--draw") capture.draw_all = number != 0;
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
                 std::print(stderr, "qilin_run: --frame-out wants FRAME:FILE\n");
@@ -107,6 +111,8 @@ int main(int argc, char** argv) {
     std::print("T-11 at {:04X}, PSW {:03o}, banks {}/{}; CP lines {:X}, interrupt enable {:X}; 6502 at {:04X}.\n",
                scheduler.main.cpu.r[7], scheduler.main.cpu.psw, machine.bank(0), machine.bank(1), machine.main_cp_lines(),
                machine.interrupt_enable(), scheduler.sound.cpu.pc);
+    if (const auto* v = capture.video(); v && capture.draw_all)
+        std::print("Video: {} frames drawn in {} bands.\n", v->frames(), v->bands());
     if (!log_path.empty()) {
         std::ofstream out{std::string(log_path), std::ios::trunc};
         for (const auto& e : log) out << std::format("{} {:02X} {}\n", e.what, e.value, e.time);

@@ -32,9 +32,11 @@ public:
     [[nodiscard]] const std::uint8_t* tile(unsigned code) const noexcept { return &tiles_[(code % tile_count_) * 64]; }
     [[nodiscard]] const std::uint8_t* sprite(unsigned code) const noexcept { return &sprites_[(code % sprite_count_) * 256]; }
     [[nodiscard]] const std::uint8_t* character(unsigned code) const noexcept { return &chars_[(code % char_count_) * 64]; }
+    // Bit r set: row r of the character has a visible pixel (pen 0 is transparent).
+    [[nodiscard]] std::uint8_t character_rows(unsigned code) const noexcept { return char_rows_[code % char_count_]; }
 
 private:
-    std::vector<std::uint8_t> tiles_, sprites_, chars_;
+    std::vector<std::uint8_t> tiles_, sprites_, chars_, char_rows_;
     unsigned tile_count_ = 0, sprite_count_ = 0, char_count_ = 0;
 };
 
@@ -65,17 +67,21 @@ public:
     // The last frame completed, and how many have been.
     [[nodiscard]] const Frame& frame() const noexcept { return *done_; }
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
+    [[nodiscard]] std::uint64_t bands() const noexcept { return bands_; }   // drawn so far
 
 private:
     const Graphics& graphics_;
     std::unique_ptr<Frame> drawing_ = std::make_unique<Frame>(), done_ = std::make_unique<Frame>();
     int next_line_ = 0;
-    std::uint64_t frames_ = 0;
+    std::uint64_t frames_ = 0, bands_ = 0;
     std::vector<std::uint64_t> only_;
 };
 
 // RGBA through the palette, rotated as the cabinet shows it (MAME's ROT270):
 // 384 wide, 512 high.
 std::vector<std::uint8_t> to_rgba(const Frame& frame, const PaletteRam& palette);
+// The same into 32-bit words, B, G, R, A in memory: what the renderer takes.
+// 'out' holds Frame::width * Frame::height words.
+void to_bgra(const Frame& frame, const PaletteRam& palette, std::uint32_t* out);
 
 } // namespace qilin::sys2

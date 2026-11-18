@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -20,6 +21,14 @@ struct Config {
     uint32_t back_buffers = 1;           // with the front buffer, one more image
     int gpu = -1;                        // index among the Vulkan devices; -1 picks the best one
     bool validation = false;             // Vulkan validation layers, if installed (also QILIN_VK_VALIDATION=1)
+
+    // A window to present to (optional). The windowing library gives the
+    // instance extensions its surfaces need and makes the surface: called
+    // with the VkInstance, it returns a VkSurfaceKHR, or 0 if it can't.
+    std::vector<std::string> instance_extensions;
+    std::function<uint64_t(void* instance)> create_surface;
+    uint32_t window_width = 0, window_height = 0;  // the window's size in pixels
+    bool vsync = true;                             // FIFO; otherwise mailbox or immediate where offered
 };
 
 struct Rect {
@@ -46,9 +55,17 @@ public:
     // rgba is 0..1 per channel.
     virtual void clear(const Rect* rects, uint32_t count, const float rgba[4]) = 0;
 
+    // Replaces the whole back buffer with pixels from the CPU: width x height
+    // words, rows top to bottom, each B, G, R, A in memory order.
+    virtual void write_back_buffer(const uint32_t* bgra) = 0;
+
     // Ends the frame: the back buffer becomes the front buffer (a flip), and
-    // the oldest buffer becomes the new back buffer.
+    // the oldest buffer becomes the new back buffer. With a window, the frame
+    // is also shown there, scaled to fit with its aspect ratio kept (by a
+    // whole number where it fits), centred on black.
     virtual void present() = 0;
+    // The window's size in pixels changed (the swapchain is rebuilt at the next present).
+    virtual void resize_window(uint32_t width, uint32_t height) = 0;
     virtual uint64_t frames_presented() const = 0;
     // The frame buffers are numbered 0 … back_buffers; these say which is which now.
     virtual uint32_t back_index() const = 0;

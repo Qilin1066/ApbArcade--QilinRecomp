@@ -135,6 +135,8 @@ public:
     } counters;
     [[nodiscard]] const VideoMemory& video() const noexcept { return video_; }
     [[nodiscard]] const PaletteRam& palette() const noexcept { return palette_; }
+    // The 2804 EEPROM (high scores, settings, audits): loaded and saved by the game's front end.
+    [[nodiscard]] std::array<std::uint8_t, 0x200>& eeprom() noexcept { return eeprom_; }
     [[nodiscard]] std::uint16_t xscroll() const noexcept { return xscroll_; }
     // The playfield as MAME's tilemap scrolls it: X from the scroll register
     // (bits 6-15); Y from the register less the scanline it was written on
