@@ -1,6 +1,8 @@
 #include "lifter.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <string_view>
 #include <format>
 #include <map>
 #include <set>
@@ -524,7 +526,7 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
         }
         break;
     case Op::mfps:
-        line("t = static_cast<std::uint8_t>((c.psw & 0xF0) | (n << 3) | (z << 2) | (v << 1) | cf);");
+        line("t = static_cast<std::uint8_t>((c.psw & 0xF0) | (n << 3) | (z << 2) | (v << 1) | static_cast<int>(cf));");
         line("n = (t >> 7) & 1; z = (t & 0xFF) == 0; v = false;");
         if (d.mode == t11::reg) {
             if (!writes_pc) line(std::format("r{} = static_cast<std::uint16_t>(static_cast<std::int8_t>(t));", d.reg));
@@ -683,22 +685,39 @@ std::string FunctionWriter::write(std::vector<std::pair<Loc, unsigned>>& entries
         pos = end + 3;
     }
 
+    // Scratch locals, declared only where the body uses them (MSVC warns
+    // about unused ones even when marked [[maybe_unused]]).
+    const auto uses = [&](std::string_view name) {
+        for (auto pos = text.find(name); pos != std::string::npos; pos = text.find(name, pos + 1)) {
+            const auto ident = [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; };
+            const bool before = pos > 0 && ident(text[pos - 1]);
+            const bool after = pos + name.size() < text.size() && ident(text[pos + name.size()]);
+            if (!before && !after) return true;
+        }
+        return false;
+    };
     std::string f = std::format("void {}(Board& b, unsigned entry) {{\n", function_name(entry_));
     f += "    rt::Cpu& c = b.cpu;\n"
          "    std::uint16_t r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0, r5 = 0, r6 = 0;\n"
-         "    [[maybe_unused]] std::uint16_t t = 0;\n"
          "    bool n = false, z = false, v = false, cf = false;\n"
-         "    std::int32_t ic = 0;\n"
-         "    [[maybe_unused]] int src = 0, dst = 0, res = 0;\n"
-         "    [[maybe_unused]] std::uint16_t ea = 0;\n"
-         "    [[maybe_unused]] unsigned resume = 0;\n"
-         "    QL_LOAD();\n";
-    f += "    switch (entry) {\n";
-    for (std::size_t k = 0; k < resume_sites.size(); ++k) {
-        f += std::format("    case {}: goto {};\n", k + 1, label(resume_sites[k]));
-        entries.emplace_back(resume_sites[k], static_cast<unsigned>(k + 1));
+         "    std::int32_t ic = 0;\n";
+    for (const auto* name : {"src", "dst", "res"}) {
+        if (uses(name)) f += std::format("    int {} = 0;\n", name);
     }
-    f += std::format("    default: goto {};\n    }}\n", label(entry_));
+    if (uses("ea")) f += "    std::uint16_t ea = 0;\n";
+    if (uses("t")) f += "    std::uint16_t t = 0;\n";
+    if (!resumes_.empty()) f += "    unsigned resume = 0;\n";
+    f += "    QL_LOAD();\n";
+    if (resume_sites.empty()) {
+        f += std::format("    static_cast<void>(entry);\n    goto {};\n", label(entry_));
+    } else {
+        f += "    switch (entry) {\n";
+        for (std::size_t k = 0; k < resume_sites.size(); ++k) {
+            f += std::format("    case {}: goto {};\n", k + 1, label(resume_sites[k]));
+            entries.emplace_back(resume_sites[k], static_cast<unsigned>(k + 1));
+        }
+        f += std::format("    default: goto {};\n    }}\n", label(entry_));
+    }
     f += text;
     if (!resumes_.empty()) {
         // Board service: write back, let the board run (it may take an
