@@ -27,9 +27,12 @@ add_custom_command(
     DEPENDS apb-t11-fixtures apb-t11-aot "${system2_jumps}"
     VERBATIM
 )
+add_custom_target(apb-t11-generated DEPENDS "${generated}" "${system2_generated}" "${bank_switch_generated}")
 add_executable(apb-t11-probe t11_probe.cpp "${generated}" "${system2_generated}")
+add_dependencies(apb-t11-probe apb-t11-generated)
 target_link_libraries(apb-t11-probe PRIVATE apb_t11_state)
 add_executable(apb-t11-bank-probe t11_bank_probe.cpp "${bank_switch_generated}")
+add_dependencies(apb-t11-bank-probe apb-t11-generated)
 target_link_libraries(apb-t11-bank-probe PRIVATE apb_t11_state)
 
 add_test(NAME t11.native COMMAND apb-t11-probe)
