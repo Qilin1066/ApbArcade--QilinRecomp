@@ -11,6 +11,22 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-18
+The lifter. All 659 functions the analysis finds lift to C++, and every one is checked against MAME's T-11 core: 32,698 trials on the game's own functions and 145,606 on every instruction form, with registers, flags, cycles and the whole bus trace in order compared. 0 mismatches.
+
+### Added
+- **`qilin lift <rom-dir> --out DIR`** (`recomp/src/lifter.*`): one C++ function per guest function, `fn_8288` or `fn_4012_b1`, its body every location reachable without crossing a call, as labels and gotos. R0-R6 and the flags are locals; PC is a constant. Each instruction makes its bus calls in the order MAME's core does, fetches included (the dummy read before `MOV`/`CLR`/`SXT` writes, a destination `(PC)+` read as data, `JMP`/`JSR @#a` reading its address word), charges MAME's cycle count, and computes its flags with MAME's own expressions. 25,554 instructions in 0.6 s; code shared by several functions is copied into each (5% more).
+- **Calls and returns as native C++**, each caller checking the address (and, in a window, the bank) its callee returned to, and returning too when it differs. APB's register-save helpers, which jump back into their caller with `JSR PC,@(SP)+`, run this way with no special case. A dispatcher (`rt::dispatch`) enters lifted code at any function start or return site under the current banks, for computed calls and jumps.
+- **Board service points:** cycles are counted in a local; when they run out at a loop's back edge or after a straight run (at most 128 cycles), the state is written back and `Board::service()` runs device events and interrupts. Also after `MTPS` and traps, where MAME checks interrupts.
+- **`recomp/runtime/t11_rt.hpp`:** the contract between lifted code and the board that runs it (memory, fetches, banks, service, dispatch).
+- **`qilin_difftest`** (`tools/difftest/`, needs your ROMs; build with `-DQILIN_GEN_DIR`): every lifted function against MAME's core from random states (registers, flags, 16 KiB of RAM, banks), whole call trees included. 42,176 trials: 32,698 match, 0 mismatch, 592 functions exercised; the rest are set aside (they wait on hardware the test doesn't model, or leave the lifted set).
+- **`qilin_lifter_check`** (CI, no game files): a synthetic program with one function per instruction form (every two-operand operation with every source and destination mode, the R7 forms on each side, every one-operand operation and mode, branches both ways, `SOB`, `JMP` and `JSR` forms, the coroutine call, traps), lifted by the real lifter and run against MAME's core from edge values (0, 1, 0x7F, 0x80, 0xFF, 0x7FFF, 0x8000, 0xFFFF ...). 2,302 of 2,322 forms complete; 145,606 trials, 0 mismatches. A planted off-by-one in `DEC`'s overflow flag, which random game states never catch, fails it.
+
+### Fixed
+- **Jump tables:** a proof now counts only if every slot in the proven range holds plausible code. A byte index read from RAM is provably 0-255 but its table is shorter; such tables are sized by reading entries, and one whose entry turns out to land inside an instruction is cut there and the analysis re-run.
+- **Bank-window inference** counted `MOV #a,@#x` pointer stores under a mask that could never match (found by Clang 19).
+
+
 ## [0.13.0] - 2026-11-18
 Control-flow analysis keyed by physical ROM address. From reset it reaches 24,063 T-11 instructions in 659 functions, in the fixed ROM and all 12 code banks, with every jump table sized by analysis; nothing is declared by hand.
 

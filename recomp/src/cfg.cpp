@@ -85,9 +85,42 @@ std::optional<std::uint16_t> Program::word(Loc loc, unsigned offset) const {
     return rom_->word(rom::Region::main_cpu, sys2::rom_offset(address, loc.bank, loc.bank));
 }
 
+// Heuristic jump tables can read one entry too many: an address inside an
+// instruction found later. Each such table is cut before that entry and the
+// analysis runs again from scratch, until no heuristic table overlaps code.
 Program Program::analyze(const rom::RomSet& rom, const std::vector<Loc>& seeds) {
+    std::map<Loc, std::size_t> limits;
+    for (int round = 0;; ++round) {
+        auto p = analyze_once(rom, seeds, limits);
+        bool cut = false;
+        for (const auto& [instruction, inside] : p.overlaps_) {
+            for (const auto& [loc, table] : p.tables_) {
+                if (!table.heuristic) {
+                    continue;
+                }
+                for (std::size_t k = 0; k < table.targets.size(); ++k) {
+                    if (table.targets[k] == inside.pc || table.targets[k] == instruction.pc) {
+                        const auto limit = limits.find(loc);
+                        if (limit == limits.end() || limit->second > k) {
+                            limits[loc] = k;
+                            cut = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        if (!cut || round == 16) {
+            return p;
+        }
+    }
+}
+
+Program Program::analyze_once(const rom::RomSet& rom, const std::vector<Loc>& seeds,
+                              const std::map<Loc, std::size_t>& table_limits) {
     Program p;
     p.rom_ = &rom;
+    p.table_limits_ = table_limits;
     p.functions_.insert(Loc{reset_pc, 0});
     p.explore(Loc{reset_pc, 0}, Banks{{0, 0}});   // MAME's bank entries start at 0
     for (const auto& seed : seeds) {
@@ -145,6 +178,10 @@ void Program::run(Work work) {
         }
         if (operand_words_.contains(loc)) {
             report(Issue::overlap, "a branch lands inside another instruction");
+            for (const Loc start : {Loc{static_cast<std::uint16_t>(loc.pc - 2), loc.bank},
+                                    Loc{static_cast<std::uint16_t>(loc.pc - 4), loc.bank}}) {
+                if (nodes_.contains(start)) overlaps_.emplace_back(start, loc);
+            }
         }
         auto& node = nodes_[loc];
         node.insn = t11::decode(*w0, word(loc, 2).value_or(0), word(loc, 4).value_or(0));
@@ -159,6 +196,7 @@ void Program::run(Work work) {
                 }
                 if (nodes_.contains(operand)) {
                     report(Issue::overlap, std::format("operand word at {} is also an instruction", operand.name()));
+                    overlaps_.emplace_back(loc, operand);
                 }
                 operand_words_.insert(operand);
             }
@@ -224,6 +262,7 @@ void Program::run(Work work) {
         }
 
         std::vector<Loc> next;
+        std::vector<Loc> callees;   // explored, but not successors within the caller
         const auto fall_through = [&] {
             if (const auto l = locate(next_pc); l) {
                 next.push_back(*l);
@@ -277,7 +316,7 @@ void Program::run(Work work) {
                     node.flow = call ? Flow::call : Flow::jump;
                     if (const auto t = locate(*target); t) {
                         node.target = t;
-                        next.push_back(*t);
+                        (call ? callees : next).push_back(*t);
                         if (call) {
                             functions_.insert(*t);
                         }
@@ -345,6 +384,7 @@ void Program::run(Work work) {
             }
         }
         node.next = next;
+        next.insert(next.end(), callees.begin(), callees.end());
         for (const auto& successor : next) {
             Banks banks = out;
             if (successor.window() >= 0) {
@@ -380,13 +420,22 @@ bool Program::resolve_tables() {
         // The index range: proven, or (heuristic) from 0 or the proven
         // lower bound until the first entry that doesn't hold up.
         const auto range = range_at->second[index.reg];
-        const bool proven = !range.top() && range.size() <= 2 * 256;
+        // A proof counts only if every slot in the range holds plausible code;
+        // otherwise (a range wider than the table, such as a byte index from
+        // RAM) the entries are read until the first that isn't, and the
+        // lifted code checks the index at run time.
+        bool proven = !range.top() && range.size() <= 2 * 256;
         const std::int32_t first = range.top() ? 0 : range.lo;
         const std::int32_t last = range.top() ? 2 * 255 : std::min(range.hi, range.lo + 2 * 255);
         const auto after = insn.next(loc.pc);
-        Table table{{}, !proven};
+        Table table{{}, false};
         std::set<std::uint16_t> seen;
+        const auto limit = table_limits_.find(loc);
         for (std::int32_t r = first; r <= last; ++r) {
+            if (limit != table_limits_.end() && table.targets.size() >= limit->second) {
+                proven = false;
+                break;
+            }
             const auto slot = static_cast<std::uint16_t>((index.word + r) & 0xfffe);
             if (!seen.insert(slot).second) {
                 continue;
@@ -398,22 +447,19 @@ bool Program::resolve_tables() {
                 entry = rom_->word(rom::Region::main_cpu, sys2::rom_offset(slot, bank, bank));
             }
             const auto target = entry ? static_cast<std::uint16_t>(add_pc ? after + *entry : *entry) : std::uint16_t{0};
-            const bool good = entry && (target & 1) == 0 && target >= 0x4000;
-            // A heuristic table ends at its first entry that isn't plausible code.
-            const bool plausible = good && (proven || [&] {
+            const bool plausible = entry && (target & 1) == 0 && target >= 0x4000 && [&] {
                 const int tw = target >= 0x8000 ? -1 : (target >= 0x6000 ? 1 : 0);
                 if (tw >= 0 && node.banks_in.b[tw] == Banks::unknown) return false;
                 const Loc t{target, static_cast<std::uint8_t>(tw < 0 ? 0 : node.banks_in.b[tw])};
-                return nodes_.contains(t) || plausible_code(t);
-            }());
+                return !operand_words_.contains(t) && (nodes_.contains(t) || plausible_code(t));
+            }();
             if (!plausible) {
-                if (proven) {
-                    table.targets.clear();
-                }
+                proven = false;
                 break;
             }
             table.targets.push_back(target);
         }
+        table.heuristic = !proven;
         if (table.targets.empty()) {
             if (known != tables_.end()) {
                 tables_.erase(known);

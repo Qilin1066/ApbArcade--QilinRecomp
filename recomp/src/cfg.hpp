@@ -121,6 +121,8 @@ public:
 
 private:
     using Work = std::vector<std::pair<Loc, Banks>>;
+    static Program analyze_once(const rom::RomSet& rom, const std::vector<Loc>& seeds,
+                                const std::map<Loc, std::size_t>& table_limits);
     void explore(Loc entry, Banks banks);
     void run(Work work);
     bool resolve_tables();
@@ -146,6 +148,8 @@ private:
         bool operator==(const Table&) const = default;
     };
     std::map<Loc, Table> tables_;   // jump tables: targets, and whether proven
+    std::map<Loc, std::size_t> table_limits_;   // heuristic tables cut short after overlapping code
+    std::vector<std::pair<Loc, Loc>> overlaps_; // an instruction, and a location inside it decoded as code
     std::set<std::uint16_t> pointer_immediates_;
     std::set<Loc> pointer_entries_;
     std::set<std::uint16_t> rejected_pointers_;

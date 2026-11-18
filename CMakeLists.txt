@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(ApbArcadeQilinComp VERSION 0.13.0 LANGUAGES C CXX)
+project(ApbArcadeQilinComp VERSION 0.14.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -67,6 +67,7 @@ target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 # ---- Recompiler core ----
 add_library(qilin_core STATIC
     recomp/src/cfg.cpp
+    recomp/src/lifter.cpp
     recomp/src/romset.cpp
     recomp/src/t11_decoder.cpp
     recomp/src/vrange.cpp
@@ -114,3 +115,36 @@ add_executable(qilin_gfx_tests recomp/runtime/gfx/gfx_tests.cpp)
 target_link_libraries(qilin_gfx_tests PRIVATE qilin_gfx qilin_warnings)
 add_test(NAME qilin_gfx_tests COMMAND qilin_gfx_tests)
 set_tests_properties(qilin_gfx_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+# ---- Differential test: lifted code against MAME's T-11 core (needs your ROMs) ----
+#   qilin lift <rom-dir> --out gen && cmake -B build -DQILIN_GEN_DIR=$PWD/gen
+#   build/qilin_difftest <rom-dir>
+set(QILIN_GEN_DIR "" CACHE PATH "qilin lift output directory, for the differential test")
+if(QILIN_GEN_DIR)
+    file(GLOB QILIN_GEN_SOURCES CONFIGURE_DEPENDS "${QILIN_GEN_DIR}/*.cpp")
+    add_executable(qilin_difftest tools/difftest/difftest.cpp ${QILIN_GEN_SOURCES})
+    target_include_directories(qilin_difftest PRIVATE tools/difftest "${QILIN_GEN_DIR}")
+    target_link_libraries(qilin_difftest PRIVATE qilin_core qilin_mame_t11 qilin_runtime qilin_warnings)
+    qilin_tool(qilin_difftest)
+endif()
+
+# ---- The lifter against MAME's core, every instruction form (no game files; in CI) ----
+add_executable(qilin_lifter_fixture tools/check/lifter_fixture.cpp)
+target_link_libraries(qilin_lifter_fixture PRIVATE qilin_core qilin_warnings)
+qilin_tool(qilin_lifter_fixture)
+set(QILIN_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/lifter_fixture")
+set(QILIN_FIXTURE_SOURCES "${QILIN_FIXTURE_DIR}/lifted_dispatch.cpp")
+foreach(k RANGE 0 7)
+    list(APPEND QILIN_FIXTURE_SOURCES "${QILIN_FIXTURE_DIR}/lifted_${k}.cpp")
+endforeach()
+add_custom_command(
+    OUTPUT ${QILIN_FIXTURE_SOURCES} "${QILIN_FIXTURE_DIR}/lifted.hpp" "${QILIN_FIXTURE_DIR}/program.bin"
+    COMMAND qilin_lifter_fixture "${QILIN_FIXTURE_DIR}"
+    DEPENDS qilin_lifter_fixture
+    VERBATIM
+)
+add_executable(qilin_lifter_check tools/check/lifter_check.cpp ${QILIN_FIXTURE_SOURCES})
+target_include_directories(qilin_lifter_check PRIVATE tools/difftest "${QILIN_FIXTURE_DIR}")
+target_link_libraries(qilin_lifter_check PRIVATE qilin_core qilin_mame_t11 qilin_runtime qilin_warnings)
+qilin_tool(qilin_lifter_check)
+add_test(NAME qilin_lifter_check COMMAND qilin_lifter_check "${QILIN_FIXTURE_DIR}")

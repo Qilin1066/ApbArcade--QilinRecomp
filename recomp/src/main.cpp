@@ -6,16 +6,20 @@
 //                                               linear T-11 listing at CPU addresses
 //   qilin cfg    <rom-dir> [--all]              T-11 control flow from reset: what is
 //                                               reached, and everything not yet followed
+//   qilin lift   <rom-dir> --out DIR            lift every function to C++ (DIR is gitignored
+//                                               when it's gen/: never commit generated code)
 //
 // Nothing read from the ROMs is written anywhere but the output you name.
 
 #include "cfg.hpp"
+#include "lifter.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
 #include "t11_decoder.hpp"
 
 #include <algorithm>
 #include <charconv>
+#include <filesystem>
 #include <cstdio>
 #include <format>
 #include <fstream>
@@ -38,7 +42,8 @@ int usage() {
                "usage: qilin --version\n"
                "       qilin verify <rom-dir>\n"
                "       qilin insns <rom-dir> [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
-               "       qilin cfg <rom-dir> [--all]\n");
+               "       qilin cfg <rom-dir> [--all]\n"
+               "       qilin lift <rom-dir> --out DIR\n");
     return 2;
 }
 
@@ -232,6 +237,42 @@ int cfg_report(const std::vector<std::string_view>& args) {
     return 0;
 }
 
+int lift(const std::vector<std::string_view>& args) {
+    if (args.size() != 3 || args[1] != "--out") {
+        return usage();
+    }
+    const auto set = rom::RomSet::load(args[0]);
+    if (!set) {
+        std::print(stderr, "qilin: {}\n", set.error());
+        return 1;
+    }
+    const auto program = qilin::cfg::Program::analyze(*set);
+    const auto result = qilin::lift::lift(program);
+    if (!result.failures.empty()) {
+        for (const auto& f : result.failures) {
+            std::print(stderr, "qilin: can't lift {}\n", f);
+        }
+        std::print(stderr, "qilin: {} instructions can't be lifted; nothing written\n", result.failures.size());
+        return 3;
+    }
+    const std::filesystem::path out(args[2]);
+    std::error_code error;
+    std::filesystem::create_directories(out, error);
+    std::size_t bytes = 0;
+    for (const auto& file : result.files) {
+        std::ofstream stream(out / file.name, std::ios::binary | std::ios::trunc);
+        stream << file.text;
+        if (!stream) {
+            std::print(stderr, "qilin: can't write {}\n", (out / file.name).string());
+            return 1;
+        }
+        bytes += file.text.size();
+    }
+    std::print("Lifted {} functions ({} instructions with shared code counted per function) into {} files, {} KiB, in {}.\n",
+               result.functions, result.instructions, result.files.size(), bytes / 1024, out.string());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -253,6 +294,9 @@ int main(int argc, char** argv) {
     }
     if (command == "cfg") {
         return cfg_report(args);
+    }
+    if (command == "lift") {
+        return lift(args);
     }
     return usage();
 }

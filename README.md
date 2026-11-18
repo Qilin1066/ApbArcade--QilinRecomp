@@ -16,7 +16,9 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | Board models: memory map, ROM banks, Slapstic 110, palette, interrupt latches, watchdog, sound latches | ✅ each checked against MAME's definitions |
 | Renderer: Vulkan 1.3 (shared with GBTGhoulies-Qilincomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
 | Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 24,063 instructions in 659 functions reached from reset, across the fixed ROM and all 12 code banks; 53% of the fixed ROM and 62% of the code banks proven code |
-| Lifter (functions, locals, flag liveness, cycle counts), differential test against MAME's core | 🔨 next (`docs/recompiler-core.md`) |
+| Lifter (`qilin lift`): one C++ function per guest function, registers and flags in locals, MAME's bus order and cycle counts, native calls with checked returns | ✅ all 659 functions, 25,554 instructions |
+| Differential test against MAME's T-11 core: registers, flags, cycles and every bus access in order | ✅ game functions: 32,698 trials, 0 mismatches; every instruction form (in CI): 145,606 trials, 0 mismatches |
+| Coverage of the rest of the ROM, the board scheduler, `apb` booting to its first frame | 🔨 next |
 | 6502 sound program, sound chips, video, input | to do |
 
 ## Versions and changes
@@ -51,17 +53,28 @@ build/qilin verify "D:/APB Arcade Project"                       # all 36 files,
 build/qilin insns  "D:/APB Arcade Project" --from 8000 --to 8100 # T-11 listing (MAME syntax, cycles)
 build/qilin insns  "D:/APB Arcade Project" --banks 3,12 --from 4000 --to 4100
 build/qilin cfg    "D:/APB Arcade Project" [--all]               # control flow from reset, and all it can't follow yet
+build/qilin lift   "D:/APB Arcade Project" --out gen             # lift to C++ (gen/ is gitignored: never commit it)
+```
+
+### Differential test against your copy of the game
+
+```sh
+build/qilin lift "D:/APB Arcade Project" --out gen
+cmake -S . -B build -DQILIN_GEN_DIR="$PWD/gen"
+cmake --build build --target qilin_difftest
+build/qilin_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--only 8288]
 ```
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `recomp/src/` | Recompiler core: `romset` (the rev 7 set), `t11_decoder`, `cfg` (control flow), `vrange` (value ranges), `main` (the `qilin` CLI) |
-| `recomp/runtime/` | Runtime headers the generated code includes: `system2.hpp`, the board as the T-11 sees it |
+| `recomp/src/` | Recompiler core: `romset` (the rev 7 set), `t11_decoder`, `cfg` (control flow), `vrange` (value ranges), `lifter` (T-11 → C++), `main` (the `qilin` CLI) |
+| `recomp/runtime/` | Runtime headers the generated code includes: `t11_rt.hpp` (CPU state, dispatch, the board contract), `system2.hpp` (the board as the T-11 sees it) |
 | `recomp/runtime/gfx/` | The renderer: Vulkan 1.3, loaded at run time |
 | `recomp/tests/` | Unit tests; they need no game files |
-| `tools/check/` | Checks against MAME: the decoder on every opcode word |
+| `tools/check/` | Checks against MAME: the decoder on every opcode word; the lifter on every instruction form |
+| `tools/difftest/` | Differential test: lifted game functions against MAME's T-11 core |
 | `third_party/` | Vendored: the Vulkan headers and volk (as in GBTGhoulies-Qilincomp) and MAME's T-11 core (the reference CPU). See `third_party/README.md` |
 | `docs/` | Design targets, the board, the recompiler's status, naming |
 
