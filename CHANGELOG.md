@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Model the System 2 interrupt mask, control-pin latches, and mirrored acknowledgement writes.
+- Accept eligible T‑11 interrupts in native code, save the return frame, and report the vector and handler PC.
+- Test mask and latch semantics, acknowledgement mirrors, IRQ priority, and stack validation.
+- Advance the read-only rev 7 scan to the autoincrement operand at PC 0xF03C.
+
 ## 0.3.0
 
 - Lower System 2 watchdog strobes from native byte and word clears and word moves.

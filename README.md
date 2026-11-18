@@ -7,9 +7,10 @@ Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with
 - The verifier checks the sizes and SHA‑1 digests of all 36 rev 7 files.
 - The T‑11 tool translates flat and banked System 2 test programs into C++23. CTest runs both programs natively and verifies bank switches, absolute memory operands, and build-time diagnostics.
 - Native System 2 code can strobe the watchdog through its mirrored low-byte port. The watchdog takes board-clock ticks from the host and holds a reset request when its timer expires.
+- Native code writes the IRQ enable mask and acknowledges board interrupts. An eligible IRQ saves the T‑11 stack frame and returns the handler address to the host.
 - The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
 
-The read-only scan of the verified rev 7 ROM decoded seven reachable locations from the reset entry at 0x8000. It passed the watchdog write at 0xF030 and stopped at the interrupt-enable write to 0x1600 from PC 0xF034. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+The read-only scan of the verified rev 7 ROM decoded nine reachable locations from the reset entry at 0x8000. It passed the watchdog and interrupt-enable writes and stopped at an autoincrement destination at PC 0xF03C. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
 
 The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
 

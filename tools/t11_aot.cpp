@@ -84,9 +84,20 @@ Instruction sequential(Location next, unsigned words, std::string_view operation
     return {words, std::format("    {};\n    {}", operation, jump(next)), {next}};
 }
 
-Instruction strobe_watchdog(Location next, unsigned words, std::string_view flags) {
-    // The T-11's dummy destination read samples input lines without changing them.
-    return sequential(next, words, std::format("{};\n    board.watchdog.strobe()", flags));
+std::string device_write(Address address, std::string_view value) {
+    using qilin::system2::IrqWrite;
+    if (qilin::system2::is_watchdog_write(address)) {
+        return std::format("{};\n    board.watchdog.strobe()", value);
+    }
+    std::string_view source;
+    switch (qilin::system2::irq_write_port(address)) {
+    case IrqWrite::enable: return std::format("board.interrupts.set_enable(static_cast<std::uint8_t>({}))", value);
+    case IrqWrite::ack_sound_command: source = "sound_command_read"; break;
+    case IrqWrite::ack_scanline: source = "scanline"; break;
+    case IrqWrite::ack_vblank: source = "vblank"; break;
+    case IrqWrite::unmapped: return {};
+    }
+    return std::format("{};\n    board.interrupts.acknowledge(system2::IrqSource::{})", value, source);
 }
 
 std::string ram_operand(Location from, Address address, std::string_view access, bool byte = false) {
@@ -143,8 +154,11 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
         }
         const auto address = extension();
         next = where.advance(static_cast<int>(2 * words));
-        if (op == WordOp::move && qilin::system2::is_watchdog_write(address)) {
-            return strobe_watchdog(next, words, std::format("ops::move(s.flags, {})", src));
+        if (op == WordOp::move) {
+            const auto write = device_write(address, std::format("ops::move(s.flags, {})", src));
+            if (!write.empty()) {
+                return sequential(next, words, write);
+            }
         }
         if (const auto window = aot::bank_selector(address); window && op == WordOp::move) {
             if (!immediate) {
@@ -223,8 +237,8 @@ Instruction decode(const Image& image, Location where) {
         if (destination == absolute_pc && (unary == 0005000 || unary == 0105000)) {
             const bool byte = unary == 0105000;
             const auto address = image.word(where, 2);
-            if (qilin::system2::is_watchdog_write(address)) {
-                return strobe_watchdog(where.advance(4), 2, "ops::clear(s.flags)");
+            if (const auto write = device_write(address, "ops::clear(s.flags)"); !write.empty()) {
+                return sequential(where.advance(4), 2, write);
             }
             const auto dst = ram_operand(where, address, "write", byte);
             const auto operation = byte
@@ -303,8 +317,12 @@ void emit(std::ostream& out, Location entry, const Program& decoded, bool banked
     out << "    " << jump(entry);
     for (const auto& [where, instruction] : decoded) {
         out << label(where) << ":\n"
-            << "    if (budget == 0) " << stop("budget", where)
-            << "    --budget;\n" << instruction.body;
+            << "    if (budget == 0) " << stop("budget", where);
+        if (banked) {
+            out << std::format("    if (const auto irq = accept_system2_irq(board, 0x{:04X}, Banks{{{}, {}}})) return *irq;\n",
+                               where.pc, where.banks[0], where.banks[1]);
+        }
+        out << "    --budget;\n" << instruction.body;
     }
     out << "}\n\n} // namespace qilin::t11\n";
 }

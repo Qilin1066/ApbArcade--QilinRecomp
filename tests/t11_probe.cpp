@@ -53,9 +53,66 @@ constexpr bool test_watchdog_timing() {
 
 static_assert(test_watchdog_timing());
 
+constexpr bool test_interrupt_latches() {
+    using qilin::system2::IrqSource;
+    qilin::system2::Interrupts interrupts;
+    interrupts.sample(IrqSource::scanline);
+    if (interrupts.control_pins() != 0) {
+        return false;
+    }
+    interrupts.set_enable(0xff);
+    interrupts.sample(IrqSource::scanline);
+    interrupts.sample(IrqSource::sound_reply_written);
+    interrupts.set_enable(0);
+    if (interrupts.control_pins() != 6) {
+        return false;
+    }
+    interrupts.sample(IrqSource::scanline);
+    if (interrupts.control_pins() != 2) {
+        return false;
+    }
+    interrupts.acknowledge(IrqSource::sound_reply_written);
+    return interrupts.control_pins() == 0;
+}
+
+static_assert(test_interrupt_latches());
+
+bool test_interrupt_entry() {
+    using qilin::system2::IrqSource;
+    qilin::t11::System2State board;
+    board.interrupts.set_enable(0x0c);
+    board.interrupts.sample(IrqSource::scanline);
+    board.interrupts.sample(IrqSource::vblank);
+    board.ram[0x36] = 0x6032;
+    board.ram[0x37] = 0xa4;
+    board.cpu.flags = {.n = true, .c = true};
+    board.cpu.r[6] = 0x400;
+    if (qilin::t11::accept_system2_irq(board, 0x8200, {}).has_value()) {
+        return false;
+    }
+    board.psw_control = 0xc0;
+    auto bad_stack = board;
+    bad_stack.cpu.r[6] = 2;
+    const auto error = qilin::t11::run_system2(bad_stack, 1);
+    if (error.reason != StopReason::interrupt_stack || error.address != 0x8200 || error.vector != 0x6c ||
+        bad_stack.cpu.r[6] != 2 || bad_stack.ram != board.ram) {
+        return false;
+    }
+    if (qilin::t11::run_system2(board, 0).reason != StopReason::budget || board.cpu.r[6] != 0x400) {
+        return false;
+    }
+    const auto irq = qilin::t11::run_system2(board, 1);
+    const auto& flags = board.cpu.flags;
+    return irq.reason == StopReason::interrupt && irq.address == 0x6032 && irq.vector == 0x6c &&
+           board.cpu.r[6] == 0x3fc && board.ram[0x1fe] == 0x8200 && board.ram[0x1ff] == 0xc9 &&
+           board.psw_control == 0xa0 && !flags.n && flags.z && !flags.v && !flags.c &&
+           board.interrupts.control_pins() == 0x0c && board.ram[0x100] == 0;
+}
+
 int test_system2() {
     using qilin::t11::Banks;
     using qilin::t11::System2State;
+    using qilin::system2::IrqSource;
 
     System2State before_jump;
     before_jump.ram[0x103] = 0xa55a;
@@ -90,12 +147,18 @@ int test_system2() {
         System2State complete;
         complete.cpu.r[4] = mode;
         complete.watchdog.advance(1'048'575);
+        complete.interrupts.set_enable(0x0f);
+        for (const auto source : {IrqSource::sound_command_read, IrqSource::sound_reply_written,
+                                  IrqSource::scanline, IrqSource::vblank}) {
+            complete.interrupts.sample(source);
+        }
         const auto halt = qilin::t11::run_system2(complete, 64);
         const auto& result = complete.cpu.flags;
         const bool moved_negative_word = mode == 1;
-        if (halt.reason != StopReason::halt || halt.address != 0x6020 || halt.banks != Banks{1, 35} ||
+        if (halt.reason != StopReason::halt || halt.address != 0x6032 || halt.banks != Banks{1, 35} ||
             complete.cpu.r[0] != 0x1111 || complete.cpu.r[1] != 0x2222 || complete.cpu.r[2] != 0x3333 ||
             complete.watchdog.ticks_left() != 1'048'576 ||
+            complete.interrupts.enabled() != 0x0d || complete.interrupts.control_pins() != 2 ||
             result.n != moved_negative_word || result.z == moved_negative_word || result.v || result.c) {
             std::cerr << "Unexpected result from the native watchdog write in mode " << mode << ".\n";
             return 1;
@@ -110,7 +173,11 @@ int test_system2() {
         std::cerr << "Native execution did not stop for the pending board reset.\n";
         return 1;
     }
-    std::cout << "Native System 2 program switched both ROM windows and serviced the watchdog.\n";
+    if (!test_interrupt_entry()) {
+        std::cerr << "Unexpected native interrupt entry or saved T-11 stack frame.\n";
+        return 1;
+    }
+    std::cout << "Native System 2 code switched ROM windows, serviced the watchdog, and passed IRQ checks.\n";
     return 0;
 }
 

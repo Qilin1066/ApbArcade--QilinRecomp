@@ -71,6 +71,10 @@ void write_system2(const std::filesystem::path& dir) {
     constexpr std::uint16_t bank2[]{0x147e};
     constexpr std::uint16_t bank35[]{
         0012702, 0x3333,         // 0x6002: MOV #0x3333,R2
+        0005037, 0x159e,         // CLR sound command acknowledgement mirror
+        0105037, 0x15de,         // CLRB scanline acknowledgement mirror
+        0010537, 0x15fe,         // MOV R5 to vblank acknowledgement mirror
+        0012737, 0xab0d, 0x167e, // MOV word to interrupt-enable mirror
         0005704,                 // TST R4
         0001411,                 // BEQ byte_clear
         0005304,                 // DEC R4
@@ -89,6 +93,7 @@ void write_system2(const std::filesystem::path& dir) {
         0022737, 0, 0x8000,  // 0x824a: Slapstic window is not a plain ROM data read
         0105037, 0x1801,     // 0x8250: high byte does not strobe the watchdog
         0022737, 0, 0x1800,  // 0x8254: explicit read needs the input port
+        0105037, 0x1601,     // 0x825a: upper byte of the interrupt-enable word
     };
 
     std::ofstream map(dir / "system2.map", std::ios::trunc);
