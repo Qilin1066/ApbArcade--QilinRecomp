@@ -11,6 +11,11 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Added
+- **MAME's 6502 core as the reference sound CPU** (`third_party/mame-m6502`, BSD-3-Clause): MAME's opcode microcode (`om6502.lst`), its generator and the generated, cycle-exact `m6502.hxx`, unmodified, behind a bus interface that sees every bus cycle (opcode fetches, operand fetches, dummy reads, writes). `qilin_mame_m6502_generated` (CI, where Python is found) regenerates the sources and checks the vendored copies match.
+- **A full 6502 decoder** (`recomp/src/m6502_decoder.*`): all 256 NMOS opcodes, the undocumented ones marked as such, MAME's cycle counts and page-crossing penalties, control flow, MAME-format disassembly.
+- **`qilin_m6502_decoder_check`** (CI): disassembly, length and step flags of all 256 opcodes against MAME's disassembler; cycles (with and without a page crossing; branches not taken, taken, and taken into the next page), one bus access per cycle, and where the PC goes against MAME's core; IRQ, NMI and reset sequences. All agree.
+
 ## [0.14.0] - 2026-11-18
 The lifter. All 659 functions the analysis finds lift to C++, and every one is checked against MAME's T-11 core: 32,698 trials on the game's own functions and 145,606 on every instruction form, with registers, flags, cycles and the whole bus trace in order compared. 0 mismatches.
 

@@ -1,6 +1,7 @@
 #pragma once
-// The few pieces of MAME's emu.h that MAME's T-11 disassembler (t11dasm.cpp)
-// uses, so that file compiles here unmodified for tools/check.
+// The few pieces of MAME's emu.h that MAME's disassemblers for the T-11
+// (t11dasm.cpp) and the 6502 (m6502d.cpp) use, so those files compile here
+// unmodified for tools/check.
 
 #include <cstdint>
 #include <cstdio>
@@ -52,10 +53,15 @@ public:
 
     class data_buffer {
     public:
+        // The T-11's buffers hold words, the 6502's bytes; each disassembler
+        // reads only its own kind.
         explicit data_buffer(const u16* words, offs_t base) : words_(words), base_(base) {}
+        explicit data_buffer(const u8* bytes, offs_t base) : bytes_(bytes), base_(base) {}
         u16 r16(offs_t pc) const { return words_[((pc - base_) & 0xffff) / 2]; }
+        u8 r8(offs_t pc) const { return bytes_[(pc - base_) & 0xffff]; }
     private:
-        const u16* words_;
+        const u16* words_ = nullptr;
+        const u8* bytes_ = nullptr;
         offs_t base_;
     };
 
