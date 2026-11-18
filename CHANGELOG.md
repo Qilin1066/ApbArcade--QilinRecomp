@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0
+
+- Compile MOVB, BISB, indexed byte clears, and word predecrement for the banked CPU. Read mapped ROM data using the active banks for register-based byte and word operands.
+- Model the main CPU's sound-reset output and command and reply ports, including latch status and interrupt acknowledgements.
+- Compile direct absolute and PC-relative subroutine calls with PC or R0–R5 as the link register. Test nested calls, stack writes, and register restoration across all 64 bank selections.
+- Advance the verified rev 7 reset scan to the indirect call at 0x81EA after 209 PC and bank combinations.
+
 ## 0.10.0
 
 - Compile System 2 ROM bank selector writes with runtime operands and dispatch to precompiled bank contexts.

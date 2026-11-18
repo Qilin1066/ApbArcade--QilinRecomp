@@ -21,6 +21,14 @@ struct State {
 };
 
 using Banks = std::array<std::uint8_t, 2>;
+
+[[nodiscard]] constexpr unsigned physical_rom_offset(std::uint16_t address, Banks banks) noexcept {
+    if (address >= 0x8000) {
+        return address;
+    }
+    const auto window = (address - 0x4000u) / 0x2000u;
+    return 0x10000u + banks[window] * 0x2000u + address % 0x2000u;
+}
 inline constexpr unsigned system2_ram_size = 0x1000;
 
 [[nodiscard]] constexpr std::uint16_t word_address(std::uint16_t address) noexcept {
@@ -39,6 +47,7 @@ struct System2State {
     std::uint8_t psw_control = 0xe0;
     system2::VideoMemory video{};
     system2::PaletteRam palette{};
+    system2::SoundInterface sound{};
 
     [[nodiscard]] constexpr std::uint16_t read_data_word(std::uint16_t address) noexcept {
         video.observe(address);
@@ -68,7 +77,7 @@ struct System2State {
     }
 };
 
-enum class StopReason { halt, budget, watchdog, interrupt, interrupt_stack, memory_read, memory_write, jump_table };
+enum class StopReason { halt, budget, watchdog, interrupt, interrupt_stack, memory_read, memory_write, jump_table, return_target };
 
 struct Stop {
     StopReason reason;
@@ -125,6 +134,10 @@ constexpr std::uint16_t move(Flags& flags, std::uint16_t source) {
     set_nz(flags, source);
     flags.v = false;
     return source;
+}
+
+constexpr std::uint16_t move_byte(Flags& flags, std::uint8_t value) {
+    return move(flags, (value & 0x80u) ? static_cast<std::uint16_t>(0xff00u | value) : value);
 }
 
 constexpr std::uint16_t add(Flags& flags, std::uint16_t left, std::uint16_t right) {

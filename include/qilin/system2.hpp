@@ -194,6 +194,37 @@ private:
     std::uint8_t pending_{};
 };
 
+struct SoundInterface {
+    bool cpu_reset = true;
+    std::uint8_t chip_reset{}, coin_outputs{}, switch_outputs{};
+    std::uint8_t command{}, reply{};
+    bool command_pending{}, reply_pending{};
+
+    constexpr void write_reset(std::uint8_t value) noexcept {
+        cpu_reset = (value & 1u) != 0;
+        chip_reset = coin_outputs = switch_outputs = 0;
+    }
+    constexpr void write_command(std::uint8_t value) noexcept {
+        command = value;
+        command_pending = true;
+    }
+    constexpr std::uint8_t read_command(Interrupts& interrupts) noexcept {
+        command_pending = false;
+        interrupts.sample(IrqSource::sound_command_read);
+        return command;
+    }
+    constexpr void write_reply(std::uint8_t value, Interrupts& interrupts) noexcept {
+        reply = value;
+        reply_pending = true;
+        interrupts.sample(IrqSource::sound_reply_written);
+    }
+    constexpr std::uint16_t read_reply(Interrupts& interrupts) noexcept {
+        reply_pending = false;
+        interrupts.acknowledge(IrqSource::sound_reply_written);
+        return static_cast<std::uint16_t>(0xff00u | reply);
+    }
+};
+
 // The low byte of each word from 0x1800 through 0x1BFF strobes the watchdog.
 [[nodiscard]] constexpr bool is_watchdog_write(std::uint16_t address) noexcept {
     return (address & 0xfc01u) == 0x1800;

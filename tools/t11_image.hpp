@@ -55,6 +55,7 @@ public:
                  const std::filesystem::path& output);
     [[nodiscard]] std::uint16_t word(Location where, unsigned offset = 0) const;
     [[nodiscard]] std::optional<std::uint16_t> rom_data_word(Location where, Address address) const;
+    [[nodiscard]] const auto& physical_words() const noexcept { return words_; }
 
 private:
     std::vector<std::optional<std::uint16_t>> words_;

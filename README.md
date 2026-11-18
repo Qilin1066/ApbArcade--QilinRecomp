@@ -15,7 +15,7 @@ Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with
 - The 256 palette words support mirrored reads and writes. The palette decoder converts the stored color and intensity fields to 8-bit RGB.
 - The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
 
-The read-only scan of the verified rev 7 ROM resolves four jump-table targets at PC 0xF15E and expands the register-driven bank write at PC 0xF2C4. It analyzes 144 reachable locations from reset at 0x8000 before stopping at a MOVB instruction at PC 0xF2D4. The scan tracks each combination of PC and banks separately. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+The read-only rev 7 scan follows the startup byte loop, the sound-reset write, and two nested calls from reset. It analyzes 209 PC and bank combinations before reaching an indirect subroutine call at 0x81EA. Native tests use synthetic ROMs to verify byte lanes, ROM bank selection, sound latches, and subroutine returns. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
 
 The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
 

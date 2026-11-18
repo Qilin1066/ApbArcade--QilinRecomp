@@ -5,7 +5,7 @@ set(system2_generated "${fixtures}/system2.cpp")
 set(bank_switch_generated "${fixtures}/bank-switch.cpp")
 set(system2_jumps "${CMAKE_CURRENT_SOURCE_DIR}/system2-jumps.map")
 set(system2_pairs "fixed ROM" "unsupported-board" "constant" "bank0" "bank1" "bank1-tail" "bank2" "bank35"
-    "control" "select-zero" "select-two" "jump-offsets" "switch-entry" "switch-tail" "switch-window1")
+    "control" "select-zero" "select-two" "jump-offsets" "switch-entry" "switch-tail" "switch-window1" "switch-subroutine")
 foreach(bank RANGE 0 63)
     list(APPEND system2_pairs "switch-bank${bank}")
 endforeach()

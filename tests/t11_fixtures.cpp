@@ -171,10 +171,28 @@ void write_bank_switch(const std::filesystem::path& dir) {
 
     std::ofstream map(dir / "bank-switch.map", std::ios::trunc);
     write_pair(map, dir, 0x08200, "switch-entry", entry);
+    constexpr std::uint16_t subroutine[]{
+        0004467, 2, 0000207,     // JSR R4,2(PC); RTS PC
+        0010246, 0012602,        // MOV R2,-(SP); MOV (SP)+,R2
+        0000204,                 // RTS R4
+    };
+    write_pair(map, dir, 0x08300, "switch-subroutine", subroutine);
     write_pair(map, dir, 0x13ffe, "switch-tail", bank1_tail);
     write_pair(map, dir, 0x14000, "switch-window1", bank2_head);
     for (unsigned bank = 0; bank < 64; ++bank) {
-        const std::uint16_t program[]{0012701, static_cast<std::uint16_t>(0x1000 + bank), 0}; // MOV #marker,R1; HALT
+        const std::uint16_t program[]{
+            0012701, static_cast<std::uint16_t>(0x1000 + bank),
+            0112346,             // MOVB (R3)+,-(SP)
+            0105066, 1,          // CLRB 1(SP)
+            0152304,             // BISB (R3)+,R4
+            0112705, 0x80,       // MOVB #0x80,R5
+            0016300, 0xfffe,     // MOV -2(R3),R0 (banked ROM)
+            0010137, 0x15be,     // MOV R1 to sound reset mirror
+            0110537, 0x16fe,     // MOVB R5 to command latch mirror
+            0013702, 0x1ffe,     // MOV sound reply mirror,R2
+            0004737, 0x8300,     // JSR PC,@#0x8300
+            0,
+        };
         write_pair(map, dir, 0x10002 + 0x2000 * bank, "switch-bank" + std::to_string(bank), program);
     }
     map.close();

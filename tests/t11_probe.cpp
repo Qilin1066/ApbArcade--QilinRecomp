@@ -220,8 +220,8 @@ bool test_indirect_words() {
     qilin::t11::System2State bad_read;
     bad_read.cpu.r[5] = 0x3fff;
     const auto read_stop = qilin::t11::run_system2(bad_read, 64);
-    return read_stop.reason == StopReason::memory_read && read_stop.address == 0x6034 &&
-           read_stop.memory_address == 0x4000 && read_stop.banks == qilin::t11::Banks{1, 35} &&
+    return read_stop.reason == StopReason::memory_write && read_stop.address == 0x6034 &&
+           read_stop.memory_address == 0x4002 && read_stop.banks == qilin::t11::Banks{1, 35} &&
            bad_read.cpu.r[5] == 0x4001 && bad_read.video.read_window(0x3ffe) == 0x3fff;
 }
 

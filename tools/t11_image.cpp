@@ -206,11 +206,7 @@ std::uint16_t System2Image::word(Location where, unsigned offset) const {
         throw std::runtime_error("word at " + describe(where.at(address), banked) + " is outside aligned System 2 ROM");
     }
 
-    std::uint32_t physical = address;
-    if (address < fixed_rom_start) {
-        const auto window = (address - window_start) / window_size;
-        physical = bank_rom_start + where.banks[window] * window_size + (address % window_size);
-    }
+    const auto physical = physical_rom_offset(address, where.banks);
 
     const auto word = words_[physical / 2];
     if (!word) {
