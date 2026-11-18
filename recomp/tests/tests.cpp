@@ -9,6 +9,7 @@
 #include "m6502_cfg.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
+#include "system2_machine.hpp"
 #include "t11_decoder.hpp"
 
 #include <array>
@@ -392,6 +393,106 @@ void test_cfg() {
     CHECK(unknown_bank && !unexpected);
 }
 
+// A jump table guarded by a BIT mask test, APB's form at 0x8820, and a
+// pointer immediate stored by window code into its own window.
+void test_cfg_mask_table_and_window_pointer() {
+    namespace cfg = qilin::cfg;
+    Image image;
+    image.put(0x8000, {
+        013701, 0x0100,       // 8000 MOV @#100,R1       anything
+        062701, 020,          // 8004 ADD #20,R1
+        032701, 0177740,      // 8008 BIT #177740,R1     Z: R1 < 32
+        001402,               // 800C BEQ 8012
+        005000,               // 800E CLR R0
+        000207,               // 8010 RTS PC
+        006301,               // 8012 ASL R1
+        000171, 0x9000,       // 8014 JMP @9000(R1)      32 entries, never 33
+    });
+    for (unsigned k = 0; k < 32; ++k) image.put(0x9000 + 2 * k, {static_cast<std::uint16_t>(0x8200 + 2 * k)});
+    image.put(0x9040, {0x8300});   // past the end: never a target
+    for (unsigned k = 0; k < 32; ++k) image.put(0x8200 + 2 * k, {000207});
+    image.put(0x8300, {0});        // HALT: would be a finding if reached
+    // Bank 12 (selected by writing 0) runs at 0x4000 and stores a pointer into itself.
+    image.put(0x8100, {005037, 0x1400, 004737, 0x4000, 000207});   // CLR @#012000; JSR PC,@#4000; RTS PC
+    const std::uint32_t bank12 = 0x10000 + 12 * 0x2000;
+    image.put(bank12, {012737, 0x4100, 0x0200, 000207});           // MOV #4100,@#200; RTS PC
+    image.put(bank12 + 0x100, {005200, 000207});                   // 4100: INC R0; RTS PC
+    const auto set = image.set();
+    const auto program = cfg::Program::analyze(set, {cfg::Loc{0x8100, 0}});
+    const auto& table = program.nodes().at(cfg::Loc{0x8014, 0});
+    CHECK(table.flow == cfg::Flow::table && table.table.size() == 32 && !table.heuristic_table);
+    CHECK(program.nodes().contains(cfg::Loc{0x823E, 0}) && !program.nodes().contains(cfg::Loc{0x8300, 0}));
+    CHECK(program.pointer_entries().contains(cfg::Loc{0x4100, 12}));
+    CHECK(program.nodes().contains(cfg::Loc{0x4102, 12}));
+}
+
+// The board model against MAME's atarisy2.cpp: the latches and the lines they
+// drive, the delayed interrupt enable, the 32V and VBLANK interrupts, the
+// sound IRQ (not while the 6502 is held in reset), the watchdog, sound-side
+// mirrors and main-side byte lanes.
+void test_machine() {
+    std::vector<std::uint8_t> main_rom(0x90000, 0), sound_rom(0x10000, 0);
+    sys2::Machine m(main_rom, sound_rom);
+    CHECK(m.sound_held_in_reset());
+    m.main_write16(0x15A0, 0);                 // sound_reset_w(0): the 6502 runs
+    CHECK(!m.sound_held_in_reset());
+    m.main_write8(0x1681, 0x12);               // the odd byte: not the latch's lane
+    CHECK(!m.sound_nmi_line());
+
+    // The interrupt enable takes effect at the next synchronisation.
+    m.main_write16(0x1600, 0x000f);
+    m.sound_write(0x1874, 0x56);               // reply: CP1 from the enable as it was (0)
+    CHECK((m.main_cp_lines() & 2) == 0);
+    CHECK((m.main_read16(0x1800) & 0x30) == 0x10 && (m.sound_read(0x1840) & 3) == 2);
+    CHECK(m.main_read16(0x1C00) == 0xff56 && (m.main_read16(0x1800) & 0x10) == 0);
+    m.run_events(0);                           // applies the enable; line 0's 32V interrupt
+    CHECK((m.main_cp_lines() & 4) != 0);
+    m.main_write16(0x15C0, 0);
+    CHECK((m.main_cp_lines() & 4) == 0);
+
+    // Command: NMI, IN0 bit 5 and IN1 bit 0 until the 6502 reads it, which clocks CP0.
+    m.main_write16(0x1680, 0x1234);
+    CHECK(m.sound_nmi_line() && (m.main_read16(0x1800) & 0x20) != 0 && (m.sound_read(0x1840) & 1) == 1);
+    CHECK(m.sound_read(0x3C60) == 0x34);       // 0x1860 through mirror bits 10 and 13
+    CHECK(!m.sound_nmi_line() && (m.main_cp_lines() & 1) != 0);
+    m.main_write16(0x1580, 0);
+    CHECK((m.main_cp_lines() & 1) == 0);
+    m.sound_write(0x1874, 0x99);
+    CHECK((m.main_cp_lines() & 2) != 0);       // CP1 now enabled
+    m.main_read16(0x1C00);
+    CHECK((m.main_cp_lines() & 2) == 0);
+
+    // VBLANK at line 384: CP3 and a frame.
+    m.main_time = 384 * sys2::cycles_per_scanline;
+    m.run_events(m.main_time);
+    CHECK((m.main_cp_lines() & 8) != 0 && m.frames() == 1);
+
+    // The 244 Hz sound IRQ, acknowledged at 0x1878; none while the 6502 is held in reset.
+    m.main_time = sys2::sound_irq_period;
+    m.main_write16(0x1800, 0);                 // keep the watchdog quiet
+    m.run_events(m.main_time);
+    CHECK(m.sound_irq_line());
+    m.sound_write(0x1879, 0);
+    CHECK(!m.sound_irq_line());
+    m.main_write16(0x15A0, 1);
+    m.main_time = 2 * sys2::sound_irq_period;
+    m.run_events(m.main_time);
+    CHECK(!m.sound_irq_line());
+
+    // The watchdog: a strobe each period keeps it quiet; then it runs out.
+    m.main_write16(0x1800, 0);
+    CHECK(!m.take_watchdog_expiry());
+    m.main_time += sys2::watchdog_period;
+    m.run_events(m.main_time);
+    CHECK(m.take_watchdog_expiry() && !m.take_watchdog_expiry());
+
+    // Bank select: writing 0 selects bank 12; sound RAM is mirrored at 0x2000.
+    m.main_write16(0x1402, 0);
+    CHECK(m.bank(1) == 12);
+    m.sound_write(0x0123, 0x77);
+    CHECK(m.sound_read(0x2123) == 0x77);
+}
+
 // The sound program's analysis on a synthetic 6502 ROM: a branch that is
 // always taken in front of data, a command dispatcher like APB's (a class
 // table and an argument table indexed by the same command, the class picking
@@ -460,6 +561,8 @@ int main() {
     test_watchdog_and_interrupts();
     test_decoder();
     test_cfg();
+    test_cfg_mask_table_and_window_pointer();
+    test_machine();
     test_sound_cfg();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

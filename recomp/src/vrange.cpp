@@ -25,9 +25,10 @@ Interval make(std::int64_t lo, std::int64_t hi) {
 
 // Which register the flags describe, and against what.
 struct Cond {
-    enum Kind : std::uint8_t { none, compare, result } kind = none;
+    // bitmask: BIT #m,Rn with m a run of high bits (177740 ...): Z says Rn <= ~m, unsigned.
+    enum Kind : std::uint8_t { none, compare, result, bitmask } kind = none;
     std::uint8_t reg = 0;
-    std::uint16_t k = 0;      // compare: the constant
+    std::uint16_t k = 0;      // compare: the constant; bitmask: ~m
     bool reversed = false;    // compare: flags are k - Rn (CMP #k,Rn); else Rn - k
     bool v_clear = false;     // result: V is known clear
     auto operator<=>(const Cond&) const = default;
@@ -211,6 +212,14 @@ State transfer(const t11::Instruction& insn, State in) {
     case Op::tst:
         if (dst_reg && !insn.byte) cond = {Cond::result, static_cast<std::uint8_t>(d), 0, false, true};
         break;
+    case Op::bit:
+        if (dst_reg && !insn.byte && insn.src.immediate()) {
+            const auto low = static_cast<std::uint16_t>(~insn.src.word);
+            if (low != 0xffff && (low & (low + 1u)) == 0) {   // the mask is all the bits above 'low'
+                cond = {Cond::bitmask, static_cast<std::uint8_t>(d), low, false, false};
+            }
+        }
+        break;
     case Op::cmp:
         if (!insn.byte) {
             if (insn.src.immediate() && dst_reg) {
@@ -288,6 +297,9 @@ std::optional<State> narrow(const State& in, Op op, bool taken) {
         default: break;
         }
         if (c.reversed) rel = flip(rel);   // k REL Rn  ==  Rn flip(REL) k
+    } else if (c.kind == Cond::bitmask) {
+        if (op == Op::beq) rel = ule;      // no bit of the mask set
+        if (op == Op::bne) rel = ugt;
     } else {
         k = 0;
         switch (op) {

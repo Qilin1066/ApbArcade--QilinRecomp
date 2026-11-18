@@ -5,10 +5,10 @@
 //   qilin insns  <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]
 //                                               linear listing at CPU addresses: T-11
 //                                               (main, the default) or 6502 (sound)
-//   qilin cfg    <rom-dir> [--cpu main|sound] [--all]
+//   qilin cfg    <rom-dir> [--cpu main|sound] [--seeds FILE] [--all]
 //                                               control flow from reset: what is reached,
 //                                               and everything not yet followed
-//   qilin lift   <rom-dir> [--cpu main|sound] --out DIR
+//   qilin lift   <rom-dir> [--cpu main|sound] [--seeds FILE] --out DIR
 //                                               lift every function to C++ (DIR is gitignored
 //                                               when it's gen/: never commit generated code)
 //
@@ -49,8 +49,8 @@ int usage() {
                "usage: qilin --version\n"
                "       qilin verify <rom-dir>\n"
                "       qilin insns <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
-               "       qilin cfg <rom-dir> [--cpu main|sound] [--all]\n"
-               "       qilin lift <rom-dir> [--cpu main|sound] --out DIR\n");
+               "       qilin cfg <rom-dir> [--cpu main|sound] [--seeds FILE] [--all]\n"
+               "       qilin lift <rom-dir> [--cpu main|sound] [--seeds FILE] --out DIR\n");
     return 2;
 }
 
@@ -253,9 +253,17 @@ int cfg_report(const std::vector<std::string_view>& args) {
     bool all = false;
     bool sound = false;
     std::optional<unsigned> at;
+    std::vector<qilin::cfg::Loc> seeds;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--all") {
             all = true;
+        } else if (args[i] == "--seeds" && i + 1 < args.size()) {
+            auto loaded = qilin::cfg::read_seeds(std::string(args[++i]));
+            if (!loaded) {
+                std::print(stderr, "qilin: {}\n", loaded.error());
+                return 1;
+            }
+            seeds = std::move(*loaded);
         } else if (args[i] == "--from-where" && i + 1 < args.size() && parse_number(args[i + 1], 16)) {
             at = parse_number(args[++i], 16);
         } else if (args[i] == "--cpu" && i + 1 < args.size() && (args[i + 1] == "main" || args[i + 1] == "sound")) {
@@ -275,7 +283,7 @@ int cfg_report(const std::vector<std::string_view>& args) {
     if (sound) {
         return sound_cfg_report(*set, all, at);
     }
-    const auto program = qilin::cfg::Program::analyze(*set);
+    const auto program = qilin::cfg::Program::analyze(*set, seeds);
     std::size_t fixed = 0, banked = 0, bytes = 0;
     std::set<unsigned> banks;
     for (const auto& [loc, node] : program.nodes()) {
@@ -343,9 +351,17 @@ int cfg_report(const std::vector<std::string_view>& args) {
 int lift(const std::vector<std::string_view>& args) {
     std::string_view out_dir;
     bool sound = false;
+    std::vector<qilin::cfg::Loc> seeds;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--out" && i + 1 < args.size()) {
             out_dir = args[++i];
+        } else if (args[i] == "--seeds" && i + 1 < args.size()) {
+            auto loaded = qilin::cfg::read_seeds(std::string(args[++i]));
+            if (!loaded) {
+                std::print(stderr, "qilin: {}\n", loaded.error());
+                return 1;
+            }
+            seeds = std::move(*loaded);
         } else if (args[i] == "--cpu" && i + 1 < args.size() && (args[i + 1] == "main" || args[i + 1] == "sound")) {
             sound = args[++i] == "sound";
         } else {
@@ -371,7 +387,7 @@ int lift(const std::vector<std::string_view>& args) {
         functions = result.functions;
         instructions = result.instructions;
     } else {
-        const auto program = qilin::cfg::Program::analyze(*set);
+        const auto program = qilin::cfg::Program::analyze(*set, seeds);
         auto result = qilin::lift::lift(program);
         for (auto& f : result.files) files.emplace_back(std::move(f.name), std::move(f.text));
         failures = std::move(result.failures);

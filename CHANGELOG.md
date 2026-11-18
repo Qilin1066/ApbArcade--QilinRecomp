@@ -11,6 +11,16 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Added
+- **The System 2 board as both CPUs see it** (`recomp/runtime/system2_machine.*`, library `qilin_board`), after MAME's `atarisy2.cpp`: the main map (RAM, palette, ROM banks, the Slapstic video view, CP0-CP3 latched from the interrupt enable, which applies at the next synchronisation as MAME's `synchronize` does, IN0 with the two latches' pending bits, the watchdog, the ADC) and the sound map with all of MAME's mirrors (RAM, EEPROM, two POKEYs, the YM2151's busy flag, the TMS5220, IN1, the LETA dial, the latches, the IRQ acknowledge). Events in main-CPU cycles, all whole numbers: the 32V interrupt every 64 lines, VBLANK at line 384 (166,400 cycles a frame), the 244 Hz sound IRQ (40,960 cycles, never while the 6502 is held in reset) and the watchdog (1,048,576). Unit-tested against MAME's definitions.
+- **`qilin_refrun`** (`tools/refrun/`, needs your ROMs): the game on MAME's own T-11 and 6502 cores and that board, in 64-cycle slices, with every executed address recorded; coins, buttons, the pedal and the steering dial can be scripted. On rev 7 it runs the power-on tests, releases the sound CPU, completes the start-up handshake and runs attract mode and a credited game with no watchdog reset, two minutes of game time in 7 s. It compares what ran with both analyses and turns what the analysis missed into seeds (`--seeds-out`), re-analysing until everything executed is covered: 36 seeds over three runs, all of them entries reached only through RAM handler tables, pointers in data records or far-call trampolines. Every 6502 address executed was already found.
+- **`--seeds FILE`** for `qilin cfg` and `qilin lift`.
+
+### Fixed
+- **`JMP @X(Rn)` jump tables were sized but never applied**: exploration only used resolved tables for `ADD X(Rn),PC`. The reference run found the one at `8820` by executing it.
+- **Value ranges narrow on `BIT #mask,Rn`** where the mask is a run of high bits (`BIT #177740,R1 / BEQ`: R1 < 32), which proves that table.
+- **An entry in a window is explored with its own bank known.** Seeds and pointer entries in banked code used to advance one instruction per analysis round.
+- **Pointer immediates into the code's own window** (`MOV #4D34,52A(R0)` in bank 12) are entries in that bank. Guessed pointers must now look like ordinary code: no traps or `RTT` and no repeated identical branch, which rejects two data tables in bank 2 that had been decoded as code.
 ## [0.15.0] - 2026-11-18
 The sound CPU. The 6502 program gets everything the T-11's has: MAME's core as the reference, a decoder verified on every opcode, control-flow analysis that resolves every jump table exactly, and a lifter whose instruction bodies are MAME's own microcode, checked against MAME's core on the game's functions (3,312 trials) and on every instruction form (23,520 trials). 0 mismatches.
 

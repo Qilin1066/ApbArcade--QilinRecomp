@@ -16,6 +16,7 @@
 #include "t11_decoder.hpp"
 
 #include <compare>
+#include <expected>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -91,6 +92,10 @@ struct Finding {
     std::string detail;
 };
 
+// Reads a seed file: one location per line ("D758", "4E0C/b12"; hex address,
+// decimal bank), '#' comments and blank lines ignored.
+[[nodiscard]] std::expected<std::vector<Loc>, std::string> read_seeds(const std::string& path);
+
 class Program {
 public:
     // Explores from the reset entry and any extra entries (seeds).
@@ -107,7 +112,7 @@ public:
     // Entries found only as pointer immediates (MOV #addr,...), after they
     // passed validation; and those that didn't.
     [[nodiscard]] const std::set<Loc>& pointer_entries() const noexcept { return pointer_entries_; }
-    [[nodiscard]] const std::set<std::uint16_t>& rejected_pointers() const noexcept { return rejected_pointers_; }
+    [[nodiscard]] const std::set<Loc>& rejected_pointers() const noexcept { return rejected_pointers_; }
     // Register-save helpers (JSR Rn,@#helper; the helper continues its
     // caller with JSR PC,@(SP)+), and the functions found by their calls.
     [[nodiscard]] const std::set<std::uint16_t>& save_helpers() const noexcept { return save_helpers_; }
@@ -130,7 +135,7 @@ private:
     bool seed_prologues();
     bool seed_bank_tables();
     void find_bank_windows();
-    bool plausible_code(Loc entry) const;
+    bool plausible_code(Loc entry, bool strict = false) const;
     void add(Loc loc, Banks banks, Work& work);
     std::optional<std::uint16_t> word(Loc loc, unsigned offset) const;
 
@@ -150,9 +155,9 @@ private:
     std::map<Loc, Table> tables_;   // jump tables: targets, and whether proven
     std::map<Loc, std::size_t> table_limits_;   // heuristic tables cut short after overlapping code
     std::vector<std::pair<Loc, Loc>> overlaps_; // an instruction, and a location inside it decoded as code
-    std::set<std::uint16_t> pointer_immediates_;
+    std::set<Loc> pointer_immediates_;
     std::set<Loc> pointer_entries_;
-    std::set<std::uint16_t> rejected_pointers_;
+    std::set<Loc> rejected_pointers_;
     std::set<std::uint16_t> window_pointers_;
     std::set<std::uint16_t> save_helpers_;
     std::set<Loc> prologue_entries_;

@@ -64,6 +64,10 @@ endfunction()
 add_library(qilin_runtime INTERFACE)
 target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 
+# The System 2 board as both CPUs see it: run by the reference run now, by the game later.
+add_library(qilin_board STATIC recomp/runtime/system2_machine.cpp)
+target_link_libraries(qilin_board PUBLIC qilin_runtime PRIVATE qilin_warnings)
+
 # ---- Recompiler core ----
 # The 6502 lifter's instruction bodies are MAME's microcode: om6502.lst is
 # built into qilin as bytes (rewritten only when it changes).
@@ -95,7 +99,7 @@ qilin_tool(qilin)
 # ---- Tests (no game files needed) ----
 enable_testing()
 add_executable(qilin_tests recomp/tests/tests.cpp)
-target_link_libraries(qilin_tests PRIVATE qilin_core qilin_warnings)
+target_link_libraries(qilin_tests PRIVATE qilin_core qilin_board qilin_warnings)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
 
@@ -153,6 +157,11 @@ add_executable(qilin_gfx_tests recomp/runtime/gfx/gfx_tests.cpp)
 target_link_libraries(qilin_gfx_tests PRIVATE qilin_gfx qilin_warnings)
 add_test(NAME qilin_gfx_tests COMMAND qilin_gfx_tests)
 set_tests_properties(qilin_gfx_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+# ---- Reference run: the game on MAME's CPU cores and the board model (needs your ROMs) ----
+add_executable(qilin_refrun tools/refrun/refrun.cpp)
+target_link_libraries(qilin_refrun PRIVATE qilin_core qilin_board qilin_mame_t11 qilin_mame_m6502 qilin_warnings)
+qilin_tool(qilin_refrun)
 
 # ---- Differential test: lifted code against MAME's T-11 core (needs your ROMs) ----
 #   qilin lift <rom-dir> --out gen && cmake -B build -DQILIN_GEN_DIR=$PWD/gen

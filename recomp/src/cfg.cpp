@@ -4,7 +4,11 @@
 #include "vrange.hpp"
 
 #include <array>
+#include <cctype>
+#include <charconv>
 #include <format>
+#include <fstream>
+#include <optional>
 
 namespace qilin::cfg {
 namespace {
@@ -54,6 +58,34 @@ std::optional<std::uint16_t> fixed_address(const t11::Operand& op, std::uint16_t
 
 std::uint32_t Loc::physical() const noexcept {
     return sys2::rom_offset(pc, bank, bank);
+}
+
+std::expected<std::vector<Loc>, std::string> read_seeds(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return std::unexpected(std::format("can't read {}", path));
+    std::vector<Loc> seeds;
+    std::string line;
+    for (int number = 1; std::getline(in, line); ++number) {
+        if (const auto hash = line.find('#'); hash != std::string::npos) line.erase(hash);
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.front()))) line.erase(line.begin());
+        if (line.empty()) continue;
+        unsigned pc = 0, bank = 0;
+        const auto slash = line.find("/b");
+        const char* begin = line.data();
+        const char* end = line.data() + (slash == std::string::npos ? line.size() : slash);
+        const auto parsed = std::from_chars(begin, end, pc, 16);
+        bool ok = parsed.ec == std::errc{} && parsed.ptr == end && pc >= 0x4000 && pc <= 0xffff && (pc & 1) == 0;
+        if (ok && slash != std::string::npos) {
+            const auto b = std::from_chars(line.data() + slash + 2, line.data() + line.size(), bank, 10);
+            ok = b.ec == std::errc{} && b.ptr == line.data() + line.size() && bank < 64 && pc < 0x8000;
+        } else if (ok) {
+            ok = pc >= 0x8000;   // a window address needs its bank
+        }
+        if (!ok) return std::unexpected(std::format("{}:{}: not a location: {}", path, number, line));
+        seeds.push_back(Loc{static_cast<std::uint16_t>(pc), static_cast<std::uint8_t>(bank)});
+    }
+    return seeds;
 }
 
 std::string Loc::name() const {
@@ -150,6 +182,10 @@ Program Program::analyze_once(const rom::RomSet& rom, const std::vector<Loc>& se
 }
 
 void Program::explore(Loc entry, Banks entry_banks) {
+    // Code running from a window has that window's bank, whatever else is unknown.
+    if (entry.window() >= 0 && entry_banks.b[entry.window()] == Banks::unknown) {
+        entry_banks.b[entry.window()] = entry.bank;
+    }
     Work work;
     add(entry, entry_banks, work);
     run(std::move(work));
@@ -248,9 +284,15 @@ void Program::run(Work work) {
             }
         }
         // Pointer immediates: MOV #addr to a register or memory.
+        // A window address written by code running in that same window
+        // points into the code's own bank (APB's bank-12 code fills its RAM
+        // handler tables this way); one into the other window can't be placed.
         if (insn.legal && insn.op == Op::mov && !insn.byte && insn.src.immediate() && (insn.src.word & 1) == 0) {
+            const Loc pointer{insn.src.word, 0};
             if (insn.src.word >= 0x8000) {
-                pointer_immediates_.insert(insn.src.word);
+                pointer_immediates_.insert(pointer);
+            } else if (insn.src.word >= 0x4000 && pointer.window() == loc.window()) {
+                pointer_immediates_.insert(Loc{insn.src.word, loc.bank});
             } else if (insn.src.word >= 0x4000) {
                 window_pointers_.insert(insn.src.word);
             }
@@ -312,7 +354,17 @@ void Program::run(Work work) {
             case Op::jsr: {
                 const bool call = insn.op == Op::jsr;
                 const auto target = fixed_address(insn.dst, next_pc);
-                if (target) {
+                if (const auto table = tables_.find(loc); !call && table != tables_.end()) {
+                    // JMP @X(Rn) through a table resolve_tables sized.
+                    node.flow = Flow::table;
+                    node.table = table->second.targets;
+                    node.heuristic_table = table->second.heuristic;
+                    for (const auto entry : table->second.targets) {
+                        if (const auto t = locate(entry); t) {
+                            next.push_back(*t);
+                        }
+                    }
+                } else if (target) {
                     node.flow = call ? Flow::call : Flow::jump;
                     if (const auto t = locate(*target); t) {
                         node.target = t;
@@ -484,8 +536,9 @@ bool Program::resolve_tables() {
 // an instruction that ends the run (return, jump, branch always) through
 // instructions the T-11 executes, with no PC addressing a compiler or
 // assembler wouldn't write, inside the ROM.
-bool Program::plausible_code(Loc entry) const {
+bool Program::plausible_code(Loc entry, bool strict) const {
     Loc at = entry;
+    std::optional<Op> last_branch;
     for (int count = 0; count < 64; ++count) {
         const auto w0 = word(at, 0);
         if (!w0 || operand_words_.contains(at)) {
@@ -495,6 +548,18 @@ bool Program::plausible_code(Loc entry) const {
         if (!insn.legal || insn.op == Op::halt || insn.op == Op::wait || insn.op == Op::reset) {
             return false;
         }
+        // A value only guessed to be a pointer must look like ordinary code:
+        // no traps or RTT, which data decodes to far more often than code uses.
+        if (strict && (insn.op == Op::bpt || insn.op == Op::iot || insn.op == Op::emt || insn.op == Op::trap ||
+                       insn.op == Op::rtt)) {
+            return false;
+        }
+        // Nor two conditional branches on the same condition in a row: the
+        // second could never be taken. Tables of small words decode that way.
+        if (strict && is_branch(insn.op) && last_branch == insn.op) {
+            return false;
+        }
+        last_branch = is_branch(insn.op) ? std::optional<Op>(insn.op) : std::nullopt;
         for (unsigned i = 1; i < insn.words; ++i) {
             if (!word(at, 2 * i)) {
                 return false;
@@ -527,18 +592,17 @@ bool Program::plausible_code(Loc entry) const {
 
 bool Program::seed_pointers() {
     bool grew = false;
-    for (const auto address : std::set(pointer_immediates_)) {
-        const Loc entry{address, 0};
-        if (functions_.contains(entry) || rejected_pointers_.contains(address)) {
+    for (const auto entry : std::set(pointer_immediates_)) {
+        if (functions_.contains(entry) || rejected_pointers_.contains(entry)) {
             continue;
         }
-        if (nodes_.contains(entry) || plausible_code(entry)) {
+        if (nodes_.contains(entry) || plausible_code(entry, true)) {
             functions_.insert(entry);
             pointer_entries_.insert(entry);
             explore(entry, Banks{});
             grew = true;
         } else {
-            rejected_pointers_.insert(address);
+            rejected_pointers_.insert(entry);
         }
     }
     return grew;

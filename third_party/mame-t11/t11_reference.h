@@ -65,6 +65,8 @@ public:
 	uint8_t psw() const { return m_psw.b.l; }
 	void set_psw(uint8_t value) { m_psw.d = value; }
 	bool waiting() const { return m_wait_state != 0; }
+	// The PC of the instruction step() last executed (MAME's m_ppc).
+	uint16_t ppc() const { return m_ppc.w.l; }
 
 protected:
 	union PAIR

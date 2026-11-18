@@ -49,6 +49,10 @@ public:
 	uint8_t p() const { return m_P; }
 	uint8_t s() const { return static_cast<uint8_t>(m_SP); }
 	uint8_t ir() const { return m_IR; }
+	// The next step() runs the interrupt sequence (an IRQ or NMI was taken
+	// at the last opcode fetch), or the reset sequence, not the opcode at npc().
+	bool taking_interrupt() const { return m_irq_taken; }
+	bool resetting() const { return m_inst_state == STATE_RESET; }
 	// Sets the state as if the opcode at 'pc' had just been prefetched.
 	void set_state(uint16_t pc, uint8_t a, uint8_t x, uint8_t y, uint8_t p, uint8_t s);
 
