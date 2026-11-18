@@ -1,5 +1,7 @@
 #include "game.hpp"
 
+#include <format>
+
 #include <algorithm>
 #include <cstdio>
 
@@ -81,6 +83,12 @@ void Scheduler::next_main_slice() {
 
 void Scheduler::main_service() {
     ++counters.main_services;
+    // MAME's T-11 runs at least one instruction after taking an interrupt
+    // before it looks at the lines again (its execute loop is a do-while).
+    // A handler entered here can reach a service point before its first
+    // instruction (at its entry): no new interrupt until it has made progress.
+    const bool progressed = !entered_handler_ || main.icount != icount_at_entry_;
+    entered_handler_ = false;
     account_main();
     run_sound();
     m_.run_events(m_.main_time);
@@ -93,7 +101,9 @@ void Scheduler::main_service() {
     next_main_slice();
     // MAME checks the lines at the start of each timeslice, and again after
     // an RTI changes the PSW: take interrupts until none is above the priority.
-    while (take_main_interrupt()) {
+    if (progressed) {
+        while (take_main_interrupt()) {
+        }
     }
 }
 
@@ -128,14 +138,22 @@ bool Scheduler::take_main_interrupt() {
     main.cpu.psw = static_cast<std::uint8_t>(new_psw);
     main.icount -= 114;
     ++counters.main_interrupts;
+    entered_handler_ = true;
+    icount_at_entry_ = main.icount;
     if (!rt::dispatch(main)) unlifted_main();
     // Back from the handler: check again only if it came back here.
     return main.cpu.r[7] == resume;
 }
 
 void Scheduler::unlifted_main() {
-    throw Stop{Stop::unlifted_main, "no lifted T-11 code at " + hex4(main.cpu.r[7]) + " (banks " +
-                                        std::to_string(main.bank[0]) + ", " + std::to_string(main.bank[1]) + ")"};
+    // Where it came from is on the stack, usually: the registers and the
+    // top of the stack go in the report.
+    std::string regs;
+    for (int i = 0; i < 7; ++i) regs += std::format(" R{}={:04X}", i, main.cpu.r[i]);
+    std::string stack;
+    for (int i = 0; i < 4; ++i) stack += " " + hex4(m_.main_read16(static_cast<std::uint16_t>(main.cpu.r[6] + 2 * i)));
+    throw Stop{Stop::unlifted_main, "no lifted T-11 code at " + hex4(main.cpu.r[7]) + " (banks " + std::to_string(main.bank[0]) +
+                                        ", " + std::to_string(main.bank[1]) + ");" + regs + "; stack" + stack};
 }
 
 // ---- Sound CPU --------------------------------------------------------------

@@ -60,6 +60,7 @@ build/qilin verify "D:/APB Arcade Project"                       # all 36 files,
 build/qilin insns  "D:/APB Arcade Project" --from 8000 --to 8100 # T-11 listing (MAME syntax, cycles)
 build/qilin insns  "D:/APB Arcade Project" --banks 3,12 --from 4000 --to 4100
 build/qilin cfg    "D:/APB Arcade Project" [--all]               # control flow from reset, and all it can't follow yet
+build/qilin coverage "D:/APB Arcade Project" [--seeds S] [--list] [--check-seeds F]   # every ROM byte: code, table, data, fill or unknown
 build/qilin lift   "D:/APB Arcade Project" --out gen             # lift to C++ (gen/ is gitignored: never commit it)
 build/qilin insns  "D:/APB Arcade Project" --cpu sound --from 4000 --to 4100   # 6502 listing
 build/qilin cfg    "D:/APB Arcade Project" --cpu sound [--all]   # the sound program's control flow
@@ -86,11 +87,14 @@ build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--on
 
 ### Playing it
 
-Seeds first: entries only a run of the game can find (see `docs/recompiler-core.md`). Two reference runs, attract mode and then a credited game, each 20,000 frames, find all 36 that rev 7 needs (about a minute). Then lift both CPUs and build with the lifted code; `apb` needs SDL3, which CMake uses if it's installed and otherwise fetches (release 3.4.20, linked statically; `-DQILIN_FETCH_SDL3=OFF` to never fetch).
+Seeds first: the few entries only a run of the game can find (see `docs/recompiler-core.md`). Five reference runs, each adding to the seeds of the one before, find all 16 that rev 7 needs (about three minutes): attract mode, a credited game, two games played by `--monkey` (a seeded random player) and the self-test menus (`--test-switch 1`). Then lift both CPUs and build with the lifted code; `apb` needs SDL3, which CMake uses if it's installed and otherwise fetches (release 3.4.20, linked statically; `-DQILIN_FETCH_SDL3=OFF` to never fetch).
 
 ```sh
-build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --seeds-out attract.seeds
-build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --coin 1500 --coin 1560 --press 0008:1700 --pedal 63 --steer 1 --seeds attract.seeds --seeds-out apb.seeds
+build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --seeds-out apb.seeds
+build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --coin 1500 --coin 1560 --press 0008:1700 --pedal 63 --steer 1 --seeds apb.seeds --seeds-out apb.seeds
+build/qilin_refrun "D:/APB Arcade Project" --frames 60000 --monkey 1 --seeds apb.seeds --seeds-out apb.seeds
+build/qilin_refrun "D:/APB Arcade Project" --frames 60000 --monkey 3 --seeds apb.seeds --seeds-out apb.seeds
+build/qilin_refrun "D:/APB Arcade Project" --frames 15000 --test-switch 1 --monkey 9 --seeds apb.seeds --seeds-out apb.seeds
 build/qilin lift "D:/APB Arcade Project" --seeds apb.seeds --out gen
 build/qilin lift "D:/APB Arcade Project" --cpu sound --out gen-sound
 cmake -S . -B build -DQILIN_GEN_DIR="$PWD/gen" -DQILIN_SOUND_GEN_DIR="$PWD/gen-sound" -DCMAKE_BUILD_TYPE=Release

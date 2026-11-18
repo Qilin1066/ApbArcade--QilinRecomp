@@ -4,7 +4,7 @@
 //
 //   qilin_refrun <rom-dir> [--frames N] [--quantum CYCLES] [--coin FRAME]... [--press MASK:FRAME]...
 //                [--pedal VALUE] [--steer VALUE] [--seeds FILE] [--seeds-out FILE]
-//                [--frame-out FRAME:FILE]...
+//                [--frame-out FRAME:FILE]... [--monkey SEED] [--test-switch 1] [--executed-out FILE]
 //
 // --coin closes the left coin switch for 3 frames; --press pulls the IN0
 // bits in MASK (hex, active low: 0080 and 0040 are buttons 1 and 2) low for
@@ -38,6 +38,7 @@
 #include "romset.hpp"
 #include "system2_machine.hpp"
 #include "frame_capture.hpp"
+#include "monkey.hpp"
 #include "t11_decoder.hpp"
 #include "t11_reference.h"
 
@@ -47,6 +48,8 @@
 #include <charconv>
 #include <cstdio>
 #include <map>
+#include <optional>
+#include <set>
 #include <print>
 #include <string_view>
 #include <vector>
@@ -96,9 +99,11 @@ int main(int argc, char** argv) {
     std::vector<std::uint64_t> coins;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
     int pedal = -1, steer = 0;
-    std::string seeds_out, log_path;
+    std::string seeds_out, log_path, executed_out;
     std::vector<cfg::Loc> initial_seeds;
     tools::FrameCapture capture;
+    std::optional<tools::Monkey> monkey;
+    bool test_switch = false;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string_view flag = argv[i];
         const std::string_view value = argv[i + 1];
@@ -108,6 +113,7 @@ int main(int argc, char** argv) {
         else if (flag == "--quantum") quantum = static_cast<std::int64_t>(std::max<std::uint64_t>(number, 1));
         else if (flag == "--coin") coins.push_back(number);
         else if (flag == "--seeds-out") seeds_out = value;
+        else if (flag == "--executed-out") executed_out = value;
         else if (flag == "--log") log_path = value;
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
@@ -123,6 +129,8 @@ int main(int argc, char** argv) {
             }
             initial_seeds = *loaded;
         }
+        else if (flag == "--monkey") monkey.emplace(number);
+        else if (flag == "--test-switch") test_switch = number != 0;
         else if (flag == "--pedal") pedal = static_cast<int>(number);
         else if (flag == "--steer") steer = static_cast<int>(number);
         else if (flag == "--press") {
@@ -160,6 +168,11 @@ int main(int argc, char** argv) {
     std::map<std::uint16_t, std::uint16_t> sound_arrivals;
     std::map<std::uint16_t, std::uint64_t> main_ram_code, sound_ram_code;
     std::uint16_t last_main_pc = 0, last_sound_pc = 0;
+    std::set<std::pair<std::uint32_t, std::uint32_t>> transfers;   // physical from, to
+    const auto physical_of = [](std::uint16_t pc, std::uint8_t bank) -> std::int64_t {
+        if (pc < 0x4000) return -1;
+        return pc >= 0x8000 ? pc : 0x10000 + bank * 0x2000 + (pc & 0x1fff);
+    };
     std::uint8_t last_main_bank = 0;
     std::uint64_t main_instructions = 0, sound_instructions = 0, watchdog_resets = 0, sound_releases = 0;
     std::uint64_t first_reply_frame = 0, first_command_frame = 0;
@@ -172,7 +185,8 @@ int main(int argc, char** argv) {
     };
 
     std::uint64_t reported_second = 0;
-    std::uint64_t last_steer_frame = ~0ull;
+    std::uint64_t last_steer_frame = ~0ull, last_monkey_frame = ~0ull;
+    sys2::Inputs monkey_inputs;
     capture.attach(*set, m);
     while (m.frames() < frames_wanted) {
         capture.poll(m);
@@ -189,6 +203,18 @@ int main(int argc, char** argv) {
             last_steer_frame = m.frames();
             m.inputs.leta[0] = static_cast<std::uint8_t>(m.inputs.leta[0] + steer);
         }
+        if (monkey && m.frames() != last_monkey_frame) {
+            last_monkey_frame = m.frames();
+            monkey->apply(m.frames(), monkey_inputs);
+        }
+        if (monkey) {
+            m.inputs.in0 = static_cast<std::uint16_t>(m.inputs.in0 & monkey_inputs.in0);
+            if (monkey_inputs.in1 != 0xf0) m.inputs.in1 = monkey_inputs.in1;
+            m.inputs.adc[1] = monkey_inputs.adc[1];
+            m.inputs.leta[0] = monkey_inputs.leta[0];
+        }
+        // The self-test switch (IN0 bit 15, active low): held from power-on, the game runs its tests and menus.
+        if (test_switch) m.inputs.in0 = static_cast<std::uint16_t>(m.inputs.in0 & 0x7fff);
 
         const auto slice_end = std::min(m.next_event(), m.main_time + quantum);
         sync_lines();
@@ -203,6 +229,12 @@ int main(int argc, char** argv) {
             }
             const std::uint16_t pc = t11.ppc();
             const std::uint8_t bank = pc >= 0x8000 ? 0 : banks[pc >= 0x6000 ? 1 : 0];
+            // Transfers that aren't to the next instruction (it is at most 6
+            // bytes on): computed ones among them must land on lifted entries.
+            if (pc >= 0x4000 && last_main_pc >= 0x4000 && (pc <= last_main_pc || pc > last_main_pc + 6)) {
+                const auto from = physical_of(last_main_pc, last_main_bank);
+                transfers.emplace(static_cast<std::uint32_t>(from), sys2::rom_offset(pc, banks[0], banks[1]));
+            }
             if (pc < 0x4000) {
                 ++main_ram_code[pc];
             } else {
@@ -284,10 +316,6 @@ int main(int argc, char** argv) {
         return cfg::Loc{static_cast<std::uint16_t>(0x4000 + (physical & 0x1fff)), static_cast<std::uint8_t>((physical - 0x10000) / 0x2000)};
     };
     const auto describe_physical = [&](std::uint32_t p) { return loc_of(p).name(); };
-    const auto physical_of = [](std::uint16_t pc, std::uint8_t bank) -> std::int64_t {
-        if (pc < 0x4000) return -1;
-        return pc >= 0x8000 ? pc : 0x10000 + bank * 0x2000 + (pc & 0x1fff);
-    };
     std::vector<cfg::Loc> seeds = initial_seeds;
     std::size_t first_missed = 0;
     for (int round = 0;; ++round) {
@@ -319,6 +347,28 @@ int main(int argc, char** argv) {
             }
         }
         if (missed.empty()) {
+            // Everything executed is analysed; a computed jump or call into the
+            // middle of analysed code also needs its target to be an entry
+            // lifted code can be dispatched to (a function or a return site:
+            // coroutine calls return through CALL @(SP)+).
+            std::map<std::uint32_t, cfg::Loc> by_physical;
+            for (const auto& [loc, node] : program.nodes()) by_physical.emplace(loc.physical(), loc);
+            std::vector<cfg::Loc> entries;
+            for (const auto& [from, to] : transfers) {
+                const auto f = by_physical.find(from), t = by_physical.find(to);
+                if (f == by_physical.end() || t == by_physical.end()) continue;
+                const auto flow = program.nodes().at(f->second).flow;
+                if ((flow == cfg::Flow::jump_dynamic || flow == cfg::Flow::call_dynamic) && !program.functions().contains(t->second) &&
+                    !program.return_sites().contains(t->second) &&
+                    std::ranges::find(seeds, t->second) == seeds.end() && std::ranges::find(entries, t->second) == entries.end()) {
+                    entries.push_back(t->second);
+                    std::print("  entry {} from the computed transfer at {}\n", t->second.name(), f->second.name());
+                }
+            }
+            if (!entries.empty()) {
+                seeds.insert(seeds.end(), entries.begin(), entries.end());
+                continue;
+            }
             std::print("With {} seeds the analysis covers everything the run executed ({} rounds); {} analysed locations "
                        "not executed.\n", seeds.size(), round, unrun);
             break;
@@ -328,6 +378,17 @@ int main(int argc, char** argv) {
             break;
         }
         seeds.insert(seeds.end(), frontier.begin(), frontier.end());
+    }
+    if (!executed_out.empty()) {
+        // Every T-11 location executed, added to what the file already lists
+        // (so runs add up), in the seed file format: qilin coverage --executed.
+        std::set<cfg::Loc> executed;
+        if (const auto earlier = cfg::read_seeds(executed_out); earlier) executed.insert(earlier->begin(), earlier->end());
+        for (std::size_t p = 0; p < main_seen.size(); ++p)
+            if (main_seen[p]) executed.insert(loc_of(static_cast<std::uint32_t>(p)));
+        std::ofstream out(executed_out, std::ios::trunc);
+        for (const auto& loc : executed) out << loc.name() << '\n';
+        std::print("{} executed T-11 locations in {}.\n", executed.size(), executed_out);
     }
     if (!seeds_out.empty()) {
         std::ofstream out(seeds_out, std::ios::trunc);

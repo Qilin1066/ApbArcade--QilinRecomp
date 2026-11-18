@@ -73,6 +73,8 @@ private:
     bool sound_held_ = true;
     std::uint64_t nmi_edges_seen_ = 0;   // the machine's NMI edge count, as far as taken
     bool nmi_pending_ = false;
+    bool entered_handler_ = false;        // an interrupt was just taken...
+    std::int32_t icount_at_entry_ = 0;    // ...and its handler had this many cycles left
     std::uint64_t stop_frames_ = 0;
     std::uint64_t frames_seen_ = 0;
 };

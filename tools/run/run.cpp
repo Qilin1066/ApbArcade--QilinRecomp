@@ -2,7 +2,7 @@
 // scheduled by recomp/runtime/game, from power-on for a number of frames.
 //
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
-//             [--frame-out FRAME:FILE]... [--draw 1] [--wav FILE]
+//             [--frame-out FRAME:FILE]... [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
 //
 // --wav FILE records the board's sound (the YM2151, both POKEYs
 // and the TMS5220's speech, mixed as MAME mixes them) as a 16-bit stereo WAV
@@ -20,6 +20,7 @@
 // (qilin lift --cpu sound).
 
 #include "frame_capture.hpp"
+#include "monkey.hpp"
 #include "system2_audio.hpp"
 #include "wav.hpp"
 #include "game.hpp"
@@ -32,6 +33,7 @@
 #include <fstream>
 #include <string>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <charconv>
 #include <print>
@@ -45,6 +47,8 @@ int main(int argc, char** argv) {
     }
     std::uint64_t frames = 600;
     std::string_view log_path, wav_path;
+    std::optional<tools::Monkey> monkey;
+    bool test_switch = false;
     std::vector<std::uint64_t> coins;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
     int pedal = -1, steer = 0;
@@ -56,6 +60,8 @@ int main(int argc, char** argv) {
         if (flag == "--frames") frames = number;
         else if (flag == "--log") log_path = value;
         else if (flag == "--wav") wav_path = value;
+        else if (flag == "--monkey") monkey.emplace(number);
+        else if (flag == "--test-switch") test_switch = number != 0;
         else if (flag == "--draw") capture.draw_all = number != 0;
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
@@ -112,6 +118,15 @@ int main(int argc, char** argv) {
         machine.inputs.in0 = in0;
         if (pedal >= 0) machine.inputs.adc[1] = static_cast<std::uint8_t>(pedal);
         if (steer != 0) machine.inputs.leta[0] = static_cast<std::uint8_t>(machine.inputs.leta[0] + steer);
+        if (monkey) {
+            sys2::Inputs chosen = machine.inputs;
+            monkey->apply(frame, chosen);
+            machine.inputs.in0 = static_cast<std::uint16_t>(machine.inputs.in0 & chosen.in0);
+            if (chosen.in1 != 0xf0) machine.inputs.in1 = chosen.in1;
+            machine.inputs.adc[1] = chosen.adc[1];
+            machine.inputs.leta[0] = chosen.leta[0];
+        }
+        if (test_switch) machine.inputs.in0 = static_cast<std::uint16_t>(machine.inputs.in0 & 0x7fff);
     };
     const auto start = std::chrono::steady_clock::now();
     const auto stop = scheduler.run(frames);

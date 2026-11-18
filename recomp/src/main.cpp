@@ -15,6 +15,7 @@
 // Nothing read from the ROMs is written anywhere but the output you name.
 
 #include "cfg.hpp"
+#include "coverage.hpp"
 #include "lifter.hpp"
 #include "m6502_cfg.hpp"
 #include "m6502_decoder.hpp"
@@ -50,7 +51,8 @@ int usage() {
                "       qilin verify <rom-dir>\n"
                "       qilin insns <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
                "       qilin cfg <rom-dir> [--cpu main|sound] [--seeds FILE] [--all]\n"
-               "       qilin lift <rom-dir> [--cpu main|sound] [--seeds FILE] --out DIR\n");
+               "       qilin lift <rom-dir> [--cpu main|sound] [--seeds FILE] --out DIR\n"
+               "       qilin coverage <rom-dir> [--seeds FILE] [--check-seeds FILE] [--list]\n");
     return 2;
 }
 
@@ -421,6 +423,35 @@ int lift(const std::vector<std::string_view>& args) {
 
 } // namespace
 
+int coverage_report(const std::vector<std::string_view>& args) {
+    if (args.empty()) {
+        return usage();
+    }
+    qilin::coverage::Options options;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--list") {
+            options.list = true;
+        } else if (args[i] == "--seeds" && i + 1 < args.size()) {
+            auto loaded = qilin::cfg::read_seeds(std::string(args[++i]));
+            if (!loaded) {
+                std::print(stderr, "qilin: {}\n", loaded.error());
+                return 1;
+            }
+            options.seeds = std::move(*loaded);
+        } else if (args[i] == "--check-seeds" && i + 1 < args.size()) {
+            options.check_seeds = args[++i];
+        } else {
+            return usage();
+        }
+    }
+    const auto set = rom::RomSet::load(args[0]);
+    if (!set) {
+        std::print(stderr, "qilin: {}\n", set.error());
+        return 1;
+    }
+    return qilin::coverage::report(*set, options);
+}
+
 int main(int argc, char** argv) {
     std::vector<std::string_view> args(argv + 1, argv + argc);
     if (args.size() == 1 && args[0] == "--version") {
@@ -440,6 +471,9 @@ int main(int argc, char** argv) {
     }
     if (command == "cfg") {
         return cfg_report(args);
+    }
+    if (command == "coverage") {
+        return coverage_report(args);
     }
     if (command == "lift") {
         return lift(args);

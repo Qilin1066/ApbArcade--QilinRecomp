@@ -119,10 +119,17 @@ public:
     [[nodiscard]] const std::set<Loc>& prologue_entries() const noexcept { return prologue_entries_; }
     // Entries listed in the pointer table each code bank starts with.
     [[nodiscard]] const std::set<Loc>& bank_table_entries() const noexcept { return bank_table_entries_; }
+    // Entries found as code pointers in ROM data (records, call tables).
+    [[nodiscard]] const std::set<Loc>& data_pointer_entries() const noexcept { return data_pointer_entries_; }
     // The window each bank runs in, from its absolute references to itself.
     [[nodiscard]] const std::map<unsigned, int>& bank_windows() const noexcept { return bank_windows_; }
     // Window addresses stored as pointers: code whose bank is set elsewhere.
     [[nodiscard]] const std::set<std::uint16_t>& window_pointers() const noexcept { return window_pointers_; }
+    // Whether code at entry decodes like real code until it joins known code
+    // or ends a path (strict: also no traps, RTT or repeated branches).
+    [[nodiscard]] bool plausible_code(Loc entry, bool strict = false) const;
+    // Physical ROM offsets of every jump-table entry and bank entry-table word.
+    [[nodiscard]] std::set<std::uint32_t> table_words() const;
 
 private:
     using Work = std::vector<std::pair<Loc, Banks>>;
@@ -134,8 +141,9 @@ private:
     bool seed_pointers();
     bool seed_prologues();
     bool seed_bank_tables();
+    bool seed_data_pointers();
     void find_bank_windows();
-    bool plausible_code(Loc entry, bool strict = false) const;
+
     void add(Loc loc, Banks banks, Work& work);
     std::optional<std::uint16_t> word(Loc loc, unsigned offset) const;
 
@@ -150,6 +158,7 @@ private:
     struct Table {
         std::vector<std::uint16_t> targets;
         bool heuristic;
+        std::vector<std::uint32_t> slots;   // the entries' physical ROM offsets
         bool operator==(const Table&) const = default;
     };
     std::map<Loc, Table> tables_;   // jump tables: targets, and whether proven
@@ -162,6 +171,9 @@ private:
     std::set<std::uint16_t> save_helpers_;
     std::set<Loc> prologue_entries_;
     std::set<Loc> bank_table_entries_;
+    std::set<Loc> data_pointer_entries_;
+    std::set<std::uint32_t> bank_table_words_;   // the code banks' entry tables (physical offsets)
+    std::set<Loc> rejected_data_pointers_;
     std::map<unsigned, int> bank_windows_;
 };
 

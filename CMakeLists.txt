@@ -92,6 +92,7 @@ configure_file("${CMAKE_CURRENT_BINARY_DIR}/generated/om6502_lst.inc.tmp" "${CMA
 
 add_library(qilin_core STATIC
     recomp/src/cfg.cpp
+    recomp/src/coverage.cpp
     recomp/src/lifter.cpp
     recomp/src/m6502_cfg.cpp
     recomp/src/m6502_decoder.cpp

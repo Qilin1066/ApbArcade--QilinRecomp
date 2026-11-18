@@ -56,6 +56,14 @@ std::optional<std::uint16_t> fixed_address(const t11::Operand& op, std::uint16_t
 
 } // namespace
 
+std::set<std::uint32_t> Program::table_words() const {
+    std::set<std::uint32_t> words = bank_table_words_;
+    for (const auto& [loc, table] : tables_) {
+        words.insert(table.slots.begin(), table.slots.end());
+    }
+    return words;
+}
+
 std::uint32_t Loc::physical() const noexcept {
     return sys2::rom_offset(pc, bank, bank);
 }
@@ -168,6 +176,7 @@ Program Program::analyze_once(const rom::RomSet& rom, const std::vector<Loc>& se
         grew = p.seed_pointers() || grew;
         grew = p.seed_prologues() || grew;
         grew = p.seed_bank_tables() || grew;
+        if (!grew) grew = p.seed_data_pointers();   // last: only once nothing better is left
         for (const auto& [vector, handlers] : std::map(p.vectors_)) {
             for (const auto handler : handlers) {
                 const Loc entry{handler, 0};
@@ -480,7 +489,7 @@ bool Program::resolve_tables() {
         const std::int32_t first = range.top() ? 0 : range.lo;
         const std::int32_t last = range.top() ? 2 * 255 : std::min(range.hi, range.lo + 2 * 255);
         const auto after = insn.next(loc.pc);
-        Table table{{}, false};
+        Table table{{}, false, {}};
         std::set<std::uint16_t> seen;
         const auto limit = table_limits_.find(loc);
         for (std::int32_t r = first; r <= last; ++r) {
@@ -510,6 +519,8 @@ bool Program::resolve_tables() {
                 break;
             }
             table.targets.push_back(target);
+            table.slots.push_back(sys2::rom_offset(slot, static_cast<std::uint8_t>(slot >= 0x8000 ? 0 : node.banks_in.b[w]),
+                                                   static_cast<std::uint8_t>(slot >= 0x8000 ? 0 : node.banks_in.b[w])));
         }
         table.heuristic = !proven;
         if (table.targets.empty()) {
@@ -552,6 +563,10 @@ bool Program::plausible_code(Loc entry, bool strict) const {
         // no traps or RTT, which data decodes to far more often than code uses.
         if (strict && (insn.op == Op::bpt || insn.op == Op::iot || insn.op == Op::emt || insn.op == Op::trap ||
                        insn.op == Op::rtt)) {
+            return false;
+        }
+        // Nor a JMP or JSR to -(Rn): legal, and never written.
+        if (strict && (insn.op == Op::jmp || insn.op == Op::jsr) && insn.dst.mode == t11::autodec) {
             return false;
         }
         // Nor two conditional branches on the same condition in a row: the
@@ -718,6 +733,9 @@ bool Program::seed_bank_tables() {
                 end = std::min<std::uint32_t>(end, *value - base);
             }
         }
+        for (std::uint32_t offset = 0; offset < end && offset < 0x2000; offset += 2) {
+            bank_table_words_.insert(physical + offset);
+        }
         for (const auto address : entries) {
             const Loc entry{address, static_cast<std::uint8_t>(bank)};
             if (functions_.contains(entry)) {
@@ -733,6 +751,117 @@ bool Program::seed_bank_tables() {
             explore(entry, banks);
             grew = true;
         }
+    }
+    return grew;
+}
+
+// Code pointers kept in ROM data: records and call tables the program calls
+// through (CALL @X(Rn) with Rn an offset into records, handler lists copied
+// to RAM). A word outside known code whose value is an address in the
+// fixed ROM, or in its own bank's window, that isn't known code yet and
+// decodes like real code (strictly: no traps, RTT or repeated branches,
+// joining known code or ending a path) is taken as an entry. Data whose
+// values happen to land on code only adds lifted entries nobody calls.
+bool Program::seed_data_pointers() {
+    std::set<std::uint32_t> code_words;
+    for (const auto& [loc, node] : nodes_) {
+        const unsigned n = node.insn.legal ? node.insn.words : 1u;
+        for (unsigned i = 0; i < n; ++i) code_words.insert(Loc{static_cast<std::uint16_t>(loc.pc + 2 * i), loc.bank}.physical());
+    }
+    std::vector<std::pair<Loc, int>> found;   // entry, window (-1 fixed)
+    const auto scan = [&](std::uint32_t physical, std::uint32_t size, int window, std::uint8_t bank) {
+        const std::uint16_t base = window == 1 ? 0x6000 : 0x4000;
+        for (std::uint32_t offset = 0; offset < size; offset += 2) {
+            if (code_words.contains(physical + offset)) continue;
+            const auto value = rom_->word(rom::Region::main_cpu, physical + offset);
+            if (!value || (*value & 1)) continue;
+            Loc entry;
+            if (*value >= 0x8000) {
+                entry = Loc{*value, 0};
+            } else if (window >= 0 && *value >= base && *value < base + 0x2000) {
+                entry = Loc{*value, bank};
+            } else {
+                continue;
+            }
+            if (nodes_.contains(entry) || operand_words_.contains(entry) || code_words.contains(entry.physical()) ||
+                bank_table_words_.contains(entry.physical()) || rejected_data_pointers_.contains(entry)) {
+                continue;
+            }
+            found.emplace_back(entry, entry.pc >= 0x8000 ? -1 : window);
+        }
+    };
+    scan(0x8000, 0x8000, -1, 0);
+    for (unsigned bank = 0; bank < sys2::rom_bank_count; ++bank) {
+        // In a data bank only pointers into the fixed ROM say where they go.
+        const auto window = bank_windows_.find(bank);
+        scan(0x10000 + bank * 0x2000, 0x2000, window == bank_windows_.end() ? -1 : window->second, static_cast<std::uint8_t>(bank));
+    }
+    // Lowest address first: of a function's start and a pointer into the
+    // middle of one of its instructions, the start is taken and the other
+    // is then an operand word.
+    std::sort(found.begin(), found.end());
+    found.erase(std::unique(found.begin(), found.end()), found.end());
+    bool grew = false;
+    for (const auto& [entry, window] : found) {
+        // Entries accepted earlier in this pass may have made this one an operand word.
+        if (nodes_.contains(entry) || functions_.contains(entry) || rejected_data_pointers_.contains(entry) ||
+            operand_words_.contains(entry)) {
+            continue;
+        }
+        if (!plausible_code(entry, true)) {
+            rejected_data_pointers_.insert(entry);
+            continue;
+        }
+        Banks banks;
+        if (window >= 0) {
+            banks.b[window] = entry.bank;
+        }
+        // It must explore cleanly too: everything it reaches that wasn't
+        // known code decodes without traps, halts, odd PC modes, leaving ROM,
+        // or computed jumps other than the table forms resolve_tables sizes
+        // (ADD X(Rn),PC and JMP @X(Rn)). Data that decodes well for a few
+        // instructions rarely survives that. Landing inside another
+        // instruction is allowed: real code does it (a skip over an
+        // operand), and APB's does it in code only data pointers reach.
+        Program trial = *this;
+        const std::size_t before = trial.findings_.size();
+        trial.functions_.insert(entry);
+        trial.explore(entry, banks);
+        const auto table_form = [&](const Finding& f) {
+            const auto n = trial.nodes_.find(f.at);
+            if (n == trial.nodes_.end()) return false;
+            const auto& insn = n->second.insn;
+            // A table in ROM: an index base in RAM is a computed jump, not a table.
+            const bool add_pc = insn.op == Op::add && insn.dst.mode == 0 && insn.dst.reg == 7 && insn.src.mode == t11::index &&
+                                insn.src.reg <= 5 && insn.src.word >= 0x4000;
+            const bool jmp_indexed = insn.op == Op::jmp && insn.dst.mode == t11::index_deferred && insn.dst.reg <= 5 &&
+                                     insn.dst.word >= 0x4000;
+            return add_pc || jmp_indexed;
+        };
+        const bool clean = std::none_of(trial.findings_.begin() + static_cast<std::ptrdiff_t>(before), trial.findings_.end(),
+                                        [&](const Finding& f) {
+                                            switch (f.issue) {
+                                            case Issue::computed_call: case Issue::unknown_bank: case Issue::byte_bank_write:
+                                            case Issue::overlap:
+                                                return false;
+                                            case Issue::computed_jump:
+                                                return !table_form(f);
+                                            default:
+                                                return true;
+                                            }
+                                        }) &&
+                           std::all_of(trial.nodes_.begin(), trial.nodes_.end(), [&](const auto& n) {
+                               return nodes_.contains(n.first) || (n.second.insn.legal && n.second.flow != Flow::trap &&
+                                                                   n.second.flow != Flow::halt && n.second.flow != Flow::rti);
+                           });
+        if (!clean) {
+            rejected_data_pointers_.insert(entry);
+            continue;
+        }
+        functions_.insert(entry);
+        data_pointer_entries_.insert(entry);
+        explore(entry, banks);
+        grew = true;
     }
     return grew;
 }
