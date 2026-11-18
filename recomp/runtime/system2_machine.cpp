@@ -262,7 +262,9 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
     case 7:
         switch (r & 0x0e) {
         case 0x0: tms_data_ = value; return;
-        case 0x2: return;   // TMS5220 write strobe
+        case 0x2:           // TMS5220 write strobe
+            ++counters.speech_bytes;
+            return;
         case 0x4:           // sound_6502_w: the reply; clocks CP1
             p2portwr_ = (interrupt_enable_ & 2) != 0;
             mainlatch_ = {value, true};

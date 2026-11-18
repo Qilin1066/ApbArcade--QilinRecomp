@@ -124,8 +124,8 @@ int main(int argc, char** argv) {
     std::print("Sound: released from reset {} times; {} commands ({} read), {} replies ({} read); {} NMIs, {} IRQs.\n",
                s.sound_resets, c.sound_commands, c.sound_command_reads, c.sound_replies, c.sound_reply_reads, s.sound_nmis,
                s.sound_irqs);
-    std::print("Main: {} interrupts taken, {} services; {} watchdog strobes; {} EEPROM writes.\n", s.main_interrupts,
-               s.main_services, c.watchdog_strobes, c.eeprom_writes);
+    std::print("Main: {} interrupts taken, {} services; {} watchdog strobes; {} EEPROM writes; {} bytes to the speech chip.\n",
+               s.main_interrupts, s.main_services, c.watchdog_strobes, c.eeprom_writes, c.speech_bytes);
     std::print("T-11 at {:04X}, PSW {:03o}, banks {}/{}; CP lines {:X}, interrupt enable {:X}; 6502 at {:04X}.\n",
                scheduler.main.cpu.r[7], scheduler.main.cpu.psw, machine.bank(0), machine.bank(1), machine.main_cp_lines(),
                machine.interrupt_enable(), scheduler.sound.cpu.pc);

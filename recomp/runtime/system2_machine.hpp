@@ -142,7 +142,7 @@ public:
     [[nodiscard]] int vpos() const noexcept { return static_cast<int>((main_time % cycles_per_frame) / cycles_per_scanline); }
     struct Counters {
         std::uint64_t sound_commands = 0, sound_command_reads = 0, sound_replies = 0, sound_reply_reads = 0;
-        std::uint64_t sound_resets = 0, watchdog_strobes = 0, eeprom_writes = 0;
+        std::uint64_t sound_resets = 0, watchdog_strobes = 0, eeprom_writes = 0, speech_bytes = 0;
     } counters;
     [[nodiscard]] const VideoMemory& video() const noexcept { return video_; }
     [[nodiscard]] const PaletteRam& palette() const noexcept { return palette_; }
