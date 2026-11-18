@@ -10,11 +10,12 @@ Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with
 - Native code writes the IRQ enable mask and acknowledges board interrupts. An eligible IRQ saves the T‑11 stack frame and returns the handler address to the host.
 - Native word operations support register-indirect, autoincrement, indexed, and indexed-deferred operands in low RAM, palette RAM, and video RAM. A bus diagnostic reports both the instruction PC and the unsupported address.
 - The compiler resolves declared PC-relative ROM jump tables to precompiled branches. Native probes exercise dispatch, out-of-range indices, and the word operations BIT, BIC, and BIS.
+- Register-driven bank writes dispatch to precompiled paths. The native probe checks every hardware selector value and fetches the switch instruction's last operand under the old bank mapping.
 - CPU bus accesses drive the Slapstic-controlled video memory view. The synthetic probe switches views and checks that writes and byte clears reach the selected page.
 - The 256 palette words support mirrored reads and writes. The palette decoder converts the stored color and intensity fields to 8-bit RGB.
 - The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
 
-The read-only scan of the verified rev 7 ROM resolved four jump-table targets at PC 0xF15E and analyzed 140 reachable locations from reset at 0x8000. It stopped at a bank-selector write to 0x1402 at PC 0xF2C4 that takes its value from a register. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+The read-only scan of the verified rev 7 ROM resolves four jump-table targets at PC 0xF15E and expands the register-driven bank write at PC 0xF2C4. It analyzes 144 reachable locations from reset at 0x8000 before stopping at a MOVB instruction at PC 0xF2D4. The scan tracks each combination of PC and banks separately. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
 
 The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
 
@@ -63,7 +64,7 @@ Generate a C++23 translation unit for the banked test image. The resulting `run_
 build/apb-t11-aot --system2 build/tests/fixtures/Release/system2.map build/tests/fixtures/Release 0x8200 build/system2.cpp --jump-tables tests/system2-jumps.map
 ~~~
 
-Each line in a System 2 map contains a physical hexadecimal byte offset, the even byte lane filename, and the odd byte lane filename, separated by `|`. Filenames are resolved under the ROM directory. Both selector windows start at bank 0. Direct selector writes with immediate values change the bank context of the following instruction.
+Each line in a System 2 map contains a physical hexadecimal byte offset, the even byte lane filename, and the odd byte lane filename, separated by `|`. Filenames are resolved under the ROM directory. Both selector windows start at bank 0. Immediate selector writes give the compiler one successor bank. A write with a runtime value expands all 64 candidate banks for the selected window. An instruction fetch from a missing ROM entry reports its PC and banks.
 
 Each line in the optional jump-table map contains the hexadecimal address of an `ADD d(Rn),PC` instruction and a decimal entry count, separated by `|`. The compiler reads that many consecutive ROM words at the displacement in the current bank context and interprets them as offsets from the PC after the extension word. It validates each target before generating code. An out-of-range native table read reports the instruction PC, both banks, and the effective word address.
 

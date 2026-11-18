@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- Compile System 2 ROM bank selector writes with runtime operands and dispatch to precompiled bank contexts.
+- Verify all 64 hardware selector values, instruction fetch across a bank change, and missing-ROM diagnostics.
+- Advance the read-only rev 7 scan past the bank selector at PC 0xF2C4 to MOVB at PC 0xF2D4.
+
 ## 0.9.0
 
 - Resolve declared indexed ROM jump tables into native branches and diagnose out-of-range table accesses.

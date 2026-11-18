@@ -14,7 +14,7 @@ constexpr std::uint32_t fixed_rom_start = 0x8000;
 constexpr std::uint32_t window_start = 0x4000;
 constexpr std::uint32_t window_size = 0x2000;
 constexpr std::uint32_t bank_rom_start = 0x10000;
-constexpr std::uint32_t physical_rom_size = bank_rom_start + 64 * window_size;
+constexpr std::uint32_t physical_rom_size = bank_rom_start + system2::rom_bank_count * window_size;
 
 std::string_view trim(std::string_view text) {
     const auto first = text.find_first_not_of(" \t\r");
@@ -233,12 +233,6 @@ std::optional<unsigned> bank_selector(Address address) {
         return std::nullopt;
     }
     return (address & 2) / 2;
-}
-
-std::uint8_t selected_bank(std::uint16_t word) {
-    // Two low selector bits are inverted and the two low bit pairs are exchanged.
-    const auto selector = static_cast<unsigned>(word >> 10) ^ 3u;
-    return static_cast<std::uint8_t>((selector & 0x30) | ((selector & 0x03) << 2) | ((selector & 0x0c) >> 2));
 }
 
 } // namespace qilin::t11::aot

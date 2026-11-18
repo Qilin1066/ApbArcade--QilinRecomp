@@ -61,6 +61,5 @@ private:
 };
 
 [[nodiscard]] std::optional<unsigned> bank_selector(Address address);
-[[nodiscard]] std::uint8_t selected_bank(std::uint16_t word);
 
 } // namespace qilin::t11::aot

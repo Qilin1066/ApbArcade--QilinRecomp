@@ -41,6 +41,8 @@ The palette has 256 read/write words at 0x1000–0x11FF with a mirror at 0x1200�
 
 A declared ROM jump table gives the compiler a finite set of targets for an indexed word add to the PC. It resolves the table in the current bank context, checks for overlap with reachable instruction words, and emits native branches. Execution checks the aligned effective table address before reading it and updates flags using the indexed word and the PC after the extension fetch. [MAME DEC T‑11 operand reference](https://github.com/mamedev/mame/blob/master/src/devices/cpu/t11/t11ops.hxx)
 
-The read-only APB scan starts at T‑11 reset PC 0x8000. It resolves four targets at the startup jump at 0xF15E and analyzes 140 reachable locations. It reaches a write to bank selector 0x1402 at PC 0xF2C4 that takes its value from a register. The current compiler requires an immediate value for that write.
+A register-driven bank write dispatches to a precompiled path using the board's six-bit selector. The compiler considers all 64 values and preserves the active bank in the other window. Native tests exercise every selector, including a write whose extension word comes from the old bank and whose next instruction comes from the new one. [MAME Atari System 2 bank selector](https://github.com/mamedev/mame/blob/master/src/mame/atari/atarisy2.cpp)
+
+The read-only APB scan starts at T‑11 reset PC 0x8000. It resolves four targets at the startup jump at 0xF15E and passes the register-sourced bank write to 0x1402 at PC 0xF2C4. The scan analyzes 144 reachable PC and bank combinations before stopping at MOVB at PC 0xF2D4.
 
 [GBTGhoulies-Qilincomp design targets](https://github.com/Tecboy1066/GBTGhoulies-Qilincomp/blob/main/docs/roadmap-and-design-targets.md) · [MAME Atari System 2 reference](https://github.com/mamedev/mame/blob/master/src/mame/atari/atarisy2.cpp)

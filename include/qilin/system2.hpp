@@ -5,6 +5,14 @@
 
 namespace qilin::system2 {
 
+inline constexpr unsigned rom_bank_count = 64;
+
+[[nodiscard]] constexpr std::uint8_t select_rom_bank(std::uint16_t word) noexcept {
+    // Invert the selector's lowest two bits, then exchange its two low bit pairs.
+    const auto selector = static_cast<unsigned>(word >> 10) ^ 3u;
+    return static_cast<std::uint8_t>((selector & 0x30u) | ((selector & 0x03u) << 2) | ((selector & 0x0cu) >> 2));
+}
+
 [[nodiscard]] constexpr bool is_palette_ram(std::uint16_t address) noexcept {
     return address >= 0x1000 && address < 0x1400;
 }

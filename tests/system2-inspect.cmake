@@ -28,7 +28,24 @@ function(expect_failure layout entry diagnostic)
     endif()
 endfunction()
 
-expect_failure("${map}" 0x8240 "bank selector write to 0x1400 at 0x8240 (banks 00/00) needs an immediate source")
+set(bank_switch "${FIXTURE_DIR}/bank-switch.map")
+execute_process(
+    COMMAND "${TRANSLATOR}" --inspect-system2 "${bank_switch}" "${FIXTURE_DIR}" 0x8200
+    RESULT_VARIABLE status
+    OUTPUT_VARIABLE report
+    ERROR_VARIABLE error
+)
+if(NOT status STREQUAL "0" OR NOT report MATCHES "Expanded bank selector at 0x5FFE .* to 64 banks in window 1")
+    message(FATAL_ERROR "Unexpected bank switch inspection result\n${report}\n${error}")
+endif()
+
+file(STRINGS "${bank_switch}" bank_switch_lines)
+list(FILTER bank_switch_lines EXCLUDE REGEX "switch-bank63-even")
+string(JOIN "\n" truncated ${bank_switch_lines})
+set(missing_bank "${FIXTURE_DIR}/missing-bank.map")
+file(WRITE "${missing_bank}" "${truncated}\n")
+expect_failure("${missing_bank}" 0x8200 "missing ROM at 0x6002 (banks 01/3F)")
+
 expect_failure("${map}" 0x8244 "unsupported System 2 word write at 0x1500 from 0x8244 (banks 00/00)")
 expect_failure("${map}" 0x824a "unsupported System 2 word read at 0x1700 from 0x824A (banks 00/00)")
 expect_failure("${map}" 0x8250 "unsupported System 2 byte write at 0x1801 from 0x8250 (banks 00/00)")

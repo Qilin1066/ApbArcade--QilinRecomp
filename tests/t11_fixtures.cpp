@@ -132,7 +132,6 @@ void write_system2(const std::filesystem::path& dir) {
     constexpr std::uint16_t constant[]{0x8122};
     constexpr std::uint16_t jump_offsets[]{0, 6, 0xffee, 1}; // Last word lies outside the declared span.
     constexpr std::uint16_t unsupported_board[]{
-        0010037, 0x1400,     // 0x8240: register value written to the bank selector
         0012737, 1, 0x1500,  // 0x8244: unsupported device write
         0022737, 0, 0x1700,  // 0x824a: unsupported device read
         0105037, 0x1801,     // 0x8250: high byte does not strobe the watchdog
@@ -146,7 +145,7 @@ void write_system2(const std::filesystem::path& dir) {
     write_pair(map, dir, 0x08080, "select-zero", select_zero);
     write_pair(map, dir, 0x080c0, "select-two", select_two);
     write_pair(map, dir, 0x08200, "fixed ROM", fixed_rom);
-    write_pair(map, dir, 0x08240, "unsupported-board", unsupported_board);
+    write_pair(map, dir, 0x08244, "unsupported-board", unsupported_board);
     write_pair(map, dir, 0x08400, "jump-offsets", jump_offsets);
     write_pair(map, dir, 0x0f000, "constant", constant);
     write_pair(map, dir, 0x10000, "bank0", bank0);
@@ -157,6 +156,30 @@ void write_system2(const std::filesystem::path& dir) {
     map.close();
     if (!map) {
         throw std::runtime_error("cannot write synthetic System 2 ROM map");
+    }
+}
+
+void write_bank_switch(const std::filesystem::path& dir) {
+    constexpr std::uint16_t entry[]{
+        0012737, 0x1c00, 0x147c, // Select bank 1 in window 0
+        0012737, 0x2c00, 0x147e, // Select bank 2 in window 1
+        0005202,                 // INC R2, setting overflow for the probe's initial value
+        0000137, 0x5ffe,         // Jump to the last word of window 0
+    };
+    constexpr std::uint16_t bank1_tail[]{0010037}; // MOV R0,@#0x147e
+    constexpr std::uint16_t bank2_head[]{0x147e};  // Destination operand under the old mapping
+
+    std::ofstream map(dir / "bank-switch.map", std::ios::trunc);
+    write_pair(map, dir, 0x08200, "switch-entry", entry);
+    write_pair(map, dir, 0x13ffe, "switch-tail", bank1_tail);
+    write_pair(map, dir, 0x14000, "switch-window1", bank2_head);
+    for (unsigned bank = 0; bank < 64; ++bank) {
+        const std::uint16_t program[]{0012701, static_cast<std::uint16_t>(0x1000 + bank), 0}; // MOV #marker,R1; HALT
+        write_pair(map, dir, 0x10002 + 0x2000 * bank, "switch-bank" + std::to_string(bank), program);
+    }
+    map.close();
+    if (!map) {
+        throw std::runtime_error("cannot write synthetic bank-switch ROM map");
     }
 }
 
@@ -202,6 +225,7 @@ int main(int argc, char** argv) {
         write_words(dir / "overlap.bin", overlap);
         write_words(dir / "out-of-range.bin", out_of_range);
         write_system2(dir);
+        write_bank_switch(dir);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

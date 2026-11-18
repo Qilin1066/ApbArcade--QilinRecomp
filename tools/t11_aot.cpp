@@ -29,6 +29,7 @@ struct Instruction {
     std::string body;
     std::vector<Location> successors;
     std::vector<Location> jump_table_words{};
+    std::optional<unsigned> switched_window{};
 };
 
 std::string label(Location where) {
@@ -108,6 +109,25 @@ std::string observe(Address address) {
 Instruction observed_instruction(Location next, unsigned words, std::string_view setup,
                                  std::string_view operation) {
     return {words, std::format("    {{\n{}        {};\n    }}\n    {}", setup, operation, jump(next)), {next}};
+}
+
+Instruction dynamic_bank_switch(Location next, unsigned words, unsigned window, std::string_view setup,
+                                std::string_view value, bool indirect) {
+    Instruction result{words, "    {\n", {}, {}, window};
+    result.body += setup;
+    result.body += std::format("        const auto bank = system2::select_rom_bank({});\n", value);
+    if (indirect) {
+        result.body += "        s.r = registers;\n";
+    }
+    result.body += "        switch (bank) {\n";
+    for (unsigned bank = 0; bank < qilin::system2::rom_bank_count; ++bank) {
+        next.banks[window] = static_cast<std::uint8_t>(bank);
+        result.successors.push_back(next);
+        const auto label_text = bank + 1 == qilin::system2::rom_bank_count ? "default" : std::format("case {}", bank);
+        result.body += std::format("        {}: {}", label_text, jump(next));
+    }
+    result.body += "        }\n    }\n";
+    return result;
 }
 
 void require_data_address(Location from, Address address, std::string_view access, bool byte = false) {
@@ -249,12 +269,11 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
                     return finish(next, write);
                 }
                 if (const auto window = aot::bank_selector(address)) {
-                    if (!immediate) {
-                        throw std::runtime_error(std::format("bank selector write to 0x{:04X} at {} needs an immediate source",
-                                                             address, aot::describe(where, true)));
-                    }
                     setup += observe(address) + observe(address);
-                    next.banks[*window] = aot::selected_bank(*immediate);
+                    if (!immediate) {
+                        return dynamic_bank_switch(next, words, *window, setup, value, indirect);
+                    }
+                    next.banks[*window] = qilin::system2::select_rom_bank(*immediate);
                     return finish(next, value);
                 }
             }
@@ -507,6 +526,11 @@ Program analyze(const Image& image, Location entry, const aot::JumpTables& table
                 *report << std::format("Resolved {} ROM table entries to {} targets at {}.\n",
                                        instruction.jump_table_words.size(), instruction.successors.size(),
                                        aot::describe(where, Image::banked)) << std::flush;
+            }
+            if (report && instruction.switched_window) {
+                *report << std::format("Expanded bank selector at {} to {} banks in window {}.\n",
+                                       aot::describe(where, Image::banked), instruction.successors.size(),
+                                       *instruction.switched_window) << std::flush;
             }
             pending.insert(pending.end(), instruction.successors.begin(), instruction.successors.end());
             decoded.emplace(where, std::move(instruction));
