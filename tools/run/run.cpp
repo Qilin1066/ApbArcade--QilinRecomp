@@ -128,7 +128,8 @@ int main(int argc, char** argv) {
                s.sound_irqs);
     std::print("Main: {} interrupts taken, {} services; {} watchdog strobes; {} EEPROM writes.\n", s.main_interrupts,
                s.main_services, c.watchdog_strobes, c.eeprom_writes);
-    std::print("Speech: {} bytes written to the TMS5220, {} samples made.\n", c.speech_bytes, machine.speech().samples());
+    std::print("Speech: {} bytes written to the TMS5220, {} samples made, {} of them louder than idle.\n", c.speech_bytes,
+               machine.speech().samples(), machine.speech().loud_samples());
     std::print("T-11 at {:04X}, PSW {:03o}, banks {}/{}; CP lines {:X}, interrupt enable {:X}; 6502 at {:04X}.\n",
                scheduler.main.cpu.r[7], scheduler.main.cpu.psw, machine.bank(0), machine.bank(1), machine.main_cp_lines(),
                machine.interrupt_enable(), scheduler.sound.cpu.pc);

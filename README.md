@@ -26,7 +26,7 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | Video through Vulkan: CPU frames uploaded and shown in a window, scaled by whole numbers | ✅ tested on Mesa's software driver with validation, under a virtual X server |
 | The `apb` executable: window and input on SDL3, the EEPROM saved | 🔨 written, not yet built or played here (SDL3 couldn't be fetched in this environment) |
 | Sound: the YM2151 (ymfm, as MAME), both POKEYs (a port of MAME's), MAME's mixer; `qilin_run --wav`, and SDL3 audio in `apb` | ✅ music on coin-up and in the game |
-| Speech: the TMS5220C (MAME's, adapted) on the board, its READY line read by the 6502 | ✅ the game streams speech data through it; whether it says anything audible hasn't been heard yet |
+| Speech: the TMS5220C (MAME's, adapted) on the board, its READY line read by the 6502 | ✅ in a credited game the chip speaks (about 5 s in 66 s of play); not yet listened to |
 
 ## Versions and changes
 

@@ -36,6 +36,7 @@ void Speech::advance(std::int64_t at) {
         std::int16_t sample = 0;
         process(&sample, 1);
         ++samples_;
+        if (sample > 64 || sample < -64) ++loud_;
         if (on_sample) on_sample(sample, next_sample_);
         next_sample_ += 80 * cycles_per_clock_;
     }

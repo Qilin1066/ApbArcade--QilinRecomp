@@ -38,6 +38,8 @@ public:
     std::function<void(std::int16_t, std::int64_t)> on_sample;
 
     [[nodiscard]] std::uint64_t samples() const noexcept { return samples_; }
+    // Samples louder than the idle level (|value| > 64): the chip said something.
+    [[nodiscard]] std::uint64_t loud_samples() const noexcept { return loud_; }
 
 private:
     void stream_update() override { }   // the host brings it up to date before each call
@@ -49,7 +51,7 @@ private:
     std::int64_t next_sample_ = 0;     // when the next sample starts
     std::int64_t timer_at_ = -1;       // the io-ready timer, or -1
     std::int32_t timer_param_ = 0;
-    std::uint64_t samples_ = 0;
+    std::uint64_t samples_ = 0, loud_ = 0;
 };
 
 } // namespace qilin::sys2

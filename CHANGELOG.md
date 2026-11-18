@@ -37,7 +37,7 @@ Known difference from MAME: interrupts are taken at service points, so where the
   - Its samples are interpolated into the mix at 0.75 into both sides, scaled by the volume latch's bits 5-7.
   - APB sends the speak-external command at start-up and then streams silence frames, about 500 bytes a second. The reference run and the native run both go through attract mode and a credited game, 20,000 frames each, with every executed location covered and no watchdog reset.
   - Unit-tested: the /READY timing, the FIFO filling, speech starting at nine bytes, and voiced frames making sound.
-  - `qilin_run` reports the bytes written and the samples made.
+  - `qilin_run` reports the bytes written, the samples made, and how many are louder than idle. In a credited game with the pedal down, the chip speaks: about 5 s of 66 s of play.
 - **`qilin_game`**: the lifted code and the scheduler as one library, shared by `apb` and `qilin_run` (compiled once).
 - **`qilin_run --draw 1`**: draws every frame, as `apb` does, and reports the bands drawn.
 - **`--frame-out FRAME:FILE`** for `qilin_run` and `qilin_refrun`: saves a frame as a PNG (384 × 512, as the cabinet shows it). Only the frames asked for are drawn, so runs keep their speed. The native and reference runs give identical frames until their inputs are read at different moments (the steering dial, by frame 2,900 of a credited game).
