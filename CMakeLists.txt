@@ -65,16 +65,25 @@ add_library(qilin_runtime INTERFACE)
 target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 
 # ---- Recompiler core ----
+# The 6502 lifter's instruction bodies are MAME's microcode: om6502.lst is
+# built into qilin as bytes (rewritten only when it changes).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS third_party/mame-m6502/om6502.lst)
+file(READ third_party/mame-m6502/om6502.lst QILIN_OM6502_HEX HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," QILIN_OM6502_HEX "${QILIN_OM6502_HEX}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/om6502_lst.inc.tmp" "${QILIN_OM6502_HEX}\n")
+configure_file("${CMAKE_CURRENT_BINARY_DIR}/generated/om6502_lst.inc.tmp" "${CMAKE_CURRENT_BINARY_DIR}/generated/om6502_lst.inc" COPYONLY)
+
 add_library(qilin_core STATIC
     recomp/src/cfg.cpp
     recomp/src/lifter.cpp
     recomp/src/m6502_cfg.cpp
     recomp/src/m6502_decoder.cpp
+    recomp/src/m6502_lifter.cpp
     recomp/src/romset.cpp
     recomp/src/t11_decoder.cpp
     recomp/src/vrange.cpp
 )
-target_include_directories(qilin_core PUBLIC recomp/src)
+target_include_directories(qilin_core PUBLIC recomp/src PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(qilin_core PUBLIC qilin_runtime PRIVATE qilin_warnings)
 qilin_tool(qilin_core)
 
@@ -155,6 +164,18 @@ if(QILIN_GEN_DIR)
     target_include_directories(qilin_difftest PRIVATE tools/difftest "${QILIN_GEN_DIR}")
     target_link_libraries(qilin_difftest PRIVATE qilin_core qilin_mame_t11 qilin_runtime qilin_warnings)
     qilin_tool(qilin_difftest)
+endif()
+
+# ---- Differential test: lifted sound code against MAME's 6502 core (needs your ROMs) ----
+#   qilin lift <rom-dir> --cpu sound --out gen-sound && cmake -B build -DQILIN_SOUND_GEN_DIR=$PWD/gen-sound
+#   build/qilin_sound_difftest <rom-dir>
+set(QILIN_SOUND_GEN_DIR "" CACHE PATH "qilin lift --cpu sound output directory, for the sound differential test")
+if(QILIN_SOUND_GEN_DIR)
+    file(GLOB QILIN_SOUND_GEN_SOURCES CONFIGURE_DEPENDS "${QILIN_SOUND_GEN_DIR}/*.cpp")
+    add_executable(qilin_sound_difftest tools/difftest6502/sound_difftest.cpp ${QILIN_SOUND_GEN_SOURCES})
+    target_include_directories(qilin_sound_difftest PRIVATE tools/difftest6502 "${QILIN_SOUND_GEN_DIR}")
+    target_link_libraries(qilin_sound_difftest PRIVATE qilin_core qilin_mame_m6502 qilin_runtime qilin_warnings)
+    qilin_tool(qilin_sound_difftest)
 endif()
 
 # ---- The lifter against MAME's core, every instruction form (no game files; in CI) ----

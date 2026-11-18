@@ -200,6 +200,13 @@ const char* mnemonic(Op op) noexcept {
     return names[static_cast<std::size_t>(op)];
 }
 
+const char* mode_name(Mode mode) noexcept {
+    static constexpr const char* names[] = {"non", "imp", "acc", "imm", "zpg", "zpx", "zpy", "aba",
+                                            "abx", "aby", "idx", "idy", "ind", "rel", "adr"};
+    static_assert(std::size(names) == static_cast<std::size_t>(M::adr) + 1);
+    return names[static_cast<std::size_t>(mode)];
+}
+
 std::string disassemble(const Instruction& insn, std::uint16_t pc) {
     char text[32];
     const char* name = mnemonic(insn.op);

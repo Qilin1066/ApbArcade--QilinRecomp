@@ -8,7 +8,8 @@
 //   qilin cfg    <rom-dir> [--cpu main|sound] [--all]
 //                                               control flow from reset: what is reached,
 //                                               and everything not yet followed
-//   qilin lift   <rom-dir> --out DIR            lift every function to C++ (DIR is gitignored
+//   qilin lift   <rom-dir> [--cpu main|sound] --out DIR
+//                                               lift every function to C++ (DIR is gitignored
 //                                               when it's gen/: never commit generated code)
 //
 // Nothing read from the ROMs is written anywhere but the output you name.
@@ -17,6 +18,7 @@
 #include "lifter.hpp"
 #include "m6502_cfg.hpp"
 #include "m6502_decoder.hpp"
+#include "m6502_lifter.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
 #include "t11_decoder.hpp"
@@ -48,7 +50,7 @@ int usage() {
                "       qilin verify <rom-dir>\n"
                "       qilin insns <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
                "       qilin cfg <rom-dir> [--cpu main|sound] [--all]\n"
-               "       qilin lift <rom-dir> --out DIR\n");
+               "       qilin lift <rom-dir> [--cpu main|sound] --out DIR\n");
     return 2;
 }
 
@@ -339,7 +341,18 @@ int cfg_report(const std::vector<std::string_view>& args) {
 }
 
 int lift(const std::vector<std::string_view>& args) {
-    if (args.size() != 3 || args[1] != "--out") {
+    std::string_view out_dir;
+    bool sound = false;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--out" && i + 1 < args.size()) {
+            out_dir = args[++i];
+        } else if (args[i] == "--cpu" && i + 1 < args.size() && (args[i + 1] == "main" || args[i + 1] == "sound")) {
+            sound = args[++i] == "sound";
+        } else {
+            return usage();
+        }
+    }
+    if (args.empty() || out_dir.empty()) {
         return usage();
     }
     const auto set = rom::RomSet::load(args[0]);
@@ -347,30 +360,46 @@ int lift(const std::vector<std::string_view>& args) {
         std::print(stderr, "qilin: {}\n", set.error());
         return 1;
     }
-    const auto program = qilin::cfg::Program::analyze(*set);
-    const auto result = qilin::lift::lift(program);
-    if (!result.failures.empty()) {
-        for (const auto& f : result.failures) {
+    std::vector<std::pair<std::string, std::string>> files;
+    std::vector<std::string> failures;
+    std::size_t functions = 0, instructions = 0;
+    if (sound) {
+        const auto program = qilin::m6502::Program::analyze(set->region(rom::Region::sound_cpu));
+        auto result = qilin::lift6502::lift(program);
+        for (auto& f : result.files) files.emplace_back(std::move(f.name), std::move(f.text));
+        failures = std::move(result.failures);
+        functions = result.functions;
+        instructions = result.instructions;
+    } else {
+        const auto program = qilin::cfg::Program::analyze(*set);
+        auto result = qilin::lift::lift(program);
+        for (auto& f : result.files) files.emplace_back(std::move(f.name), std::move(f.text));
+        failures = std::move(result.failures);
+        functions = result.functions;
+        instructions = result.instructions;
+    }
+    if (!failures.empty()) {
+        for (const auto& f : failures) {
             std::print(stderr, "qilin: can't lift {}\n", f);
         }
-        std::print(stderr, "qilin: {} instructions can't be lifted; nothing written\n", result.failures.size());
+        std::print(stderr, "qilin: {} instructions can't be lifted; nothing written\n", failures.size());
         return 3;
     }
-    const std::filesystem::path out(args[2]);
+    const std::filesystem::path out(out_dir);
     std::error_code error;
     std::filesystem::create_directories(out, error);
     std::size_t bytes = 0;
-    for (const auto& file : result.files) {
-        std::ofstream stream(out / file.name, std::ios::binary | std::ios::trunc);
-        stream << file.text;
+    for (const auto& [name, text] : files) {
+        std::ofstream stream(out / name, std::ios::binary | std::ios::trunc);
+        stream << text;
         if (!stream) {
-            std::print(stderr, "qilin: can't write {}\n", (out / file.name).string());
+            std::print(stderr, "qilin: can't write {}\n", (out / name).string());
             return 1;
         }
-        bytes += file.text.size();
+        bytes += text.size();
     }
-    std::print("Lifted {} functions ({} instructions with shared code counted per function) into {} files, {} KiB, in {}.\n",
-               result.functions, result.instructions, result.files.size(), bytes / 1024, out.string());
+    std::print("Lifted {} {} functions ({} instructions with shared code counted per function) into {} files, {} KiB, in {}.\n",
+               functions, sound ? "6502" : "T-11", instructions, files.size(), bytes / 1024, out.string());
     return 0;
 }
 

@@ -7,6 +7,7 @@
 # Game data, and anything generated from it, never goes in the repository.
 /roms/
 /gen/
+/gen-sound/
 136051-*
 *.bin
 *.rom

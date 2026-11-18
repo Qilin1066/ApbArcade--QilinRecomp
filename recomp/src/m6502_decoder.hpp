@@ -110,4 +110,8 @@ inline constexpr std::uint8_t flag_c = 0x01, flag_z = 0x02, flag_i = 0x04, flag_
 
 [[nodiscard]] const char* mnemonic(Op op) noexcept;
 
+// MAME's name for an addressing mode ("zpg", "abx" ...): with the mnemonic,
+// the name of the opcode's microcode in om6502.lst ("lda_abx").
+[[nodiscard]] const char* mode_name(Mode mode) noexcept;
+
 } // namespace qilin::m6502
