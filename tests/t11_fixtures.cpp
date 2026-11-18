@@ -69,13 +69,26 @@ void write_system2(const std::filesystem::path& dir) {
     // The last word of the MOV is fetched at 0x6000 under the old bank mapping.
     constexpr std::uint16_t bank1_tail[]{0012737, 0xbc00}; // Select bank 35 in window 1
     constexpr std::uint16_t bank2[]{0x147e};
-    constexpr std::uint16_t bank35[]{0012702, 0x3333, 0};
+    constexpr std::uint16_t bank35[]{
+        0012702, 0x3333,         // 0x6002: MOV #0x3333,R2
+        0005704,                 // TST R4
+        0001411,                 // BEQ byte_clear
+        0005304,                 // DEC R4
+        0001403,                 // BEQ word_move
+        0005037, 0x19fe,         // CLR @#0x19fe
+        0000406,                 // BR done
+        0012737, 0x8001, 0x1bfe, // word_move: MOV #0x8001,@#0x1bfe
+        0000402,                 // BR done
+        0105037, 0x1800,         // byte_clear: CLRB @#0x1800
+        0,                       // done: HALT
+    };
     constexpr std::uint16_t constant[]{0x8122};
     constexpr std::uint16_t unsupported_board[]{
         0010037, 0x1400,     // 0x8240: register value written to the bank selector
         0012737, 1, 0x1500,  // 0x8244: unsupported device write
         0022737, 0, 0x8000,  // 0x824a: Slapstic window is not a plain ROM data read
-        0105037, 0x1800,     // 0x8250: watchdog write
+        0105037, 0x1801,     // 0x8250: high byte does not strobe the watchdog
+        0022737, 0, 0x1800,  // 0x8254: explicit read needs the input port
     };
 
     std::ofstream map(dir / "system2.map", std::ios::trunc);

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Lower System 2 watchdog strobes from native byte and word clears and word moves.
+- Count host-supplied board ticks, latch expiry, and stop native entry for a pending reset.
+- Verify the watchdog mirrors and reset behavior with synthetic native code.
+- Advance the read-only rev 7 scan to the interrupt-enable write at 0xF034.
+
 ## 0.2.0
 
 - Load System 2 T‑11 ROM maps from split byte lanes and diagnose missing or overlapping regions.

@@ -31,6 +31,28 @@ constexpr bool test_decrement_and_test() {
 static_assert(test_subtraction());
 static_assert(test_decrement_and_test());
 
+constexpr bool test_watchdog_timing() {
+    qilin::system2::Watchdog watchdog;
+    watchdog.advance(1'048'575);
+    if (watchdog.reset_pending() || watchdog.ticks_left() != 1) {
+        return false;
+    }
+    watchdog.strobe();
+    if (watchdog.ticks_left() != 1'048'576) {
+        return false;
+    }
+    watchdog.advance(1'048'576);
+    watchdog.strobe();
+    if (!watchdog.reset_pending()) {
+        return false;
+    }
+    watchdog.reset();
+    watchdog.advance(0x1'0000'0000ULL);
+    return watchdog.reset_pending();
+}
+
+static_assert(test_watchdog_timing());
+
 int test_system2() {
     using qilin::t11::Banks;
     using qilin::t11::System2State;
@@ -64,15 +86,31 @@ int test_system2() {
         return 1;
     }
 
-    System2State complete;
-    const auto halt = qilin::t11::run_system2(complete, 64);
-    if (halt.reason != StopReason::halt || halt.address != 0x6006 || halt.banks != Banks{1, 35} ||
-        complete.cpu.r[0] != 0x1111 || complete.cpu.r[1] != 0x2222 ||
-        complete.cpu.r[2] != 0x3333 || !complete.cpu.flags.c) {
-        std::cerr << "Unexpected result from the native banked T-11 program.\n";
+    for (std::uint16_t mode = 0; mode < 3; ++mode) {
+        System2State complete;
+        complete.cpu.r[4] = mode;
+        complete.watchdog.advance(1'048'575);
+        const auto halt = qilin::t11::run_system2(complete, 64);
+        const auto& result = complete.cpu.flags;
+        const bool moved_negative_word = mode == 1;
+        if (halt.reason != StopReason::halt || halt.address != 0x6020 || halt.banks != Banks{1, 35} ||
+            complete.cpu.r[0] != 0x1111 || complete.cpu.r[1] != 0x2222 || complete.cpu.r[2] != 0x3333 ||
+            complete.watchdog.ticks_left() != 1'048'576 ||
+            result.n != moved_negative_word || result.z == moved_negative_word || result.v || result.c) {
+            std::cerr << "Unexpected result from the native watchdog write in mode " << mode << ".\n";
+            return 1;
+        }
+    }
+
+    System2State expired;
+    expired.watchdog.advance(1'048'576);
+    const auto watchdog = qilin::t11::run_system2(expired, 64);
+    if (watchdog.reason != StopReason::watchdog || watchdog.address != 0x8200 ||
+        watchdog.banks != Banks{0, 0} || expired.ram[0x100] != 0 || !expired.watchdog.reset_pending()) {
+        std::cerr << "Native execution did not stop for the pending board reset.\n";
         return 1;
     }
-    std::cout << "Native System 2 program switched both ROM windows and reached HALT.\n";
+    std::cout << "Native System 2 program switched both ROM windows and serviced the watchdog.\n";
     return 0;
 }
 

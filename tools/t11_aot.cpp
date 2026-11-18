@@ -84,6 +84,11 @@ Instruction sequential(Location next, unsigned words, std::string_view operation
     return {words, std::format("    {};\n    {}", operation, jump(next)), {next}};
 }
 
+Instruction strobe_watchdog(Location next, unsigned words, std::string_view flags) {
+    // The T-11's dummy destination read samples input lines without changing them.
+    return sequential(next, words, std::format("{};\n    board.watchdog.strobe()", flags));
+}
+
 std::string ram_operand(Location from, Address address, std::string_view access, bool byte = false) {
     if (address >= qilin::t11::system2_ram_size || (!byte && address % 2 != 0)) {
         throw std::runtime_error(std::format("unsupported System 2 {} {} at 0x{:04X} from {}",
@@ -138,6 +143,9 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
         }
         const auto address = extension();
         next = where.advance(static_cast<int>(2 * words));
+        if (op == WordOp::move && qilin::system2::is_watchdog_write(address)) {
+            return strobe_watchdog(next, words, std::format("ops::move(s.flags, {})", src));
+        }
         if (const auto window = aot::bank_selector(address); window && op == WordOp::move) {
             if (!immediate) {
                 throw std::runtime_error(std::format("bank selector write to 0x{:04X} at {} needs an immediate source",
@@ -215,6 +223,9 @@ Instruction decode(const Image& image, Location where) {
         if (destination == absolute_pc && (unary == 0005000 || unary == 0105000)) {
             const bool byte = unary == 0105000;
             const auto address = image.word(where, 2);
+            if (qilin::system2::is_watchdog_write(address)) {
+                return strobe_watchdog(where.advance(4), 2, "ops::clear(s.flags)");
+            }
             const auto dst = ram_operand(where, address, "write", byte);
             const auto operation = byte
                 ? std::format("{} = ops::clear_byte(s.flags, {}, {})", dst, dst, address % 2 != 0)
@@ -284,7 +295,8 @@ void emit(std::ostream& out, Location entry, const Program& decoded, bool banked
            "namespace qilin::t11 {\n\n";
     if (banked) {
         out << "Stop run_system2(System2State& board, std::uint64_t budget) {\n"
-               "    [[maybe_unused]] auto& s = board.cpu;\n";
+               "    [[maybe_unused]] auto& s = board.cpu;\n"
+               "    if (board.watchdog.reset_pending()) " << stop("watchdog", entry);
     } else {
         out << "Stop run([[maybe_unused]] State& s, std::uint64_t budget) {\n";
     }

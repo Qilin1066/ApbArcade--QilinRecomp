@@ -1,5 +1,7 @@
 #pragma once
 
+#include <qilin/system2.hpp>
+
 #include <array>
 #include <cstdint>
 
@@ -23,9 +25,10 @@ inline constexpr unsigned system2_ram_size = 0x1000;
 struct System2State {
     State cpu{};
     std::array<std::uint16_t, system2_ram_size / 2> ram{};
+    system2::Watchdog watchdog{};
 };
 
-enum class StopReason { halt, budget };
+enum class StopReason { halt, budget, watchdog };
 
 struct Stop {
     StopReason reason;
