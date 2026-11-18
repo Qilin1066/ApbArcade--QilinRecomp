@@ -4,19 +4,25 @@
 //   qilin verify <rom-dir>                      check the 36 rev 7 files (size and SHA-1)
 //   qilin insns  <rom-dir> [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]
 //                                               linear T-11 listing at CPU addresses
+//   qilin cfg    <rom-dir> [--all]              T-11 control flow from reset: what is
+//                                               reached, and everything not yet followed
 //
 // Nothing read from the ROMs is written anywhere but the output you name.
 
+#include "cfg.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
 #include "t11_decoder.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
+#include <set>
 #include <print>
 #include <string>
 #include <string_view>
@@ -31,7 +37,8 @@ int usage() {
     std::print(stderr,
                "usage: qilin --version\n"
                "       qilin verify <rom-dir>\n"
-               "       qilin insns <rom-dir> [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n");
+               "       qilin insns <rom-dir> [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
+               "       qilin cfg <rom-dir> [--all]\n");
     return 2;
 }
 
@@ -150,6 +157,81 @@ int insns(const std::vector<std::string_view>& args) {
     return 0;
 }
 
+int cfg_report(const std::vector<std::string_view>& args) {
+    if (args.empty() || args.size() > 2 || (args.size() == 2 && args[1] != "--all")) {
+        return usage();
+    }
+    const bool all = args.size() == 2;
+    const auto set = rom::RomSet::load(args[0]);
+    if (!set) {
+        std::print(stderr, "qilin: {}\n", set.error());
+        return 1;
+    }
+    const auto program = qilin::cfg::Program::analyze(*set);
+    std::size_t fixed = 0, banked = 0, bytes = 0;
+    std::set<unsigned> banks;
+    for (const auto& [loc, node] : program.nodes()) {
+        (loc.pc >= 0x8000 ? fixed : banked) += 1;
+        bytes += 2u * (node.insn.legal ? node.insn.words : 1u);
+        if (loc.pc < 0x8000) {
+            banks.insert(loc.bank);
+        }
+    }
+    std::print("Reached {} T-11 instructions ({} bytes) from reset: {} in the fixed ROM, {} in {} banks.\n",
+               program.nodes().size(), bytes, fixed, banked, banks.size());
+    // Code bytes (opcodes and operand words) of the fixed ROM and of the code banks.
+    std::set<std::uint32_t> code;
+    for (const auto& [loc, node] : program.nodes()) {
+        const unsigned words = node.insn.legal ? node.insn.words : 1u;
+        for (unsigned i = 0; i < words; ++i) {
+            code.insert(qilin::cfg::Loc{static_cast<std::uint16_t>(loc.pc + 2 * i), loc.bank}.physical());
+        }
+    }
+    const auto fixed_bytes = 2 * static_cast<std::size_t>(std::ranges::count_if(code, [](auto p) { return p < 0x10000; }));
+    const auto banked_bytes = 2 * code.size() - fixed_bytes;
+    std::print("Code bytes: {} of the fixed ROM's 32768 ({:.1f}%), {} of the code banks' {} ({:.1f}%).\n", fixed_bytes,
+               100.0 * fixed_bytes / 32768, banked_bytes, program.bank_windows().size() * 8192,
+               100.0 * banked_bytes / std::max<std::size_t>(1, program.bank_windows().size() * 8192));
+    std::print("{} function entries ({} from register-save prologues, {} from bank entry tables, {} from pointer "
+               "immediates), {} return sites.\n",
+               program.functions().size(), program.prologue_entries().size(), program.bank_table_entries().size(),
+               program.pointer_entries().size(), program.return_sites().size());
+    std::size_t proven = 0, heuristic = 0;
+    for (const auto& [loc, node] : program.nodes()) {
+        if (node.flow == qilin::cfg::Flow::table) {
+            (node.heuristic_table ? heuristic : proven) += 1;
+        }
+    }
+    std::print("Jump tables: {} sized by value-range analysis, {} by reading entries (checked at run time).\n", proven,
+               heuristic);
+    std::string windows;
+    for (const auto& [bank, window] : program.bank_windows()) {
+        windows += std::format(" {}:{}", bank, window);
+    }
+    std::print("Code banks and the window each runs in:{}.\n", windows);
+    for (const auto& [vector, handlers] : program.vector_stores()) {
+        std::string list;
+        for (const auto h : handlers) {
+            list += std::format(" {:04X}", h);
+        }
+        std::print("Vector {:03o} is set to{}.\n", vector, list);
+    }
+    std::map<qilin::cfg::Issue, std::vector<const qilin::cfg::Finding*>> grouped;
+    for (const auto& f : program.findings()) {
+        grouped[f.issue].push_back(&f);
+    }
+    for (const auto& [issue, list] : grouped) {
+        std::print("\n{} ({}):\n", qilin::cfg::describe(issue), list.size());
+        for (std::size_t i = 0; i < list.size() && (all || i < 12); ++i) {
+            std::print("  {:<9} {}\n", list[i]->at.name(), list[i]->detail);
+        }
+        if (!all && list.size() > 12) {
+            std::print("  ... {} more (--all)\n", list.size() - 12);
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -168,6 +250,9 @@ int main(int argc, char** argv) {
     }
     if (command == "insns") {
         return insns(args);
+    }
+    if (command == "cfg") {
+        return cfg_report(args);
     }
     return usage();
 }

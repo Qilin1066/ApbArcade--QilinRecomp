@@ -11,6 +11,21 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-18
+Control-flow analysis keyed by physical ROM address. From reset it reaches 24,063 T-11 instructions in 659 functions, in the fixed ROM and all 12 code banks, with every jump table sized by analysis; nothing is declared by hand.
+
+### Added
+- **`qilin cfg <rom-dir> [--all]`** (`recomp/src/cfg.*`): recursive descent from reset. A location is a CPU address plus the bank of its own window; the bank registers are tracked as known constants or unknown, never multiplied into the code. Everything it can't follow is listed with its address and banks: computed jumps and calls, transfers into a window whose bank isn't known, traps, unusual PC modes.
+- **Value-range analysis** (`recomp/src/vrange.*`): R0-R5 as intervals modulo 65,536, through moves, arithmetic, shifts, BIC and BIS, narrowed on both edges of every conditional branch (signed and unsigned). It sizes `ADD X(Rn),PC` and `JMP @X(Rn)` tables: 25 proven, among them the start-up table at `0xF15E` that the old map file declared. Tables are re-proved as the program grows, so one proven on part of the code is withdrawn if more code widens its index.
+- **Function discovery from the code's own structure:** the register-save helpers (found structurally: a `JSR Rn,@#H` target that continues its caller with `JSR PC,@(SP)+`) and the 208 prologues that call them; the entry table each code bank starts with (98 entries); pointer immediates (`MOV #addr`), each validated by decoding before it counts; interrupt vectors installed by immediate stores.
+- **Bank windows inferred from the ROM:** each bank's absolute references to itself say which window it runs in. Banks 0-2, 4-6, 8, 10 and 12-15 run in window 0; the rest are data.
+- **Heuristic jump tables** where the index comes from memory: entries read until the first implausible one, marked as such; the lifted code will check every index at run time.
+- **Unit tests for the analysis** on synthetic ROMs: a loop-indexed table proven to its exact size, prologue seeding, bank-window inference, and an unknown-bank entry reported.
+
+### Fixed
+- A table proven before a loop's back edge was explored kept its first, too-small size. Tables are now re-proved every round.
+
+
 ## [0.12.0] - 2026-11-18
 The project is rebuilt to GBTGhoulies-Qilincomp's requirements and layout. The T-11 decoder is complete and verified against MAME on every opcode word. The earlier translator is retired; `docs/recompiler-core.md` says why.
 

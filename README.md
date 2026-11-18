@@ -6,7 +6,7 @@ A static recompilation of **APB — All Points Bulletin** (Atari Games, 1987, At
 
 ## Status
 
-Roadmap step 2, **CPU coverage**, is starting on a verified foundation.
+Roadmap step 2, **CPU coverage**, is in progress.
 
 | Piece | State |
 |---|---|
@@ -15,7 +15,8 @@ Roadmap step 2, **CPU coverage**, is starting on a verified foundation.
 | T-11 decoder (full instruction set, cycle counts, MAME-format disassembly) | ✅ agrees with MAME on all 65,536 opcode words: text, length, cycles and traps |
 | Board models: memory map, ROM banks, Slapstic 110, palette, interrupt latches, watchdog, sound latches | ✅ each checked against MAME's definitions |
 | Renderer: Vulkan 1.3 (shared with GBTGhoulies-Qilincomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
-| Analysis keyed by physical ROM address, coverage, lifter, differential test against MAME's core | 🔨 next (`docs/recompiler-core.md`) |
+| Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 24,063 instructions in 659 functions reached from reset, across the fixed ROM and all 12 code banks; 53% of the fixed ROM and 62% of the code banks proven code |
+| Lifter (functions, locals, flag liveness, cycle counts), differential test against MAME's core | 🔨 next (`docs/recompiler-core.md`) |
 | 6502 sound program, sound chips, video, input | to do |
 
 ## Versions and changes
@@ -49,13 +50,14 @@ CI builds and tests with warnings as errors on Linux x64 (GCC 14 and Clang 19), 
 build/qilin verify "D:/APB Arcade Project"                       # all 36 files, size and SHA-1
 build/qilin insns  "D:/APB Arcade Project" --from 8000 --to 8100 # T-11 listing (MAME syntax, cycles)
 build/qilin insns  "D:/APB Arcade Project" --banks 3,12 --from 4000 --to 4100
+build/qilin cfg    "D:/APB Arcade Project" [--all]               # control flow from reset, and all it can't follow yet
 ```
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `recomp/src/` | Recompiler core: `romset` (the rev 7 set), `t11_decoder`, `main` (the `qilin` CLI) |
+| `recomp/src/` | Recompiler core: `romset` (the rev 7 set), `t11_decoder`, `cfg` (control flow), `vrange` (value ranges), `main` (the `qilin` CLI) |
 | `recomp/runtime/` | Runtime headers the generated code includes: `system2.hpp`, the board as the T-11 sees it |
 | `recomp/runtime/gfx/` | The renderer: Vulkan 1.3, loaded at run time |
 | `recomp/tests/` | Unit tests; they need no game files |

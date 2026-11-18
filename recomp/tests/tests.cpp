@@ -5,6 +5,7 @@
 // palette formula on every value, and its Slapstic 103-110 state machine on
 // random bus traffic.
 
+#include "cfg.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
 #include "t11_decoder.hpp"
@@ -318,6 +319,77 @@ void test_decoder() {
     CHECK(i.op == t11::Op::mtps && i.byte && i.words == 2 && t11::disassemble(i, 0) == "MTPS  #340");
 }
 
+// A synthetic program image: words placed at maincpu-region offsets.
+struct Image {
+    std::array<std::vector<std::uint8_t>, rom::region_count> data;
+    std::array<std::vector<bool>, rom::region_count> populated;
+    Image() {
+        for (std::size_t r = 0; r < rom::region_count; ++r) {
+            data[r].assign(rom::region_info(static_cast<rom::Region>(r)).size, 0);
+            populated[r].assign(data[r].size(), false);
+        }
+        // All program ROM present, as zeros, like the real fixed ROM and code banks.
+        for (std::uint32_t i = 0x8000; i < 0x30000; ++i) populated[0][i] = true;
+    }
+    void put(std::uint32_t offset, std::initializer_list<std::uint16_t> words) {
+        for (const auto w : words) {
+            data[0][offset] = static_cast<std::uint8_t>(w);
+            data[0][offset + 1] = static_cast<std::uint8_t>(w >> 8);
+            offset += 2;
+        }
+    }
+    rom::RomSet set() const { return rom::RomSet::from_regions(data, populated); }
+};
+
+void test_cfg() {
+    namespace cfg = qilin::cfg;
+    Image image;
+    // Reset: a loop over R5 = 3..0 through a 4-entry table of PC offsets, as
+    // APB's start-up does at 0xF15E; then a call to a register-save helper.
+    image.put(0x8000, {
+        012705, 3,            // 8000 MOV #3,R5
+        010500,               // 8004 MOV R5,R0
+        006300,               // 8006 ASL R0
+        066007, 0x9000,       // 8008 ADD 9000(R0),PC   (PC after = 800C)
+        0x0000,               // 800C (never reached: the table covers 0-3)
+    });
+    // Table at 0x9000: offsets from 0x800C to 0x8010, 0x8014, 0x8018, 0x801C.
+    image.put(0x9000, {0x0004, 0x0008, 0x000C, 0x0010});
+    image.put(0x8010, {000240, 000401});   // NOP; BR 8016
+    image.put(0x8014, {000240, 000240});   // NOP; NOP -> falls into 8018
+    image.put(0x8018, {000240, 000240});
+    image.put(0x801C, {000240, 005305, 002361});   // NOP; DEC R5; BGE 8004
+    image.put(0x8022, {004137, 0x8100, 000207});   // JSR R1,@#8100; RTS PC
+    // The helper at 0x8100 (APB's at 0x81E2).
+    image.put(0x8100, {010246, 010146, 016601, 4, 004736, 012602, 012601, 000207});
+    // Bank 2 runs in window 0: four absolute calls into 0x4xxx, and a
+    // function at 0x4100 that opens with JSR R1,@#8100. Its first words are
+    // the bank's entry table: 0x4100, then a non-pointer.
+    const std::uint32_t bank2 = 0x10000 + 2 * 0x2000;
+    image.put(bank2, {0x4100, 0xffff});
+    image.put(bank2 + 0x100, {004137, 0x8100, 004737, 0x4200, 004737, 0x4200, 004737, 0x4200, 004737, 0x4200, 000207});
+    image.put(bank2 + 0x200, {000137, 0x6000});   // JMP @#6000: window 1's bank is never set
+    // Bank 3 is data.
+    image.put(0x10000 + 3 * 0x2000, {0x1234, 0x5678});
+
+    const auto set = image.set();
+    const auto program = cfg::Program::analyze(set);
+    const auto& nodes = program.nodes();
+    const auto table = nodes.find(cfg::Loc{0x8008, 0});
+    CHECK(table != nodes.end() && table->second.flow == cfg::Flow::table && table->second.table.size() == 4);
+    CHECK(nodes.contains(cfg::Loc{0x8010, 0}) && nodes.contains(cfg::Loc{0x801C, 0}) && !nodes.contains(cfg::Loc{0x800C, 0}));
+    CHECK(program.save_helpers().contains(0x8100));
+    CHECK(program.bank_windows().contains(2) && program.bank_windows().at(2) == 0 && !program.bank_windows().contains(3));
+    CHECK(program.prologue_entries().contains(cfg::Loc{0x4100, 2}));
+    CHECK(nodes.contains(cfg::Loc{0x4200, 2}));
+    bool unknown_bank = false, unexpected = false;
+    for (const auto& f : program.findings()) {
+        if (f.issue == cfg::Issue::unknown_bank && f.at == cfg::Loc{0x4200, 2}) unknown_bank = true;
+        else if (f.issue != cfg::Issue::computed_call) unexpected = true;
+    }
+    CHECK(unknown_bank && !unexpected);
+}
+
 } // namespace
 
 int main() {
@@ -329,6 +401,7 @@ int main() {
     test_slapstic();
     test_watchdog_and_interrupts();
     test_decoder();
+    test_cfg();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

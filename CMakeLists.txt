@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(ApbArcadeQilinComp VERSION 0.12.0 LANGUAGES C CXX)
+project(ApbArcadeQilinComp VERSION 0.13.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -66,8 +66,10 @@ target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 
 # ---- Recompiler core ----
 add_library(qilin_core STATIC
+    recomp/src/cfg.cpp
     recomp/src/romset.cpp
     recomp/src/t11_decoder.cpp
+    recomp/src/vrange.cpp
 )
 target_include_directories(qilin_core PUBLIC recomp/src)
 target_link_libraries(qilin_core PUBLIC qilin_runtime PRIVATE qilin_warnings)

@@ -10,4 +10,4 @@ As in GBTGhoulies-Qilincomp: **Qilin** is the author's name. It goes on the *too
 | Build options, macros, CMake targets | `QILIN_*`, `qilin_*` | Same prefix as the namespace, so it's obvious what owns them |
 | The game executable players run | `apb` | Named after the game. Players launch APB, not a tool |
 | Settings file, save folder (EEPROM), window title | after the game | Same reason |
-| Lifted functions | `fn_<physical address>` | Named by their offset in MAME's `maincpu` region (5 hex digits), so code in different banks never shares a name |
+| Lifted functions | `fn_8288`, `fn_4A20_b12` | The CPU address, plus the bank for code in a window, so code in different banks never shares a name |
