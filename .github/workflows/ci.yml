@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux x64 GCC 14, os: ubuntu-24.04, cxx: g++-14 }
+          - { name: Linux x64 Clang 19, os: ubuntu-24.04, cxx: clang++-19 }
+          - { name: Linux ARM64 GCC 14, os: ubuntu-24.04-arm, cxx: g++-14 }
+          - { name: macOS ARM64, os: macos-15 }
+          - { name: macOS Intel, os: macos-15-intel }
+          - { name: Windows x64, os: windows-2022 }
+    env:
+      APB_CI_CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux compilers and software Vulkan
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          packages=(g++-14 mesa-vulkan-drivers vulkan-validationlayers)
+          if [[ "$APB_CI_CXX" == clang++-19 ]]; then
+            packages+=(clang-19)
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "${packages[@]}"
+      - name: Configure
+        shell: bash
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=Release -DAPB_WERROR=ON)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            args+=("-DCMAKE_CXX_COMPILER=$APB_CI_CXX" -DAPB_TEST_VULKAN=ON)
+          fi
+          cmake -S . -B build "${args[@]}"
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test with Vulkan validation
+        if: runner.os == 'Linux'
+        env:
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Test
+        if: runner.os != 'Linux'
+        run: ctest --test-dir build -C Release --output-on-failure

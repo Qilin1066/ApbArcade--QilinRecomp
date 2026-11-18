@@ -1,0 +1,16 @@
+/build/
+/build-*/
+/generated/
+/roms/
+/out/
+136051-*
+/CMakeUserPresets.json
+*.bin
+*.rom
+*.zip
+*.7z
+*.exe
+*.obj
+*.o
+/CMakeFiles/
+/CMakeCache.txt
