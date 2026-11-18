@@ -23,6 +23,10 @@ struct State {
 using Banks = std::array<std::uint8_t, 2>;
 inline constexpr unsigned system2_ram_size = 0x1000;
 
+[[nodiscard]] constexpr std::uint16_t word_address(std::uint16_t address) noexcept {
+    return static_cast<std::uint16_t>(address & 0xfffeu);
+}
+
 struct System2State {
     State cpu{};
     std::array<std::uint16_t, system2_ram_size / 2> ram{};
@@ -31,13 +35,14 @@ struct System2State {
     std::uint8_t psw_control = 0xe0;
 };
 
-enum class StopReason { halt, budget, watchdog, interrupt, interrupt_stack };
+enum class StopReason { halt, budget, watchdog, interrupt, interrupt_stack, memory_read, memory_write };
 
 struct Stop {
     StopReason reason;
     std::uint16_t address;
     Banks banks{};
     std::uint16_t vector{};
+    std::uint16_t memory_address{};
 };
 
 // System 2 uses the T-11's internally selected vectors. CP0–CP3 form one code.

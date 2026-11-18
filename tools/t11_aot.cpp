@@ -101,7 +101,7 @@ std::string device_write(Address address, std::string_view value) {
 }
 
 std::string ram_operand(Location from, Address address, std::string_view access, bool byte = false) {
-    if (address >= qilin::t11::system2_ram_size || (!byte && address % 2 != 0)) {
+    if (address >= qilin::t11::system2_ram_size) {
         throw std::runtime_error(std::format("unsupported System 2 {} {} at 0x{:04X} from {}",
                                              byte ? "byte" : "word", access, address, aot::describe(from, true)));
     }
@@ -109,6 +109,7 @@ std::string ram_operand(Location from, Address address, std::string_view access,
 }
 
 std::string read_absolute(const aot::System2Image& image, Location where, Address address) {
+    address = qilin::t11::word_address(address);
     if (const auto value = image.rom_data_word(where, address)) {
         return std::format("0x{:04X}", *value);
     }
@@ -116,6 +117,25 @@ std::string read_absolute(const aot::System2Image& image, Location where, Addres
 }
 
 enum class WordOp { move, compare, add, subtract };
+
+bool register_indirect(unsigned operand) {
+    const auto mode = operand & 070;
+    return (operand & 7) < 7 && (mode == 010 || mode == 020);
+}
+
+std::string indirect_word(std::string& setup, Location where, unsigned operand,
+                          std::string_view role, bool write) {
+    const auto address = std::format("{}_address", role);
+    const auto number = operand & 7;
+    setup += std::format(
+        "        const auto {0} = word_address(registers[{1}]);\n"
+        "        if ({0} >= system2_ram_size) return {{StopReason::memory_{2}, 0x{3:04X}, Banks{{{4}, {5}}}, 0, {0}}};\n",
+        address, number, write ? "write" : "read", where.pc, where.banks[0], where.banks[1]);
+    if ((operand & 070) == 020) {
+        setup += std::format("        registers[{0}] = static_cast<std::uint16_t>(registers[{0}] + 2u);\n", number);
+    }
+    return std::format("board.ram[{} / 2]", address);
+}
 
 template <typename Image>
 Instruction decode_word_op(const Image& image, Location where, std::uint16_t opcode, WordOp op) {
@@ -127,63 +147,91 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
     };
     const auto source = (opcode >> 6) & 077;
     const auto destination = opcode & 077;
+    const bool indirect = Image::banked && (register_indirect(source) || register_indirect(destination));
+    std::string setup;
+    const auto register_value = [&](unsigned number) {
+        return indirect ? std::format("registers[{}]", number) : reg(number);
+    };
+    const auto finish = [&](Location next, std::string_view operation) -> Instruction {
+        if (!indirect) {
+            return sequential(next, words, operation);
+        }
+        // Hold the address updates until both operands have passed their bus checks.
+        return {words, std::format("    {{\n        auto registers = s.r;\n{}        {};\n"
+                                  "        s.r = registers;\n    }}\n    {}", setup, operation, jump(next)), {next}};
+    };
 
     std::optional<std::uint16_t> immediate;
     std::string src;
     if (source <= 6) {
-        src = reg(source);
+        src = register_value(source);
     } else if (source == immediate_pc) {
         immediate = extension();
         src = std::format("0x{:04X}", *immediate);
     } else if constexpr (Image::banked) {
-        if (source != absolute_pc) {
+        if (source == absolute_pc) {
+            src = read_absolute(image, where, extension());
+        } else if (register_indirect(source)) {
+            src = indirect_word(setup, where, source, "source", false);
+        } else {
             unsupported(where, opcode, true);
         }
-        src = read_absolute(image, where, extension());
     } else {
         unsupported(where, opcode, false);
+    }
+    if (indirect) {
+        // Capture the source before resolving the destination, which may use the same register.
+        setup += std::format("        const auto source_value = {};\n", src);
+        src = "source_value";
     }
 
     std::string dst;
     auto next = where.advance(static_cast<int>(2 * words));
     if (destination <= 6) {
-        dst = reg(destination);
+        dst = register_value(destination);
+    } else if (destination == immediate_pc && op == WordOp::compare) {
+        // A read through (PC)+ consumes the following instruction-stream word.
+        dst = std::format("0x{:04X}", extension());
+        next = where.advance(static_cast<int>(2 * words));
     } else if constexpr (Image::banked) {
-        if (destination != absolute_pc) {
+        if (register_indirect(destination)) {
+            dst = indirect_word(setup, where, destination, "destination", op != WordOp::compare);
+        } else if (destination == absolute_pc) {
+            const auto address = qilin::t11::word_address(extension());
+            next = where.advance(static_cast<int>(2 * words));
+            if (op == WordOp::move) {
+                const auto write = device_write(address, std::format("ops::move(s.flags, {})", src));
+                if (!write.empty()) {
+                    return finish(next, write);
+                }
+            }
+            if (const auto window = aot::bank_selector(address); window && op == WordOp::move) {
+                if (!immediate) {
+                    throw std::runtime_error(std::format("bank selector write to 0x{:04X} at {} needs an immediate source",
+                                                         address, aot::describe(where, true)));
+                }
+                // Both extension words were fetched before the selector changes the mapping.
+                next.banks[*window] = aot::selected_bank(*immediate);
+                return finish(next, std::format("ops::move(s.flags, {})", src));
+            }
+            dst = op == WordOp::compare ? read_absolute(image, where, address) : ram_operand(where, address, "write");
+        } else {
             unsupported(where, opcode, true);
         }
-        const auto address = extension();
-        next = where.advance(static_cast<int>(2 * words));
-        if (op == WordOp::move) {
-            const auto write = device_write(address, std::format("ops::move(s.flags, {})", src));
-            if (!write.empty()) {
-                return sequential(next, words, write);
-            }
-        }
-        if (const auto window = aot::bank_selector(address); window && op == WordOp::move) {
-            if (!immediate) {
-                throw std::runtime_error(std::format("bank selector write to 0x{:04X} at {} needs an immediate source",
-                                                     address, aot::describe(where, true)));
-            }
-            // Both extension words are fetched before the selector changes the mapping.
-            next.banks[*window] = aot::selected_bank(*immediate);
-            return sequential(next, words, std::format("ops::move(s.flags, {})", src));
-        }
-        dst = op == WordOp::compare ? read_absolute(image, where, address) : ram_operand(where, address, "write");
     } else {
         unsupported(where, opcode, false);
     }
 
     switch (op) {
     case WordOp::move:
-        return sequential(next, words, std::format("{} = ops::move(s.flags, {})", dst, src));
+        return finish(next, std::format("{} = ops::move(s.flags, {})", dst, src));
     case WordOp::compare:
         // CMP sets flags for source minus destination and leaves the operands intact.
-        return sequential(next, words, std::format("ops::subtract(s.flags, {}, {})", src, dst));
+        return finish(next, std::format("ops::subtract(s.flags, {}, {})", src, dst));
     case WordOp::add:
-        return sequential(next, words, std::format("{} = ops::add(s.flags, {}, {})", dst, dst, src));
+        return finish(next, std::format("{} = ops::add(s.flags, {}, {})", dst, dst, src));
     case WordOp::subtract:
-        return sequential(next, words, std::format("{} = ops::subtract(s.flags, {}, {})", dst, dst, src));
+        return finish(next, std::format("{} = ops::subtract(s.flags, {}, {})", dst, dst, src));
     }
     unsupported(where, opcode, Image::banked);
 }
@@ -236,7 +284,8 @@ Instruction decode(const Image& image, Location where) {
     if constexpr (Image::banked) {
         if (destination == absolute_pc && (unary == 0005000 || unary == 0105000)) {
             const bool byte = unary == 0105000;
-            const auto address = image.word(where, 2);
+            const auto operand = image.word(where, 2);
+            const auto address = byte ? operand : qilin::t11::word_address(operand);
             if (const auto write = device_write(address, "ops::clear(s.flags)"); !write.empty()) {
                 return sequential(where.advance(4), 2, write);
             }

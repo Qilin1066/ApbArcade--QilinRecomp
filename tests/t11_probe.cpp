@@ -109,6 +109,42 @@ bool test_interrupt_entry() {
            board.interrupts.control_pins() == 0x0c && board.ram[0x100] == 0;
 }
 
+bool test_indirect_words() {
+    qilin::t11::System2State board;
+    board.cpu.r[5] = 0x0301;
+    board.ram[0x181] = 11;
+    board.ram[0x183] = 5;
+    board.ram[0x184] = 7;
+    board.ram[0x185] = 9;
+    board.ram[0x186] = 10;
+    const auto stop = qilin::t11::run_system2(board, 64);
+    const auto& flags = board.cpu.flags;
+    if (stop.reason != StopReason::halt || stop.address != 0x6044 || board.cpu.r[5] != 0x030d ||
+        board.ram[0x180] != 0x0301 || board.ram[0x181] != 11 || board.ram[0x182] != 11 ||
+        board.ram[0x183] != 4 || board.ram[0x184] != 11 || board.ram[0x186] != 10 ||
+        !flags.n || flags.z || flags.v || !flags.c) {
+        return false;
+    }
+
+    qilin::t11::System2State bad_write;
+    bad_write.cpu.r[5] = 0x0ffd;
+    bad_write.ram[0x7ff] = 0x8080;
+    const auto write_stop = qilin::t11::run_system2(bad_write, 64);
+    if (write_stop.reason != StopReason::memory_write || write_stop.address != 0x6034 ||
+        write_stop.memory_address != 0x1000 || write_stop.banks != qilin::t11::Banks{1, 35} ||
+        bad_write.cpu.r[5] != 0x0fff || bad_write.ram[0x7fe] != 0x0ffd ||
+        bad_write.ram[0x7ff] != 0x8080 || bad_write.cpu.flags.n) {
+        return false;
+    }
+
+    qilin::t11::System2State bad_read;
+    bad_read.cpu.r[5] = 0x0fff;
+    const auto read_stop = qilin::t11::run_system2(bad_read, 64);
+    return read_stop.reason == StopReason::memory_read && read_stop.address == 0x6034 &&
+           read_stop.memory_address == 0x1000 && read_stop.banks == qilin::t11::Banks{1, 35} &&
+           bad_read.cpu.r[5] == 0x1001 && bad_read.ram[0x7ff] == 0x0fff;
+}
+
 int test_system2() {
     using qilin::t11::Banks;
     using qilin::t11::System2State;
@@ -152,10 +188,10 @@ int test_system2() {
                                   IrqSource::scanline, IrqSource::vblank}) {
             complete.interrupts.sample(source);
         }
-        const auto halt = qilin::t11::run_system2(complete, 64);
+        const auto boundary = qilin::t11::run_system2(complete, mode == 0 ? 27 : 30);
         const auto& result = complete.cpu.flags;
         const bool moved_negative_word = mode == 1;
-        if (halt.reason != StopReason::halt || halt.address != 0x6032 || halt.banks != Banks{1, 35} ||
+        if (boundary.reason != StopReason::budget || boundary.address != 0x6032 || boundary.banks != Banks{1, 35} ||
             complete.cpu.r[0] != 0x1111 || complete.cpu.r[1] != 0x2222 || complete.cpu.r[2] != 0x3333 ||
             complete.watchdog.ticks_left() != 1'048'576 ||
             complete.interrupts.enabled() != 0x0d || complete.interrupts.control_pins() != 2 ||
@@ -177,7 +213,11 @@ int test_system2() {
         std::cerr << "Unexpected native interrupt entry or saved T-11 stack frame.\n";
         return 1;
     }
-    std::cout << "Native System 2 code switched ROM windows, serviced the watchdog, and passed IRQ checks.\n";
+    if (!test_indirect_words()) {
+        std::cerr << "Unexpected result from native register-indirect memory access.\n";
+        return 1;
+    }
+    std::cout << "Native System 2 code passed bank, watchdog, IRQ, and indirect memory checks.\n";
     return 0;
 }
 

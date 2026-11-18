@@ -42,7 +42,7 @@ void write_pair(std::ofstream& map, const std::filesystem::path& dir, std::uint3
 void write_system2(const std::filesystem::path& dir) {
     constexpr std::uint16_t fixed_rom[]{
         0012737, 0x8123, 0x0200, // MOV #0x8123,@#0x0200
-        0013737, 0x0200, 0x0202, // MOV @#0x0200,@#0x0202
+        0013737, 0x0201, 0x0203, // MOV @#0x0201,@#0x0203 uses the aligned bus words
         0013703, 0x0202,         // MOV @#0x0202,R3
         0010337, 0x0204,         // MOV R3,@#0x0204
         0062737, 1, 0x0204,      // ADD #1,@#0x0204
@@ -84,7 +84,15 @@ void write_system2(const std::filesystem::path& dir) {
         0012737, 0x8001, 0x1bfe, // word_move: MOV #0x8001,@#0x1bfe
         0000402,                 // BR done
         0105037, 0x1800,         // byte_clear: CLRB @#0x1800
-        0,                       // done: HALT
+        0010525,                 // done: MOV R5,(R5)+
+        0012525,                 // MOV (R5)+,(R5)+
+        0162715, 1,              // SUB #1,(R5)
+        0062525,                 // ADD (R5)+,(R5)+
+        0021527, 9,              // CMP (R5),#9
+        0001002,                 // BNE fail
+        0022515,                 // CMP (R5)+,(R5)
+        0,                       // success: HALT
+        0,                       // fail: HALT
     };
     constexpr std::uint16_t constant[]{0x8122};
     constexpr std::uint16_t unsupported_board[]{

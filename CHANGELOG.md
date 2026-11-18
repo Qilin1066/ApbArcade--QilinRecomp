@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Support register-deferred and autoincrement word operands in low RAM and a literal destination for comparisons.
+- Preserve source-before-destination evaluation and align T‑11 word data accesses.
+- Report out-of-range dynamic reads and writes before committing the current instruction.
+- Advance the read-only rev 7 scan to the Slapstic read at PC 0xF062.
+
 ## 0.4.0
 
 - Model the System 2 interrupt mask, control-pin latches, and mirrored acknowledgement writes.
