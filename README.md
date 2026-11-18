@@ -1,0 +1,52 @@
+# ApbArcade-QilinComp
+
+Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with the verified rev 7 ROM set. The project follows the Ghoulies project requirements for ahead-of-time C++23, Vulkan 1.3, low-end performance, and 64-bit portability. The runtime design calls for precompiled host code for both the DEC T‑11 main program and the 6502 sound program. ROMs, generated code, and locally built binaries stay with the user's copy. [GBTGhoulies-Qilincomp](https://github.com/Tecboy1066/GBTGhoulies-Qilincomp)
+
+## First milestone
+
+- The verifier checks the sizes and SHA‑1 digests of all 36 rev 7 files.
+- The T‑11 tool translates the reachable code of a small, flat binary to a C++23 translation unit. CTest compiles and runs a hand-authored program and checks diagnostics for unsupported instructions, branches into immediate operands, and out-of-image control flow.
+- The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
+
+This milestone runs headless. The arcade boot sequence, sound, cabinet controls, and game presentation remain pending. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+
+The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
+
+## Target platforms
+
+| Platform | Target |
+| --- | --- |
+| Windows and Linux | x86‑64 and ARM64 with a Vulkan 1.3 driver |
+| Raspberry Pi 4 | 64-bit Linux and Mesa V3DV 24.3 or newer. Reference hardware for efficiency and frame pacing |
+| macOS | Intel and Apple Silicon with a Metal GPU and a Vulkan 1.3-capable MoltenVK build. The Intel runtime deployment target is macOS 10.15. The developer compiler tool uses macOS 13.3 or later for libc++ formatting |
+
+## Build and test
+
+Use CMake 3.25 or later with GCC 14, Clang 19, Xcode 16, or Visual Studio 2022 17.10 or later. CMake fetches pinned Khronos Vulkan headers on first configure. Set `FETCHCONTENT_SOURCE_DIR_VULKANHEADERS` to an existing Vulkan-Headers checkout for an offline configure. The probe loads Vulkan at launch and builds with just the headers. On macOS set `APB_VULKAN_LIBRARY` to the installed MoltenVK library or SDK loader if it is outside the loader's search path.
+
+~~~sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAPB_TEST_VULKAN=ON
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+~~~
+
+Keep `APB_TEST_VULKAN` off on machines without a Vulkan driver. Set `APB_BUILD_VULKAN_PROBE=OFF` for a CPU-only build. On a multi-config generator, look for `apb-t11-aot` under the selected configuration directory.
+
+Verify your unpacked ROM directory locally.
+
+~~~powershell
+cmake "-DROM_DIR=D:/APB Arcade Project" -P cmake/verify-roms.cmake
+~~~
+
+Translate a small flat, little-endian T‑11 image and link the output with a host runner that includes `qilin/t11.hpp`. The origin is both the load and entry address. Supported word operands are R0–R6 and immediate sources. The subset covers MOV, CMP, ADD, SUB, CLR, INC, DEC, TST, NOP, relative branches, SOB, and HALT as a probe stop. The output uses C++ operations and direct native control flow. The execution budget bounds the probe.
+
+~~~sh
+build/apb-t11-aot --version
+build/apb-t11-aot build/tests/fixtures/Release/loop.bin 0x0200 build/loop.cpp
+~~~
+
+## References
+
+- ROM names, sizes, digests, and board details come from the MAME Atari System 2 driver. [MAME driver](https://github.com/mamedev/mame/blob/master/src/mame/atari/atarisy2.cpp)
+- T‑11 instruction semantics come from Digital Equipment Corporation's documentation. [DCT11 User's Guide](https://www.bitsavers.org/pdf/dec/pdp11/t11/T11_UsersMan.pdf)
+- Driver capabilities depend on the installed build of Mesa or MoltenVK. [Mesa 24.3 release notes](https://docs.mesa3d.org/relnotes/24.3.0.html) · [MoltenVK 1.3.0 runtime guide](https://github.com/KhronosGroup/MoltenVK/blob/v1.3.0/Docs/MoltenVK_Runtime_UserGuide.md)
