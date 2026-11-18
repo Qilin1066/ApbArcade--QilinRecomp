@@ -67,6 +67,12 @@ target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 # The System 2 board as both CPUs see it: run by the reference run now, by the game later.
 add_library(qilin_board STATIC recomp/runtime/system2_machine.cpp)
 target_link_libraries(qilin_board PUBLIC qilin_runtime PRIVATE qilin_warnings)
+# Sound as MAME makes it: ymfm's YM2151 (vendored, unmodified), the POKEYs, the mixer.
+add_library(qilin_ymfm STATIC third_party/ymfm/ymfm_opm.cpp)
+target_include_directories(qilin_ymfm SYSTEM PUBLIC third_party/ymfm)
+target_compile_features(qilin_ymfm PUBLIC cxx_std_14)
+add_library(qilin_audio STATIC recomp/runtime/system2_audio.cpp)
+target_link_libraries(qilin_audio PUBLIC qilin_board PRIVATE qilin_ymfm qilin_warnings)
 # Video as MAME draws it, from the board's RAM: the CPU reference renderer.
 add_library(qilin_video STATIC recomp/runtime/system2_video.cpp)
 target_link_libraries(qilin_video PUBLIC qilin_board qilin_core PRIVATE qilin_warnings)
@@ -102,7 +108,7 @@ qilin_tool(qilin)
 # ---- Tests (no game files needed) ----
 enable_testing()
 add_executable(qilin_tests recomp/tests/tests.cpp)
-target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_warnings)
+target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qilin_warnings)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
 
@@ -246,7 +252,7 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
 
     add_executable(qilin_run tools/run/run.cpp)
     target_include_directories(qilin_run PRIVATE tools/common)
-    target_link_libraries(qilin_run PRIVATE qilin_game qilin_core qilin_video qilin_gfx qilin_warnings)
+    target_link_libraries(qilin_run PRIVATE qilin_game qilin_core qilin_video qilin_audio qilin_gfx qilin_warnings)
     qilin_tool(qilin_run)
 
     # SDL3 for the window and input: an installed one, else fetched at a
@@ -264,7 +270,7 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     endif()
     if(SDL3_FOUND)
         add_executable(apb recomp/runtime/app/apb.cpp)
-        target_link_libraries(apb PRIVATE qilin_game qilin_core qilin_video qilin_gfx SDL3::SDL3 qilin_warnings)
+        target_link_libraries(apb PRIVATE qilin_game qilin_core qilin_video qilin_audio qilin_gfx SDL3::SDL3 qilin_warnings)
     else()
         message(STATUS "apb: not built (no SDL3 found and QILIN_FETCH_SDL3 is OFF)")
     endif()

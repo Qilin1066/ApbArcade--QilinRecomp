@@ -184,9 +184,19 @@ void Machine::sound_reset_w(std::uint8_t data) {
     if (log && reset != sound_reset_) log->push_back({'S', static_cast<std::uint8_t>(reset), main_time});
     sound_reset_ = reset;
     // sndrst_6502_w(0), coincount_w(0), switch_6502_w(0)
-    sndrst_state_ = false;
+    sndrst_w(false, sound_cycles_at(main_time));
     coin_counters_ = 0;
     switch_bits_ = 0;
+}
+
+void Machine::sndrst_w(bool state, std::int64_t at_sound_time) {
+    if (state == sndrst_state_) return;
+    sndrst_state_ = state;
+    if (sound_sink) sound_sink->ym_reset(state, at_sound_time);
+    if (state) {   // 0 -> 1: the TMS5220 reset and mixer_w(0)
+        mixer_ = 0;
+        if (sound_sink) sound_sink->mixer_write(0, at_sound_time);
+    }
 }
 
 std::uint8_t Machine::main_cp_lines() const noexcept {
@@ -235,9 +245,13 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
     }
     const unsigned r = m & 0x7fu;
     switch (r >> 4) {
-    case 0: pokey_[0].written[r & 15] = value; return;
-    case 3: pokey_[1].written[r & 15] = value; return;
+    case 0:
+    case 3:
+        pokey_[r >> 5].written[r & 15] = value;
+        if (sound_sink) sound_sink->pokey_write(static_cast<int>(r >> 5), r & 15, value, sound_time);
+        return;
     case 5:
+        if (sound_sink) sound_sink->ym_write((r & 1) != 0, value, sound_time);
         if (r & 1) {
             ym_registers_[ym_address_] = value;
             ym_busy_until_ = sound_time + 32;   // 64 YM clocks at 3.58 MHz
@@ -260,16 +274,14 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
             if (log) log->push_back({'A', 0, main_time});
             sound_irq_ = false;
             return;
-        case 0xa: mixer_ = value; return;
-        case 0xc: switch_bits_ = value; return;
-        case 0xe: {
-            const bool state = (value & 1) != 0;
-            if (state != sndrst_state_) {
-                sndrst_state_ = state;
-                if (state) mixer_ = 0;   // the YM2151 and TMS5220 resets
-            }
+        case 0xa:
+            mixer_ = value;
+            if (sound_sink) sound_sink->mixer_write(value, sound_time);
             return;
-        }
+        case 0xc: switch_bits_ = value; return;
+        case 0xe:
+            sndrst_w((value & 1) != 0, sound_time);
+            return;
         default: return;
         }
     default:

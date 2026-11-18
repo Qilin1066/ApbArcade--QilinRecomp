@@ -127,6 +127,17 @@ public:
         virtual void vblank(const Machine& machine) = 0;
     };
     VideoSink* video_sink = nullptr;
+
+    // Optional: told of every write that changes the sound, with the sound
+    // cycle it happens on (the audio model makes the sound up to it first).
+    struct SoundSink {
+        virtual ~SoundSink() = default;
+        virtual void pokey_write(int which, unsigned reg, std::uint8_t value, std::int64_t sound_time) = 0;
+        virtual void ym_write(bool data, std::uint8_t value, std::int64_t sound_time) = 0;
+        virtual void ym_reset(bool running, std::int64_t sound_time) = 0;   // the YM2151's reset line, active low
+        virtual void mixer_write(std::uint8_t value, std::int64_t sound_time) = 0;
+    };
+    SoundSink* sound_sink = nullptr;
     // The scanline the beam is on, at main_time.
     [[nodiscard]] int vpos() const noexcept { return static_cast<int>((main_time % cycles_per_frame) / cycles_per_scanline); }
     struct Counters {
@@ -187,6 +198,7 @@ private:
     std::int64_t ym_busy_until_ = 0;     // sound cycles
     std::uint8_t tms_data_ = 0;
     bool sound_reset_ = true, sound_irq_ = false, sndrst_state_ = false;
+    void sndrst_w(bool state, std::int64_t at_sound_time);   // MAME's sndrst_6502_w
     std::uint8_t coin_counters_ = 0, switch_bits_ = 0, mixer_ = 0;
 
     // Events (main-CPU cycles).

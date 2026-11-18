@@ -10,6 +10,7 @@
 #include "romset.hpp"
 #include "system2.hpp"
 #include "system2_machine.hpp"
+#include "system2_audio.hpp"
 #include "system2_video.hpp"
 #include "t11_decoder.hpp"
 
@@ -596,6 +597,78 @@ void test_video() {
     CHECK(same);
 }
 
+void test_audio() {
+    // A pure tone: channel 1, AUDF 99, the 64 kHz clock: the output flips
+    // every 100 ticks of 28 cycles.
+    sys2::PokeySound tone;
+    tone.write(15, 0x03);   // SKCTL: out of reset
+    tone.write(0, 99);
+    tone.write(1, 0xaf);    // pure tone, volume 15
+    for (int i = 0; i < 28 * 600; ++i) tone.step();   // past the counters' first wrap from power-on
+    unsigned flips = 0, last = tone.output();
+    for (int i = 0; i < 28 * 100 * 40; ++i) {
+        tone.step();
+        if (tone.output() != last) ++flips, last = tone.output();
+    }
+    CHECK(flips >= 39 && flips <= 41);
+
+    // run(n) is n steps, whatever the registers: random writes at random times.
+    sys2::PokeySound a, b;
+    std::uint64_t x = 12345;
+    auto next = [&] { x ^= x << 13; x ^= x >> 7; x ^= x << 17; return x; };
+    bool same = true;
+    for (int round = 0; round < 3000 && same; ++round) {
+        const unsigned reg = static_cast<unsigned>(next() % 10);
+        const auto value = static_cast<std::uint8_t>(next());
+        const unsigned r = reg == 9 ? 15 : reg;   // AUDF/AUDC 1-4, AUDCTL, SKCTL
+        std::uint8_t v = r == 15 ? static_cast<std::uint8_t>(value & 0x1b) : r == 8 ? static_cast<std::uint8_t>(value & (next() % 4 ? 0x9f : 0xff)) : value;
+        if (r == 1) v |= 1;   // channel 1 always audible: a silent POKEY isn't run (checked below)
+        a.write(r, v);
+        b.write(r, v);
+        const int n = static_cast<int>(next() % 3000);
+        std::uint32_t stepped = 0;
+        for (int i = 0; i < n; ++i) {
+            a.step();
+            stepped += std::min(a.output() * (32767u / 11 / 4), 32767u);
+        }
+        same = stepped == b.run(n) && a.output() == b.output();
+    }
+    CHECK(same);
+    // Silent (every channel's volume 0, nothing forced): no output, for any length.
+    sys2::PokeySound quiet;
+    quiet.write(15, 0x07);
+    quiet.write(8, 0x78);
+    for (unsigned r = 0; r < 8; ++r) quiet.write(r, 0);
+    CHECK(quiet.run(1 << 30) == 0 && quiet.output() == 0);
+
+    // The YM2151 through the board: a key-on makes sound; the mixer latch scales it.
+    sys2::Audio audio;
+    std::int64_t t = 0;
+    auto ym = [&](std::uint8_t reg, std::uint8_t value) {
+        audio.ym_write(false, reg, t += 64);
+        audio.ym_write(true, value, t += 64);
+    };
+    for (std::uint8_t op = 0; op < 4; ++op) {
+        ym(static_cast<std::uint8_t>(0x60 + op * 8), op == 3 ? 0x00 : 0x7f);   // total level: only the carrier
+        ym(static_cast<std::uint8_t>(0x80 + op * 8), 0x1f);                    // attack rate
+        ym(static_cast<std::uint8_t>(0x40 + op * 8), 0x01);                    // multiple
+        ym(static_cast<std::uint8_t>(0xe0 + op * 8), 0x0f);                    // release
+    }
+    ym(0x20, 0xc7);   // channel 0: both sides, algorithm 7
+    ym(0x28, 0x4a);   // a note
+    ym(0x08, 0x78);   // key on, all operators
+    audio.advance(t += 32 * 2000);
+    int peak = 0;
+    for (const auto v : audio.frames()) peak = std::max(peak, std::abs(int{v}));
+    CHECK(peak > 1000);
+    audio.frames().clear();
+    audio.mixer_write(0x00, t);   // every volume resistor in: quieter
+    audio.advance(t += 32 * 2000);
+    int quieter = 0;
+    for (const auto v : audio.frames()) quieter = std::max(quieter, std::abs(int{v}));
+    CHECK(quieter > 0 && quieter < peak);
+}
+
 int main() {
     test_sha1();
     test_rom_set();
@@ -609,6 +682,7 @@ int main() {
     test_cfg_mask_table_and_window_pointer();
     test_machine();
     test_video();
+    test_audio();
     test_sound_cfg();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

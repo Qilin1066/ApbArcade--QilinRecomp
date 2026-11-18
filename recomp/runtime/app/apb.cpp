@@ -1,7 +1,7 @@
 // apb: the game, recompiled. A window (SDL3), the board's frames drawn by the
 // reference renderer and shown through Vulkan, and the cabinet's controls.
 //
-//   apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N]
+//   apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]
 //
 // Controls (keyboard; a gamepad works too):
 //   Left / Right       steering wheel          (left stick)
@@ -18,6 +18,9 @@
 // preferences folder for "Qilin/apb". Everything else follows the board:
 // one game frame per VBLANK, 166,400 main-CPU cycles (60.1 Hz), paced to
 // the clock; a frame is drawn as MAME draws it and shown on the next present.
+// Sound (the YM2151 and the POKEYs; no speech yet) is made as the 6502
+// writes it and queued to SDL at 55,930 Hz, SDL resampling for the device.
+// The queue is kept between one and four frames ahead.
 //
 // The game stops with a message when it can't go on: the watchdog, or
 // control reaching code the lifter never saw (which would be a bug).
@@ -25,6 +28,7 @@
 #include "game.hpp"
 #include "gfx.hpp"
 #include "romset.hpp"
+#include "system2_audio.hpp"
 #include "system2_machine.hpp"
 #include "system2_video.hpp"
 
@@ -53,6 +57,7 @@ struct Options {
     int scale = 0;   // 0: the largest whole number that fits the display
     int gpu = -1;
     bool vsync = true;
+    bool mute = false;
     std::uint64_t frames = 0;   // 0: until closed
 };
 
@@ -67,6 +72,7 @@ bool parse(int argc, char** argv, Options& o) {
             return std::from_chars(v.data(), v.data() + v.size(), out).ec == std::errc{};
         };
         if (flag == "--no-vsync") o.vsync = false;
+        else if (flag == "--mute") o.mute = true;
         else if (flag == "--scale") { if (!number(o.scale)) return false; }
         else if (flag == "--gpu") { if (!number(o.gpu)) return false; }
         else if (flag == "--frames") { if (!number(o.frames)) return false; }
@@ -166,10 +172,10 @@ private:
 int main(int argc, char** argv) {
     Options options;
     if (!parse(argc, argv, options)) {
-        std::print(stderr, "usage: apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N]\n");
+        std::print(stderr, "usage: apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n");
         return 2;
     }
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         std::print(stderr, "apb: SDL: {}\n", SDL_GetError());
         return 1;
     }
@@ -218,6 +224,22 @@ int main(int argc, char** argv) {
     sys2::Video video(graphics);
     machine.video_sink = &video;
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width) * height);
+
+    // Sound: the board's chips, queued to the default playback device. No
+    // device is not an error; the game runs silent, with a note.
+    sys2::Audio audio;
+    SDL_AudioStream* sound = nullptr;
+    if (!options.mute) {
+        const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, 55930};
+        sound = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+        if (sound) {
+            machine.sound_sink = &audio;
+            SDL_ResumeAudioStreamDevice(sound);
+        } else {
+            std::print(stderr, "apb: no sound: {}\n", SDL_GetError());
+        }
+    }
+    constexpr int frame_bytes = 55930 / 60 * 4;   // one video frame of sound
     Controls controls;
     controls.renderer = renderer.get();
 
@@ -229,6 +251,16 @@ int main(int argc, char** argv) {
         if (!controls.update(machine, frame)) {
             quit = true;
             throw game::Stop{game::Stop::frames, "closed"};
+        }
+        if (sound) {
+            audio.advance(machine.sound_time);
+            auto& made = audio.frames();
+            // Keep the queue between one and four frames: drop what would
+            // overfill it (the device's clock runs a little slow), and let
+            // it fill again when it runs low.
+            const int queued = SDL_GetAudioStreamQueued(sound);
+            if (queued < 4 * frame_bytes) SDL_PutAudioStreamData(sound, made.data(), static_cast<int>(made.size() * sizeof(std::int16_t)));
+            made.clear();
         }
         sys2::to_bgra(video.frame(), machine.palette(), pixels.data());
         renderer->write_back_buffer(pixels.data());
@@ -247,6 +279,7 @@ int main(int argc, char** argv) {
     const auto stop = scheduler.run(options.frames ? options.frames : ~0ull);
 
     if (std::ofstream out{nv, std::ios::binary}; out) out.write(reinterpret_cast<const char*>(machine.eeprom().data()), std::ssize(machine.eeprom()));
+    if (sound) SDL_DestroyAudioStream(sound);
     renderer.reset();
     SDL_DestroyWindow(window);
     if (!quit && stop.reason != game::Stop::frames) {

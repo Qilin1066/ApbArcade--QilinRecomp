@@ -25,7 +25,7 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | Video: the CPU reference renderer (playfield, motion objects, alphanumerics, MAME's priority rule and partial updates) | ✅ boot screens, high scores and gameplay render; `--frame-out FRAME:FILE` saves a frame as a PNG |
 | Video through Vulkan: CPU frames uploaded and shown in a window, scaled by whole numbers | ✅ tested on Mesa's software driver with validation, under a virtual X server |
 | The `apb` executable: window and input on SDL3, the EEPROM saved | 🔨 written, not yet built or played here (SDL3 couldn't be fetched in this environment) |
-| Sound chips | to do |
+| Sound: the YM2151 (ymfm, as MAME), both POKEYs (a port of MAME's), MAME's mixer; `qilin_run --wav`, and SDL3 audio in `apb` | ✅ music on coin-up and in the game; speech (TMS5220) to do |
 
 ## Versions and changes
 
@@ -94,7 +94,7 @@ build/qilin lift "D:/APB Arcade Project" --seeds apb.seeds --out gen
 build/qilin lift "D:/APB Arcade Project" --cpu sound --out gen-sound
 cmake -S . -B build -DQILIN_GEN_DIR="$PWD/gen" -DQILIN_SOUND_GEN_DIR="$PWD/gen-sound" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target apb qilin_run
-build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N]
+build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N] [--mute]
 ```
 
 | Cabinet | Keyboard | Gamepad |
@@ -106,7 +106,7 @@ build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N]
 | Self-test switch | F2 (toggles) | |
 | Quit | Escape | |
 
-The EEPROM (high scores, audits, settings) is saved in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs and `--draw 1` draws every frame to measure what video costs.
+The EEPROM (high scores, audits, settings) is saved in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs, `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound.
 
 ## Layout
 

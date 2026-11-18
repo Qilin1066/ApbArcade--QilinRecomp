@@ -2,7 +2,10 @@
 // scheduled by recomp/runtime/game, from power-on for a number of frames.
 //
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
-//             [--frame-out FRAME:FILE]... [--draw 1]
+//             [--frame-out FRAME:FILE]... [--draw 1] [--wav FILE]
+//
+// --wav FILE records the board's sound (the YM2151 and both POKEYs, mixed
+// as MAME mixes them; no speech yet) as a 16-bit stereo WAV at 55,930 Hz.
 //
 // --draw 1 draws every frame with the reference renderer, as apb does, to
 // measure what video costs.
@@ -16,6 +19,8 @@
 // (qilin lift --cpu sound).
 
 #include "frame_capture.hpp"
+#include "system2_audio.hpp"
+#include "wav.hpp"
 #include "game.hpp"
 #include "romset.hpp"
 #include "system2_machine.hpp"
@@ -25,6 +30,7 @@
 #include <format>
 #include <fstream>
 #include <string>
+#include <memory>
 #include <vector>
 #include <charconv>
 #include <print>
@@ -37,7 +43,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::uint64_t frames = 600;
-    std::string_view log_path;
+    std::string_view log_path, wav_path;
     std::vector<std::uint64_t> coins;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
     int pedal = -1, steer = 0;
@@ -48,6 +54,7 @@ int main(int argc, char** argv) {
         std::from_chars(value.data(), value.data() + value.size(), number);
         if (flag == "--frames") frames = number;
         else if (flag == "--log") log_path = value;
+        else if (flag == "--wav") wav_path = value;
         else if (flag == "--draw") capture.draw_all = number != 0;
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
@@ -79,10 +86,21 @@ int main(int argc, char** argv) {
     std::vector<sys2::Machine::LogEntry> log;
     if (!log_path.empty()) machine.log = &log;
     capture.attach(*set, machine);
+    std::unique_ptr<sys2::Audio> audio;
+    std::vector<std::int16_t> sound;
+    if (!wav_path.empty()) {
+        audio = std::make_unique<sys2::Audio>();
+        machine.sound_sink = audio.get();
+    }
     game::Scheduler scheduler(machine);
     // The same inputs as qilin_refrun: coins for 3 frames, presses for 10.
     scheduler.on_frame = [&](std::uint64_t frame) {
         capture.poll(machine);
+        if (audio) {
+            audio->advance(machine.sound_time);
+            sound.insert(sound.end(), audio->frames().begin(), audio->frames().end());
+            audio->frames().clear();
+        }
         const bool coin = std::ranges::any_of(coins, [&](std::uint64_t f) { return frame >= f && frame < f + 3; });
         machine.inputs.in1 = static_cast<std::uint8_t>(coin ? 0xb0 : 0xf0);
         std::uint16_t in0 = 0xffff;
@@ -113,6 +131,13 @@ int main(int argc, char** argv) {
                machine.interrupt_enable(), scheduler.sound.cpu.pc);
     if (const auto* v = capture.video(); v && capture.draw_all)
         std::print("Video: {} frames drawn in {} bands.\n", v->frames(), v->bands());
+    if (audio) {
+        if (!tools::write_wav(std::string(wav_path), sound, 55930)) {
+            std::print(stderr, "qilin_run: can't write {}\n", wav_path);
+            return 1;
+        }
+        std::print("Sound: {:.1f} s written to {}.\n", static_cast<double>(sound.size() / 2) / sys2::Audio::sample_rate, wav_path);
+    }
     if (!log_path.empty()) {
         std::ofstream out{std::string(log_path), std::ios::trunc};
         for (const auto& e : log) out << std::format("{} {:02X} {}\n", e.what, e.value, e.time);
