@@ -1,6 +1,7 @@
 #include <qilin/t11.hpp>
 
 #include <iostream>
+#include <string_view>
 
 namespace {
 
@@ -30,9 +31,57 @@ constexpr bool test_decrement_and_test() {
 static_assert(test_subtraction());
 static_assert(test_decrement_and_test());
 
+int test_system2() {
+    using qilin::t11::Banks;
+    using qilin::t11::System2State;
+
+    System2State before_jump;
+    before_jump.ram[0x103] = 0xa55a;
+    const auto cmp = qilin::t11::run_system2(before_jump, 10);
+    const auto& flags = before_jump.cpu.flags;
+    if (cmp.reason != StopReason::budget || cmp.address != 0x8232 || cmp.banks != Banks{0, 0} ||
+        before_jump.ram[0x100] != 0x8100 || before_jump.ram[0x101] != 0x0023 ||
+        before_jump.ram[0x102] != 0x8123 || before_jump.ram[0x103] != 0 || before_jump.cpu.r[3] != 0x8123 ||
+        !flags.n || flags.z || flags.v || !flags.c) {
+        std::cerr << "Unexpected result after absolute RAM and ROM operands.\n";
+        return 1;
+    }
+
+    System2State first_switch;
+    const auto new_bank = qilin::t11::run_system2(first_switch, 13);
+    if (new_bank.reason != StopReason::budget || new_bank.address != 0x400a || new_bank.banks != Banks{1, 0} ||
+        first_switch.cpu.r[0] != 0x1111 || first_switch.cpu.r[1] != 0) {
+        std::cerr << "Window 0 did not switch at the expected instruction.\n";
+        return 1;
+    }
+
+    System2State cross_window;
+    const auto second_bank = qilin::t11::run_system2(cross_window, 19);
+    if (second_bank.reason != StopReason::budget || second_bank.address != 0x6002 ||
+        second_bank.banks != Banks{1, 35} || cross_window.cpu.r[1] != 0x2222 ||
+        cross_window.cpu.r[2] != 0 || !cross_window.cpu.flags.n) {
+        std::cerr << "Window 1 did not switch after fetching the operand from the old bank.\n";
+        return 1;
+    }
+
+    System2State complete;
+    const auto halt = qilin::t11::run_system2(complete, 64);
+    if (halt.reason != StopReason::halt || halt.address != 0x6006 || halt.banks != Banks{1, 35} ||
+        complete.cpu.r[0] != 0x1111 || complete.cpu.r[1] != 0x2222 ||
+        complete.cpu.r[2] != 0x3333 || !complete.cpu.flags.c) {
+        std::cerr << "Unexpected result from the native banked T-11 program.\n";
+        return 1;
+    }
+    std::cout << "Native System 2 program switched both ROM windows and reached HALT.\n";
+    return 0;
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--system2") {
+        return test_system2();
+    }
     qilin::t11::State complete;
     const auto halt = qilin::t11::run(complete, 100);
     if (halt.reason != StopReason::halt || halt.address != 0x022a ||

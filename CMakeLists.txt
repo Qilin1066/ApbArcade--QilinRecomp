@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 if(CMAKE_HOST_APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "Minimum macOS version for the runtime")
 endif()
-project(ApbArcade-QilinComp VERSION 0.1.1 LANGUAGES CXX)
+project(ApbArcade-QilinComp VERSION 0.2.0 LANGUAGES CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "A 64-bit C++ toolchain is required.")
@@ -43,7 +43,8 @@ target_include_directories(apb_t11_state INTERFACE "${PROJECT_SOURCE_DIR}/includ
 target_compile_features(apb_t11_state INTERFACE cxx_std_23)
 
 if(NOT CMAKE_CROSSCOMPILING)
-    add_executable(apb-t11-aot tools/t11_aot.cpp)
+    add_executable(apb-t11-aot tools/t11_aot.cpp tools/t11_image.cpp)
+    target_link_libraries(apb-t11-aot PRIVATE apb_t11_state)
     target_compile_definitions(apb-t11-aot PRIVATE APB_VERSION="${PROJECT_VERSION}")
     if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS 13.3)
         # Apple's libc++ exposes std::format from macOS 13.3.

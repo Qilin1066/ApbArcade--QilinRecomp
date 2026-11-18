@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Load System 2 T‑11 ROM maps from split byte lanes and diagnose missing or overlapping regions.
+- Compile direct jumps and immediate bank selections ahead of time, including switches that fetch an operand from the other ROM window.
+- Lower absolute RAM and ROM word operands, plus byte clears in low RAM.
+- Inspect the verified rev 7 reset path and report its first unsupported watchdog access at 0xF030.
+- Test banked execution and map diagnostics with hand-authored fixtures.
+
 ## 0.1.1
 
 - Configure Vulkan headers without the upstream C++ module target so GCC 14 can build with Unix Makefiles.

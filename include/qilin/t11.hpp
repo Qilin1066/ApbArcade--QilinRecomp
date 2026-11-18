@@ -17,15 +17,25 @@ struct State {
     Flags flags{};
 };
 
+using Banks = std::array<std::uint8_t, 2>;
+inline constexpr unsigned system2_ram_size = 0x1000;
+
+struct System2State {
+    State cpu{};
+    std::array<std::uint16_t, system2_ram_size / 2> ram{};
+};
+
 enum class StopReason { halt, budget };
 
 struct Stop {
     StopReason reason;
     std::uint16_t address;
+    Banks banks{};
 };
 
 // Defined by the generated translation unit. Execution starts at its entry address.
 [[nodiscard]] Stop run(State& state, std::uint64_t budget);
+[[nodiscard]] Stop run_system2(System2State& board, std::uint64_t budget);
 
 namespace ops {
 
@@ -62,6 +72,12 @@ constexpr std::uint16_t subtract(Flags& flags, std::uint16_t left, std::uint16_t
 constexpr std::uint16_t clear(Flags& flags) {
     flags = {.z = true};
     return 0;
+}
+
+constexpr std::uint16_t clear_byte(Flags& flags, std::uint16_t word, bool high_byte) {
+    flags = {.z = true};
+    const std::uint16_t mask = high_byte ? 0x00ff : 0xff00;
+    return static_cast<std::uint16_t>(word & mask);
 }
 
 constexpr std::uint16_t increment(Flags& flags, std::uint16_t value) {

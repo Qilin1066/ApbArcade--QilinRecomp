@@ -23,4 +23,10 @@ The build translates the T‑11 and 6502 code ahead of time. The shipped host ru
 4. **Playable at original settings.** Establish baseline parity, cabinet controls, EEPROM behaviour, and the device matrix. Measure low-end performance before raising quality settings.
 5. **Optional display settings.** Use presets for cabinet-faithful and desktop output. Evaluate integer scaling, larger output sizes, and high-refresh presentation against the original portrait layout and timing.
 
+## System 2 checkpoint
+
+The T‑11 compiler tracks the PC and the physical bank selected in each ROM window. The hardware exposes 8 KiB windows at 0x4000–0x5FFF and 0x6000–0x7FFF, and fixed ROM at 0x8000–0xFFFF. The generated code follows distinct precompiled paths through a bank change, including when the last operand is fetched from the other window. Low RAM read and write operands use the native state. Absolute ROM operands read the selected physical ROM during generation. Data reads in the Slapstic range require a board service.
+
+The read-only APB scan starts at the T‑11 reset PC 0x8000 and decodes six reachable locations, including a jump into fixed ROM. The first reported board access is `CLRB` at 0xF030, which writes to the watchdog at 0x1800. The next startup checkpoint needs the watchdog and the surrounding memory-mapped services. Selection from a runtime register value also needs bank-target discovery.
+
 [GBTGhoulies-Qilincomp design targets](https://github.com/Tecboy1066/GBTGhoulies-Qilincomp/blob/main/docs/roadmap-and-design-targets.md) · [MAME Atari System 2 reference](https://github.com/mamedev/mame/blob/master/src/mame/atari/atarisy2.cpp)

@@ -2,13 +2,13 @@
 
 Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with the verified rev 7 ROM set. The project follows the Ghoulies project requirements for ahead-of-time C++23, Vulkan 1.3, low-end performance, and 64-bit portability. The runtime design calls for precompiled host code for both the DEC T‑11 main program and the 6502 sound program. ROMs, generated code, and locally built binaries stay with the user's copy. [GBTGhoulies-Qilincomp](https://github.com/Tecboy1066/GBTGhoulies-Qilincomp)
 
-## First milestone
+## Current checkpoint
 
 - The verifier checks the sizes and SHA‑1 digests of all 36 rev 7 files.
-- The T‑11 tool translates the reachable code of a small, flat binary to a C++23 translation unit. CTest compiles and runs a hand-authored program and checks diagnostics for unsupported instructions, branches into immediate operands, and out-of-image control flow.
+- The T‑11 tool translates flat and banked System 2 test programs into C++23. CTest runs both programs natively and verifies bank switches, absolute memory operands, and build-time diagnostics.
 - The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
 
-This milestone runs headless. The arcade boot sequence, sound, cabinet controls, and game presentation remain pending. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+The read-only scan of the verified rev 7 ROM decoded six reachable locations from the reset entry at 0x8000 before reporting a byte write to the watchdog at 0x1800 from PC 0xF030. Board services, the 6502 backend, and game presentation remain pending. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
 
 The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
 
@@ -38,12 +38,26 @@ Verify your unpacked ROM directory locally.
 cmake "-DROM_DIR=D:/APB Arcade Project" -P cmake/verify-roms.cmake
 ~~~
 
-Translate a small flat, little-endian T‑11 image and link the output with a host runner that includes `qilin/t11.hpp`. The origin is both the load and entry address. Supported word operands are R0–R6 and immediate sources. The subset covers MOV, CMP, ADD, SUB, CLR, INC, DEC, TST, NOP, relative branches, SOB, and HALT as a probe stop. The output uses C++ operations and direct native control flow. The execution budget bounds the probe.
+Translate a small flat, little-endian T‑11 image and link the output with a host runner that includes `qilin/t11.hpp`. The origin is both the load and entry address. The subset covers MOV, CMP, ADD, SUB, CLR, CLRB, INC, DEC, TST, NOP, direct JMP, relative branches, SOB, and HALT as a probe stop. Flat code accepts R0–R6 and immediate sources for data operations. The output uses C++ operations and direct native control flow. The execution budget bounds the probe.
 
 ~~~sh
 build/apb-t11-aot --version
 build/apb-t11-aot build/tests/fixtures/Release/loop.bin 0x0200 build/loop.cpp
 ~~~
+
+Inspect the rev 7 reset entry against the verified local ROMs.
+
+~~~powershell
+build/apb-t11-aot --inspect-system2 cmake/apb-rev7-t11.map "D:/APB Arcade Project" 0x8000
+~~~
+
+Generate a C++23 translation unit for the banked test image. The resulting `run_system2` entry takes CPU registers and low RAM, and reports the stopping address and both bank numbers.
+
+~~~sh
+build/apb-t11-aot --system2 build/tests/fixtures/Release/system2.map build/tests/fixtures/Release 0x8200 build/system2.cpp
+~~~
+
+Each line in a System 2 map contains a physical hexadecimal byte offset, the even byte lane filename, and the odd byte lane filename, separated by `|`. Filenames are resolved under the ROM directory. Both selector windows start at bank 0. Direct selector writes with immediate values change the bank context of the following instruction.
 
 ## References
 
