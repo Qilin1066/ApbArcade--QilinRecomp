@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 if(CMAKE_HOST_APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "Minimum macOS version for the runtime")
 endif()
-project(ApbArcade-QilinComp VERSION 0.1.0 LANGUAGES CXX)
+project(ApbArcade-QilinComp VERSION 0.1.1 LANGUAGES CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "A 64-bit C++ toolchain is required.")
@@ -57,16 +57,19 @@ endif()
 
 if(APB_BUILD_VULKAN_PROBE)
     include(FetchContent)
+    # Use the C headers without configuring the upstream C++ module target.
     FetchContent_Declare(
         VulkanHeaders
         URL https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/29f979ee5aa58b7b005f805ea8df7a855c39ff37
         URL_HASH SHA256=dfc96c55d7e481c42b917706ff52205d47c0f0957c8c2a60766ee781f16d18bd
         TLS_VERIFY ON
+        SOURCE_SUBDIR include
     )
     FetchContent_MakeAvailable(VulkanHeaders)
     add_executable(apb-vulkan-probe src/vulkan_probe.cpp)
     target_compile_definitions(apb-vulkan-probe PRIVATE VK_NO_PROTOTYPES)
-    target_link_libraries(apb-vulkan-probe PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS})
+    target_include_directories(apb-vulkan-probe SYSTEM PRIVATE "${vulkanheaders_SOURCE_DIR}/include")
+    target_link_libraries(apb-vulkan-probe PRIVATE ${CMAKE_DL_LIBS})
     if(BUILD_TESTING AND APB_TEST_VULKAN AND NOT CMAKE_CROSSCOMPILING)
         add_test(NAME vulkan.offscreen COMMAND apb-vulkan-probe)
         set_tests_properties(vulkan.offscreen PROPERTIES TIMEOUT 30 FAIL_REGULAR_EXPRESSION "Validation Error|VUID-")
