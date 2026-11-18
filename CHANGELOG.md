@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- Compile indexed-deferred T‑11 word operands with aligned pointer and data bus accesses.
+- Distinguish an unsupported pointer fetch from an unsupported final access.
+- Test native indexed-deferred reads and writes and advance the read-only rev 7 scan to the computed transfer at PC 0xF15E.
+
 ## 0.7.0
 
 - Map the 256-word System 2 palette and its mirror in the native bus.

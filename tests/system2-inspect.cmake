@@ -9,7 +9,7 @@ execute_process(
     OUTPUT_VARIABLE report
     ERROR_VARIABLE error
 )
-if(NOT status STREQUAL "0" OR NOT report MATCHES "Analyzed 64 reachable T-11 locations")
+if(NOT status STREQUAL "0" OR NOT report MATCHES "Analyzed 67 reachable T-11 locations")
     message(FATAL_ERROR "Unexpected System 2 inspection result\n${report}\n${error}")
 endif()
 

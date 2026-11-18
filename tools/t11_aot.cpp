@@ -129,7 +129,11 @@ enum class WordOp { move, compare, add, subtract };
 
 bool register_memory(unsigned operand) {
     const auto mode = operand & 070;
-    return (operand & 7) < 7 && (mode == 010 || mode == 020 || mode == 060);
+    return (operand & 7) < 7 && (mode == 010 || mode == 020 || mode == 060 || mode == 070);
+}
+
+bool has_index_word(unsigned operand) {
+    return (operand & 060) == 060;
 }
 
 std::string register_address(std::string& setup, Location where, unsigned operand,
@@ -137,8 +141,16 @@ std::string register_address(std::string& setup, Location where, unsigned operan
     const auto address = std::format("{}_address", role);
     const auto number = operand & 7;
     const auto base = std::format("registers[{}]", number);
-    const auto effective = displacement == 0 ? base
+    auto effective = displacement == 0 ? base
         : std::format("static_cast<std::uint16_t>({} + 0x{:04X}u)", base, displacement);
+    if ((operand & 070) == 070) {
+        const auto pointer = std::format("{}_pointer", role);
+        setup += std::format(
+            "        const auto {0} = word_address({1});\n"
+            "        if (!is_system2_data_word({0})) return {{StopReason::memory_read, 0x{2:04X}, Banks{{{3}, {4}}}, 0, {0}}};\n",
+            pointer, effective, where.pc, where.banks[0], where.banks[1]);
+        effective = std::format("board.read_data_word({})", pointer);
+    }
     setup += std::format(
         "        const auto {0} = word_address({1});\n"
         "        if (!is_system2_data_word({0})) return {{StopReason::memory_{2}, 0x{3:04X}, Banks{{{4}, {5}}}, 0, {0}}};\n",
@@ -170,7 +182,7 @@ Instruction decode_word_op(const Image& image, Location where, std::uint16_t opc
     };
     const auto memory_address = [&](unsigned operand, std::string_view role, bool write) {
         // Addition in 16 bits gives the same address for signed and unsigned offsets.
-        const auto displacement = (operand & 070) == 060 ? extension() : std::uint16_t{};
+        const auto displacement = has_index_word(operand) ? extension() : std::uint16_t{};
         return register_address(setup, where, operand, displacement, role, write);
     };
     const auto register_value = [&](unsigned number) {
@@ -334,7 +346,7 @@ Instruction decode(const Image& image, Location where) {
             std::string setup = "        auto registers = s.r;\n";
             unsigned words = 1;
             std::uint16_t indexed_offset{};
-            if ((destination & 070) == 060) {
+            if (has_index_word(destination)) {
                 indexed_offset = image.word(where, 2);
                 setup += observe(next.pc);
                 ++words;

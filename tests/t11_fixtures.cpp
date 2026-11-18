@@ -112,8 +112,11 @@ void write_system2(const std::filesystem::path& dir) {
         0005403,                 // NEG R3
         0006303,                 // ASL R3
         0022515,                 // CMP (R5)+,(R5)
-        0,                       // success: HALT
+        0000401,                 // success: BR indexed_deferred
         0,                       // fail: HALT
+        0011676, 5,              // indexed_deferred: MOV (SP),@5(SP)
+        0017601, 5,              // MOV @5(SP),R1
+        0,                       // HALT
     };
     constexpr std::uint16_t control[]{0000137, 0x6046};
     constexpr std::uint16_t select_zero[]{0x11ad};
