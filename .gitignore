@@ -13,6 +13,10 @@
 *.rom
 *.zip
 *.7z
+# Seed files and frames are made from the ROMs too; bundles are for moving commits.
+*.seeds
+*.png
+*.bundle
 
 # Host binaries
 *.exe
