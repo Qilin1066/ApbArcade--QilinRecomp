@@ -333,13 +333,13 @@ Instruction decode(const Image& image, Location where) {
         if (unary == 0005000 && register_memory(destination)) {
             std::string setup = "        auto registers = s.r;\n";
             unsigned words = 1;
-            std::uint16_t displacement{};
+            std::uint16_t indexed_offset{};
             if ((destination & 070) == 060) {
-                displacement = image.word(where, 2);
+                indexed_offset = image.word(where, 2);
                 setup += observe(next.pc);
                 ++words;
             }
-            const auto address = register_address(setup, where, destination, displacement, "destination", true);
+            const auto address = register_address(setup, where, destination, indexed_offset, "destination", true);
             setup += std::format("        board.video.observe({});\n", address);
             return observed_instruction(where.advance(static_cast<int>(2 * words)), words, setup,
                 std::format("board.write_data_word({}, ops::clear(s.flags));\n        s.r = registers", address));
