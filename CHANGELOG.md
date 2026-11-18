@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- Track Slapstic 110 selection and route the System 2 video window to separate pages.
+- Feed instruction fetches and supported data accesses to the board’s video selector in bus order.
+- Compile indexed word operands and register-based word clears.
+- Verify native video-memory access and advance the read-only rev 7 scan to the palette write at PC 0xF07E.
+
 ## 0.5.0
 
 - Support register-deferred and autoincrement word operands in low RAM and a literal destination for comparisons.

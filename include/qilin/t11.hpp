@@ -27,12 +27,39 @@ inline constexpr unsigned system2_ram_size = 0x1000;
     return static_cast<std::uint16_t>(address & 0xfffeu);
 }
 
+[[nodiscard]] constexpr bool is_system2_data_word(std::uint16_t address) noexcept {
+    return address < system2_ram_size || system2::is_video_ram(address);
+}
+
 struct System2State {
     State cpu{};
     std::array<std::uint16_t, system2_ram_size / 2> ram{};
     system2::Watchdog watchdog{};
     system2::Interrupts interrupts{};
     std::uint8_t psw_control = 0xe0;
+    system2::VideoMemory video{};
+
+    [[nodiscard]] constexpr std::uint16_t read_data_word(std::uint16_t address) noexcept {
+        video.observe(address);
+        if (address < system2_ram_size) {
+            return ram[address / 2];
+        }
+        return system2::is_video_ram(address) ? video.read_window(address) : 0xffff;
+    }
+
+    constexpr void write_data_word(std::uint16_t address, std::uint16_t value) noexcept {
+        video.observe(address);
+        if (address < system2_ram_size) {
+            ram[address / 2] = value;
+        } else if (system2::is_video_ram(address)) {
+            video.write_window(address, value);
+        }
+    }
+
+    [[nodiscard]] constexpr std::uint16_t read_rom_word(std::uint16_t address, std::uint16_t value) noexcept {
+        video.observe(address);
+        return value;
+    }
 };
 
 enum class StopReason { halt, budget, watchdog, interrupt, interrupt_stack, memory_read, memory_write };
@@ -62,13 +89,13 @@ struct Stop {
         return Stop{StopReason::interrupt_stack, pc, banks, vector};
     }
 
-    const auto handler = board.ram[vector / 2];
-    const auto next_psw = board.ram[vector / 2 + 1];
+    const auto handler = board.read_data_word(vector);
+    const auto next_psw = board.read_data_word(static_cast<std::uint16_t>(vector + 2));
     auto& flags = board.cpu.flags;
     const auto old_psw = static_cast<std::uint16_t>((board.psw_control & 0xf0) |
         (flags.n ? 8 : 0) | (flags.z ? 4 : 0) | (flags.v ? 2 : 0) | (flags.c ? 1 : 0));
-    board.ram[(sp - 2) / 2] = old_psw;
-    board.ram[(sp - 4) / 2] = pc;
+    board.write_data_word(static_cast<std::uint16_t>(sp - 2), old_psw);
+    board.write_data_word(static_cast<std::uint16_t>(sp - 4), pc);
     board.cpu.r[6] = static_cast<std::uint16_t>(sp - 4);
     board.psw_control = static_cast<std::uint8_t>(next_psw & 0xf0);
     flags = {(next_psw & 8) != 0, (next_psw & 4) != 0, (next_psw & 2) != 0, (next_psw & 1) != 0};

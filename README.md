@@ -8,10 +8,11 @@ Native recompilation tooling for Atari Games' 1987 arcade **APB**, starting with
 - The T‑11 tool translates flat and banked System 2 test programs into C++23. CTest runs both programs natively and verifies bank switches, absolute memory operands, and build-time diagnostics.
 - Native System 2 code can strobe the watchdog through its mirrored low-byte port. The watchdog takes board-clock ticks from the host and holds a reset request when its timer expires.
 - Native code writes the IRQ enable mask and acknowledges board interrupts. An eligible IRQ saves the T‑11 stack frame and returns the handler address to the host.
-- Native word moves, comparisons, addition, and subtraction support register-indirect and autoincrement operands in low RAM. A bus diagnostic reports both the instruction PC and the unsupported address.
+- Native word operations support register-indirect, autoincrement, and indexed operands in low RAM and video RAM. A bus diagnostic reports both the instruction PC and the unsupported address.
+- CPU bus accesses drive the Slapstic-controlled video memory view. The synthetic probe switches views and checks that writes and byte clears reach the selected page.
 - The Vulkan 1.3 probe dynamically loads the runtime, clears an offscreen attachment, copies it back, and checks all 256 pixels. It requires a graphics queue, dynamic rendering, and synchronization2.
 
-The read-only scan of the verified rev 7 ROM decoded 20 reachable locations from reset at 0x8000. It passed the register-autoincrement write and stopped on a word read from 0x8000 at PC 0xF062. The address is in the Slapstic control range. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
+The read-only scan of the verified rev 7 ROM decoded 27 reachable locations from reset at 0x8000. It passed the Slapstic read and stopped at a palette RAM write to 0x1086 from PC 0xF07E. [Project scope and roadmap](docs/SCOPE.md) · [Changelog](CHANGELOG.md)
 
 The native T‑11 and Vulkan checks passed on Windows x64 with a GTX 1080 Ti. Both probes built for Windows ARM64.
 

@@ -89,16 +89,33 @@ void write_system2(const std::filesystem::path& dir) {
         0162715, 1,              // SUB #1,(R5)
         0062525,                 // ADD (R5)+,(R5)+
         0021527, 9,              // CMP (R5),#9
-        0001002,                 // BNE fail
+        0001040,                 // BNE fail
+        0000137, 0x8000,         // JMP @#0x8000 (arm on instruction fetch)
+        0013704, 0x8080,         // MOV @#0x8080,R4 (view 0)
+        0012737, 0xabcd, 0x2100, // MOV #0xabcd,@#0x2100
+        0013704, 0x8000,         // MOV @#0x8000,R4 (arm)
+        0013704, 0x80c0,         // MOV @#0x80c0,R4 (view 2)
+        0012737, 0x1234, 0x2100, // MOV #0x1234,@#0x2100
+        0105037, 0x2101,         // CLRB @#0x2101 (high byte)
+        0013704, 0x8000,         // MOV @#0x8000,R4 (arm)
+        0013704, 0x8080,         // MOV @#0x8080,R4 (view 0)
+        0023727, 0x2100, 0xabcd, // CMP @#0x2100,#0xabcd
+        0001010,                 // BNE fail
+        0013765, 0x8080, 3,      // MOV @#0x8080,3(R5)
+        0016503, 0xfffb,         // MOV -5(R5),R3
+        0005023,                 // CLR (R3)+
         0022515,                 // CMP (R5)+,(R5)
         0,                       // success: HALT
         0,                       // fail: HALT
     };
+    constexpr std::uint16_t control[]{0000137, 0x6046};
+    constexpr std::uint16_t select_zero[]{0x11ad};
+    constexpr std::uint16_t select_two[]{0x22bd};
     constexpr std::uint16_t constant[]{0x8122};
     constexpr std::uint16_t unsupported_board[]{
         0010037, 0x1400,     // 0x8240: register value written to the bank selector
         0012737, 1, 0x1500,  // 0x8244: unsupported device write
-        0022737, 0, 0x8000,  // 0x824a: Slapstic window is not a plain ROM data read
+        0022737, 0, 0x1700,  // 0x824a: unsupported device read
         0105037, 0x1801,     // 0x8250: high byte does not strobe the watchdog
         0022737, 0, 0x1800,  // 0x8254: explicit read needs the input port
         0105037, 0x1601,     // 0x825a: upper byte of the interrupt-enable word
@@ -106,6 +123,9 @@ void write_system2(const std::filesystem::path& dir) {
 
     std::ofstream map(dir / "system2.map", std::ios::trunc);
     map << "# Synthetic fixture\n";
+    write_pair(map, dir, 0x08000, "control", control);
+    write_pair(map, dir, 0x08080, "select-zero", select_zero);
+    write_pair(map, dir, 0x080c0, "select-two", select_two);
     write_pair(map, dir, 0x08200, "fixed ROM", fixed_rom);
     write_pair(map, dir, 0x08240, "unsupported-board", unsupported_board);
     write_pair(map, dir, 0x0f000, "constant", constant);

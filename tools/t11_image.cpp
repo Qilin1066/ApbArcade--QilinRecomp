@@ -11,7 +11,6 @@ namespace {
 
 constexpr std::uint32_t address_space_size = 0x10000;
 constexpr std::uint32_t fixed_rom_start = 0x8000;
-constexpr std::uint32_t slapstic_end = 0x8200;
 constexpr std::uint32_t window_start = 0x4000;
 constexpr std::uint32_t window_size = 0x2000;
 constexpr std::uint32_t bank_rom_start = 0x10000;
@@ -181,7 +180,7 @@ std::uint16_t System2Image::word(Location where, unsigned offset) const {
 }
 
 std::optional<std::uint16_t> System2Image::rom_data_word(Location where, Address address) const {
-    if (address < window_start || (address >= fixed_rom_start && address < slapstic_end)) {
+    if (address < window_start) {
         return std::nullopt;
     }
     return word(where.at(address));

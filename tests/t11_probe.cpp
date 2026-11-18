@@ -109,9 +109,52 @@ bool test_interrupt_entry() {
            board.interrupts.control_pins() == 0x0c && board.ram[0x100] == 0;
 }
 
+constexpr bool test_video_selection() {
+    qilin::system2::VideoMemory video;
+    video.write_window(0x2000, 0x3333);
+    video.observe(0x8080);
+    if (video.bank() != 3) {
+        return false;
+    }
+    video.observe(0x8001);
+    video.observe(0x8080);
+    video.write_window(0x2000, 0x1111);
+    video.observe(0x8000);
+    video.observe(0x80a0);
+    video.write_window(0x2000, 0x9999);
+    if (video.bank() != 1 || video.read_window(0x2000) != 0xffff) {
+        return false;
+    }
+    video.observe(0x8000);
+    video.observe(0x005a);
+    video.observe(0x0100); // Break alternate validation.
+    video.observe(0x80c0);
+    if (video.bank() != 2 || video.read_window(0x2000) != 0) {
+        return false;
+    }
+    video.observe(0x8000);
+    video.observe(0x005a);
+    video.observe(0xfa28);
+    video.observe(0xfa48);
+    video.observe(0x80e0); // Commit the staged alternate selection.
+    if (video.bank() != 0 || video.read_window(0x2000) != 0x1111) {
+        return false;
+    }
+    video.observe(0x8000);
+    video.observe(0xe980);
+    video.observe(0x8080);
+    video.observe(0xe982); // Odd phase sets bit zero.
+    video.observe(0xe980); // Even phase sets bit one.
+    video.observe(0xe9a0);
+    return video.bank() == 3 && video.read_window(0x2000) == 0x3333;
+}
+
+static_assert(test_video_selection());
+
 bool test_indirect_words() {
     qilin::t11::System2State board;
     board.cpu.r[5] = 0x0301;
+    board.ram[2] = 0xabcd;
     board.ram[0x181] = 11;
     board.ram[0x183] = 5;
     board.ram[0x184] = 7;
@@ -119,10 +162,17 @@ bool test_indirect_words() {
     board.ram[0x186] = 10;
     const auto stop = qilin::t11::run_system2(board, 64);
     const auto& flags = board.cpu.flags;
-    if (stop.reason != StopReason::halt || stop.address != 0x6044 || board.cpu.r[5] != 0x030d ||
+    if (stop.reason != StopReason::halt || stop.address != 0x6080 || board.cpu.r[5] != 0x030d ||
         board.ram[0x180] != 0x0301 || board.ram[0x181] != 11 || board.ram[0x182] != 11 ||
         board.ram[0x183] != 4 || board.ram[0x184] != 11 || board.ram[0x186] != 10 ||
-        !flags.n || flags.z || flags.v || !flags.c) {
+        !flags.n || flags.z || flags.v || !flags.c || board.cpu.r[4] != 0x11ad ||
+        board.cpu.r[3] != 6 || board.ram[2] != 0 || board.ram[0x187] != 0x11ad ||
+        board.video.bank() != 0 || board.video.read_window(0x2100) != 0xabcd) {
+        return false;
+    }
+    board.video.observe(0x8000);
+    board.video.observe(0x80c0);
+    if (board.video.bank() != 2 || board.video.read_window(0x2100) != 0x0034) {
         return false;
     }
 
@@ -217,7 +267,7 @@ int test_system2() {
         std::cerr << "Unexpected result from native register-indirect memory access.\n";
         return 1;
     }
-    std::cout << "Native System 2 code passed bank, watchdog, IRQ, and indirect memory checks.\n";
+    std::cout << "Native System 2 code passed bank, watchdog, IRQ, and video-memory checks.\n";
     return 0;
 }
 
