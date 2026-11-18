@@ -6,6 +6,7 @@
 // random bus traffic.
 
 #include "cfg.hpp"
+#include "m6502_cfg.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
 #include "t11_decoder.hpp"
@@ -15,6 +16,7 @@
 #include <filesystem>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -390,6 +392,62 @@ void test_cfg() {
     CHECK(unknown_bank && !unexpected);
 }
 
+// The sound program's analysis on a synthetic 6502 ROM: a branch that is
+// always taken in front of data, a command dispatcher like APB's (a class
+// table and an argument table indexed by the same command, the class picking
+// a handler through an RTS jump table, the RTS shared with a plain return), a
+// handler dispatching again through the argument, and a callee whose
+// argument range makes one of its branches always taken.
+void test_sound_cfg() {
+    namespace m6502 = qilin::m6502;
+    std::vector<std::uint8_t> memory(0x10000, 0x02);   // KIL everywhere: any stray path shows
+    const auto put = [&](unsigned address, std::initializer_list<std::uint8_t> bytes) {
+        for (const auto b : bytes) memory[address++] = b;
+    };
+    put(0x4000, {
+        0xA9, 0xFF,         // 4000 LDA #$FF
+        0xD0, 0x03,         // 4002 BNE $4007 (always taken)
+        0x02, 0x02, 0x02,   // 4004 data
+        0xAC, 0x00, 0x02,   // 4007 LDY $0200      the command, from RAM
+        0xC0, 0x08,         // 400A CPY #$08
+        0xB0, 0x14,         // 400C BCS $4022      out of range: return
+        0xB9, 0x00, 0x50,   // 400E LDA $5000,Y    its class
+        0xC9, 0x02,         // 4011 CMP #$02
+        0xB0, 0x0D,         // 4013 BCS $4022      no handler: return
+        0x0A, 0xAA,         // 4015 ASL A; TAX
+        0xBD, 0x11, 0x50,   // 4017 LDA $5011,X
+        0x48,               // 401A PHA
+        0xBD, 0x10, 0x50,   // 401B LDA $5010,X
+        0x48,               // 401E PHA
+        0xB9, 0x08, 0x50,   // 401F LDA $5008,Y    its argument
+        0x60,               // 4022 RTS            to the handler, or back
+    });
+    put(0x5000, {0, 1, 0, 1, 5, 0, 1, 0});                          // classes of commands 0-7
+    put(0x5008, {0x10, 0x20, 0x11, 0x21, 0x99, 0x12, 0x22, 0x13});  // arguments
+    put(0x5010, {0xFF, 0x40, 0xFF, 0x41});                          // handlers 4100, 4200 (minus one)
+    // Class 0: a second RTS table through the argument (0x10-0x13 here).
+    put(0x4100, {0x0A, 0xA8, 0xB9, 0x01, 0x51, 0x48, 0xB9, 0x00, 0x51, 0x48, 0x60});
+    put(0x5120, {0xFF, 0x42, 0x0F, 0x43, 0x1F, 0x43, 0x2F, 0x43});  // 4300, 4310, 4320, 4330
+    put(0x5128, {0xFF, 0x43});                                      // a slot no command reaches: 4400
+    for (const unsigned t : {0x4300u, 0x4310u, 0x4320u, 0x4330u}) put(t, {0x60});
+    // Class 1: calls 4250 with A = 0x20-0x22; its BCC is always taken.
+    put(0x4200, {0x20, 0x50, 0x42, 0x60});
+    put(0x4250, {0xC9, 0x23, 0x90, 0x02, 0x02, 0x02, 0x60});
+    put(0x4F00, {0x40});                                            // RTI
+    put(0xFFFA, {0x00, 0x4F, 0x00, 0x40, 0x00, 0x4F});              // NMI, reset, IRQ
+
+    const auto program = m6502::Program::analyze(memory);
+    const auto& nodes = program.nodes();
+    CHECK(!nodes.contains(0x4004) && nodes.at(0x4002).always_taken);
+    const auto& dispatcher = nodes.at(0x4022);
+    CHECK(dispatcher.transfer == m6502::Transfer::table && dispatcher.returns);
+    CHECK((dispatcher.table == std::vector<std::uint16_t>{0x4100, 0x4200}));
+    CHECK((nodes.at(0x410A).table == std::vector<std::uint16_t>{0x4300, 0x4310, 0x4320, 0x4330}));
+    CHECK(!nodes.contains(0x4400) && !nodes.contains(0x4254));
+    CHECK(nodes.at(0x4252).always_taken && program.functions().contains(0x4250));
+    CHECK(program.findings().empty());
+}
+
 } // namespace
 
 int main() {
@@ -402,6 +460,7 @@ int main() {
     test_watchdog_and_interrupts();
     test_decoder();
     test_cfg();
+    test_sound_cfg();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

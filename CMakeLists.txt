@@ -68,6 +68,7 @@ target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 add_library(qilin_core STATIC
     recomp/src/cfg.cpp
     recomp/src/lifter.cpp
+    recomp/src/m6502_cfg.cpp
     recomp/src/m6502_decoder.cpp
     recomp/src/romset.cpp
     recomp/src/t11_decoder.cpp

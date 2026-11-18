@@ -2,10 +2,12 @@
 //
 //   qilin --version
 //   qilin verify <rom-dir>                      check the 36 rev 7 files (size and SHA-1)
-//   qilin insns  <rom-dir> [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]
-//                                               linear T-11 listing at CPU addresses
-//   qilin cfg    <rom-dir> [--all]              T-11 control flow from reset: what is
-//                                               reached, and everything not yet followed
+//   qilin insns  <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]
+//                                               linear listing at CPU addresses: T-11
+//                                               (main, the default) or 6502 (sound)
+//   qilin cfg    <rom-dir> [--cpu main|sound] [--all]
+//                                               control flow from reset: what is reached,
+//                                               and everything not yet followed
 //   qilin lift   <rom-dir> --out DIR            lift every function to C++ (DIR is gitignored
 //                                               when it's gen/: never commit generated code)
 //
@@ -13,11 +15,14 @@
 
 #include "cfg.hpp"
 #include "lifter.hpp"
+#include "m6502_cfg.hpp"
+#include "m6502_decoder.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
 #include "t11_decoder.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <filesystem>
 #include <cstdio>
@@ -41,8 +46,8 @@ int usage() {
     std::print(stderr,
                "usage: qilin --version\n"
                "       qilin verify <rom-dir>\n"
-               "       qilin insns <rom-dir> [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
-               "       qilin cfg <rom-dir> [--all]\n"
+               "       qilin insns <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
+               "       qilin cfg <rom-dir> [--cpu main|sound] [--all]\n"
                "       qilin lift <rom-dir> --out DIR\n");
     return 2;
 }
@@ -90,10 +95,14 @@ int insns(const std::vector<std::string_view>& args) {
         return usage();
     }
     unsigned bank0 = 0, bank1 = 0, from = 0x8000, to = 0x10000;
+    bool sound = false;
+    bool from_given = false;
     std::string output;
     for (std::size_t i = 1; i < args.size(); i += 2) {
         const auto value = i + 1 < args.size() ? args[i + 1] : std::string_view{};
-        if (args[i] == "--banks" && !value.empty()) {
+        if (args[i] == "--cpu" && (value == "main" || value == "sound")) {
+            sound = value == "sound";
+        } else if (args[i] == "--banks" && !value.empty()) {
             const auto comma = value.find(',');
             const auto b0 = parse_number(value.substr(0, comma), 10);
             const auto b1 = comma == std::string_view::npos ? std::nullopt : parse_number(value.substr(comma + 1), 10);
@@ -107,12 +116,20 @@ int insns(const std::vector<std::string_view>& args) {
             if (!address || *address > 0x10000) {
                 return usage();
             }
-            (args[i] == "--from" ? from : to) = *address & ~1u;
+            (args[i] == "--from" ? from : to) = *address;
+            from_given = from_given || args[i] == "--from";
         } else if (args[i] == "-o" && !value.empty()) {
             output = value;
         } else {
             return usage();
         }
+    }
+    if (sound && !from_given) {
+        from = 0x4000;
+    }
+    if (!sound) {
+        from &= ~1u;
+        to &= ~1u;
     }
     if (from < 0x4000) {
         std::print(stderr, "qilin: the listing covers ROM (0x4000-0xFFFF)\n");
@@ -133,6 +150,26 @@ int insns(const std::vector<std::string_view>& args) {
         }
     }
     std::ostream& out = output.empty() ? std::cout : file;
+    if (sound) {
+        // The sound CPU's ROM is flat: CPU address = offset in the region.
+        const auto bytes = set->region(rom::Region::sound_cpu);
+        const auto byte = [&](unsigned address) {
+            return address < 0x10000 ? bytes[address] : std::uint8_t{0};
+        };
+        out << std::format("; 6502 at CPU addresses {:04X}-{:04X} (MAME syntax)\n", from, to - 1);
+        for (unsigned pc = from; pc < to;) {
+            const auto insn = qilin::m6502::decode(byte(pc), byte(pc + 1), byte(pc + 2));
+            std::string hex;
+            for (unsigned i = 0; i < 3; ++i) {
+                hex += i < insn.length ? std::format("{:02X} ", byte(pc + i)) : std::string(3, ' ');
+            }
+            out << std::format("{:04X}  {} {:>2}{}  {}{}\n", pc, hex, insn.cycles, insn.page_penalty ? "+" : " ",
+                               qilin::m6502::disassemble(insn, static_cast<std::uint16_t>(pc)),
+                               insn.documented ? "" : "    ; undocumented");
+            pc += insn.length;
+        }
+        return 0;
+    }
     const auto word = [&](unsigned address) -> std::optional<std::uint16_t> {
         if (address >= 0x10000) {
             return std::nullopt;
@@ -162,15 +199,79 @@ int insns(const std::vector<std::string_view>& args) {
     return 0;
 }
 
+int sound_cfg_report(const rom::RomSet& set, bool all, std::optional<unsigned> at) {
+    namespace m6502 = qilin::m6502;
+    const auto program = m6502::Program::analyze(set.region(rom::Region::sound_cpu));
+    if (at) {
+        // Where control reaches this address from.
+        for (const auto& [pc, node] : program.nodes()) {
+            const bool calls = node.transfer == m6502::Transfer::call && node.target == *at;
+            if (calls || std::ranges::find(node.next, *at) != node.next.end()) {
+                std::print("{:04X}  {}{}\n", pc, m6502::disassemble(node.insn, pc),
+                           node.transfer == m6502::Transfer::table ? "    ; table" : "");
+            }
+        }
+        return 0;
+    }
+    std::size_t bytes = 0;
+    for (const auto& [pc, node] : program.nodes()) {
+        bytes += node.insn.length;
+    }
+    std::print("Reached {} 6502 instructions ({} bytes of the ROM's 49152, {:.1f}%) from reset {:04X}, NMI {:04X} "
+               "and IRQ {:04X}.\n",
+               program.nodes().size(), bytes, 100.0 * bytes / 49152, program.reset_entry(), program.nmi_entry(),
+               program.irq_entry());
+    std::print("{} function entries, {} return sites.\n", program.functions().size(), program.return_sites().size());
+    std::array<unsigned, 48> per_kib{};
+    for (const auto& [pc, node] : program.nodes()) {
+        per_kib[(pc - 0x4000u) >> 10] += node.insn.length;
+    }
+    std::print("Code bytes per KiB:");
+    for (std::size_t i = 0; i < per_kib.size(); ++i) {
+        std::print("{}{:04X}:{}", i % 12 == 0 ? "\n  " : " ", 0x4000 + 0x400 * i, per_kib[i]);
+    }
+    std::print("\n");
+    std::map<m6502::Issue, std::vector<const m6502::Finding*>> grouped;
+    for (const auto& f : program.findings()) {
+        grouped[f.issue].push_back(&f);
+    }
+    for (const auto& [issue, list] : grouped) {
+        std::print("\n{} ({}):\n", m6502::issue_name(issue), list.size());
+        for (std::size_t i = 0; i < list.size() && (all || i < 12); ++i) {
+            std::print("  {:04X}  {}\n", list[i]->at, list[i]->detail);
+        }
+        if (!all && list.size() > 12) {
+            std::print("  ... {} more (--all)\n", list.size() - 12);
+        }
+    }
+    return 0;
+}
+
 int cfg_report(const std::vector<std::string_view>& args) {
-    if (args.empty() || args.size() > 2 || (args.size() == 2 && args[1] != "--all")) {
+    bool all = false;
+    bool sound = false;
+    std::optional<unsigned> at;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--all") {
+            all = true;
+        } else if (args[i] == "--from-where" && i + 1 < args.size() && parse_number(args[i + 1], 16)) {
+            at = parse_number(args[++i], 16);
+        } else if (args[i] == "--cpu" && i + 1 < args.size() && (args[i + 1] == "main" || args[i + 1] == "sound")) {
+            sound = args[++i] == "sound";
+        } else {
+            return usage();
+        }
+    }
+    if (args.empty()) {
         return usage();
     }
-    const bool all = args.size() == 2;
     const auto set = rom::RomSet::load(args[0]);
     if (!set) {
         std::print(stderr, "qilin: {}\n", set.error());
         return 1;
+    }
+    if (sound) {
+        return sound_cfg_report(*set, all, at);
     }
     const auto program = qilin::cfg::Program::analyze(*set);
     std::size_t fixed = 0, banked = 0, bytes = 0;
