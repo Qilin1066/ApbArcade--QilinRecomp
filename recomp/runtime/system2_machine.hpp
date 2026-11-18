@@ -116,6 +116,19 @@ public:
         std::int64_t time;
     };
     std::vector<LogEntry>* log = nullptr;
+
+    // Optional: told when the picture must be drawn up to a scanline, where
+    // MAME forces a partial update (before a changed scroll register or a
+    // write to motion object 0's link), and at the start of vblank, where
+    // MAME draws the rest of the frame (VIDEO_UPDATE_BEFORE_VBLANK).
+    struct VideoSink {
+        virtual ~VideoSink() = default;
+        virtual void draw_through(const Machine& machine, int scanline) = 0;
+        virtual void vblank(const Machine& machine) = 0;
+    };
+    VideoSink* video_sink = nullptr;
+    // The scanline the beam is on, at main_time.
+    [[nodiscard]] int vpos() const noexcept { return static_cast<int>((main_time % cycles_per_frame) / cycles_per_scanline); }
     struct Counters {
         std::uint64_t sound_commands = 0, sound_command_reads = 0, sound_replies = 0, sound_reply_reads = 0;
         std::uint64_t sound_resets = 0, watchdog_strobes = 0, eeprom_writes = 0;
@@ -123,6 +136,13 @@ public:
     [[nodiscard]] const VideoMemory& video() const noexcept { return video_; }
     [[nodiscard]] const PaletteRam& palette() const noexcept { return palette_; }
     [[nodiscard]] std::uint16_t xscroll() const noexcept { return xscroll_; }
+    // The playfield as MAME's tilemap scrolls it: X from the scroll register
+    // (bits 6-15); Y from the register less the scanline it was written on
+    // (bit 4 clear), or loaded at line 0 (bit 4 set). The low 4 bits of each
+    // register are a playfield tile bank.
+    [[nodiscard]] int playfield_scroll_x() const noexcept { return xscroll_ >> 6; }
+    [[nodiscard]] int playfield_scroll_y() const noexcept { return playfield_scroll_y_; }
+    [[nodiscard]] unsigned playfield_tile_bank(int which) const noexcept { return (which ? yscroll_ : xscroll_) & 0x0f; }
     [[nodiscard]] std::uint16_t yscroll() const noexcept { return yscroll_; }
     [[nodiscard]] std::uint8_t last_sound_command() const noexcept { return soundlatch_.data; }
     [[nodiscard]] std::uint8_t last_sound_reply() const noexcept { return mainlatch_.data; }
@@ -147,6 +167,8 @@ private:
     int pending_enable_ = -1;             // int_enable_w is applied at the next synchronisation, as in MAME
     bool scanline_int_ = false, video_int_ = false, p2portwr_ = false, p2portrd_ = false;
     std::uint16_t xscroll_ = 0, yscroll_ = 0;
+    int playfield_scroll_y_ = 0;
+    int pending_scroll_y_ = -1;   // loaded at line 0
     std::uint8_t adc_channel_ = 0;
 
     // Between the CPUs.

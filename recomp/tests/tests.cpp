@@ -10,6 +10,7 @@
 #include "romset.hpp"
 #include "system2.hpp"
 #include "system2_machine.hpp"
+#include "system2_video.hpp"
 #include "t11_decoder.hpp"
 
 #include <array>
@@ -551,6 +552,35 @@ void test_sound_cfg() {
 
 } // namespace
 
+void test_video() {
+    // MAME's layouts: bits most significant first, planes {0, 4} (and the
+    // second half of the region for the 4-bit ones), x in nibbles a byte apart.
+    std::vector<std::uint8_t> tiles(0x80000, 0), sprites(0x100000, 0), chars(0x4000, 0);
+    tiles[0] = 0x88;            // tile 0, (0, 0): planes 0 and 1
+    tiles[0x40000] = 0x80;      // and plane 2 from the second half: pen 14
+    tiles[16 + 1] = 0x01;       // tile 1, (7, 0): plane 1 -> pen 4
+    chars[16] = 0x80;           // char 1, (0, 0): plane 0 -> pen 2
+    chars[2] = 0x08;            // char 0, (0, 1): plane 1 -> pen 1
+    sprites[12 + 1] = 0x40;     // sprite 0, (5, 3): plane 0 -> pen 8
+    const sys2::Graphics g(tiles, sprites, chars);
+    CHECK(g.tile(0)[0] == 14 && g.tile(0)[1] == 0 && g.tile(1)[7] == 4);
+    CHECK(g.character(1)[0] == 2 && g.character(0)[8] == 1);
+    CHECK(g.sprite(0)[3 * 16 + 5] == 8);
+
+    // RAM all zero: tile 0 everywhere in palette 128, alphanumeric 0 over it
+    // (pen 1 at (0, 1) of every cell, palette 64), motion object 0 off the top.
+    std::vector<std::uint8_t> main_rom(0x90000, 0), sound_rom(0x10000, 0);
+    sys2::Machine m(main_rom, sound_rom);
+    auto frame = std::make_unique<sys2::Frame>();
+    sys2::render(m, g, *frame, 0, sys2::Frame::height - 1);
+    CHECK(frame->pens[0] == 128 + 14 && frame->pens[1] == 128 && frame->pens[8] == 128 + 14);
+    CHECK(frame->pens[sys2::Frame::width] == 64 + 1 && frame->pens[8 * sys2::Frame::width + 8] == 128 + 14);
+    // Scrolled 3 pixels left: the tile's pen 14 column moves to x = 5.
+    m.main_write16(0x1700, 3 << 6);
+    sys2::render(m, g, *frame, 0, 0);
+    CHECK(frame->pens[5] == 128 + 14 && frame->pens[0] == 128 && frame->pens[8 * sys2::Frame::width] == 128 + 14);
+}
+
 int main() {
     test_sha1();
     test_rom_set();
@@ -563,6 +593,7 @@ int main() {
     test_cfg();
     test_cfg_mask_table_and_window_pointer();
     test_machine();
+    test_video();
     test_sound_cfg();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

@@ -21,8 +21,10 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | Sound CPU: MAME's 6502 as the reference, a 6502 decoder | ✅ agrees with MAME on all 256 opcodes: text, length, cycles, page penalties, flow |
 | Sound program control flow (`qilin cfg --cpu sound`): exact RTS jump tables, infeasible branches pruned | ✅ 4,618 instructions in 66 functions from the three vectors; every table exact, nothing undocumented |
 | Sound lifter (`qilin lift --cpu sound`): MAME's microcode as the instruction bodies; yields and resumes mid-function | ✅ all 66 functions; difftest 3,312 trials, 0 mismatches; every instruction form (in CI): 23,520 trials, 0 mismatches |
-| The board scheduler, a reference run of both CPUs, `apb` booting to its first frame | 🔨 next |
-| Sound chips, video, input | to do |
+| The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode and a credited game, 20,000 frames each, about 60× real time, no unlifted code |
+| Video: the CPU reference renderer (playfield, motion objects, alphanumerics, MAME's priority rule and partial updates) | ✅ boot screens, high scores and gameplay render; `--frame-out FRAME:FILE` saves a frame as a PNG |
+| Video through Vulkan, the `apb` executable with input | 🔨 next |
+| Sound chips | to do |
 
 ## Versions and changes
 

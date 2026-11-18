@@ -67,6 +67,9 @@ target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 # The System 2 board as both CPUs see it: run by the reference run now, by the game later.
 add_library(qilin_board STATIC recomp/runtime/system2_machine.cpp)
 target_link_libraries(qilin_board PUBLIC qilin_runtime PRIVATE qilin_warnings)
+# Video as MAME draws it, from the board's RAM: the CPU reference renderer.
+add_library(qilin_video STATIC recomp/runtime/system2_video.cpp)
+target_link_libraries(qilin_video PUBLIC qilin_board qilin_core PRIVATE qilin_warnings)
 
 # ---- Recompiler core ----
 # The 6502 lifter's instruction bodies are MAME's microcode: om6502.lst is
@@ -99,7 +102,7 @@ qilin_tool(qilin)
 # ---- Tests (no game files needed) ----
 enable_testing()
 add_executable(qilin_tests recomp/tests/tests.cpp)
-target_link_libraries(qilin_tests PRIVATE qilin_core qilin_board qilin_warnings)
+target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_warnings)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
 
@@ -160,7 +163,8 @@ set_tests_properties(qilin_gfx_tests PROPERTIES SKIP_RETURN_CODE 77)
 
 # ---- Reference run: the game on MAME's CPU cores and the board model (needs your ROMs) ----
 add_executable(qilin_refrun tools/refrun/refrun.cpp)
-target_link_libraries(qilin_refrun PRIVATE qilin_core qilin_board qilin_mame_t11 qilin_mame_m6502 qilin_warnings)
+target_include_directories(qilin_refrun PRIVATE tools/common)
+target_link_libraries(qilin_refrun PRIVATE qilin_core qilin_video qilin_gfx qilin_board qilin_mame_t11 qilin_mame_m6502 qilin_warnings)
 qilin_tool(qilin_refrun)
 
 # ---- Differential test: lifted code against MAME's T-11 core (needs your ROMs) ----
@@ -235,6 +239,7 @@ add_test(NAME qilin_sound_lifter_check COMMAND qilin_sound_lifter_check "${QILIN
 if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     add_executable(qilin_run tools/run/run.cpp recomp/runtime/game/game.cpp ${QILIN_GEN_SOURCES} ${QILIN_SOUND_GEN_SOURCES})
     target_include_directories(qilin_run PRIVATE recomp/runtime/game "${QILIN_GEN_DIR}" "${QILIN_SOUND_GEN_DIR}")
-    target_link_libraries(qilin_run PRIVATE qilin_core qilin_board qilin_runtime qilin_warnings)
+    target_include_directories(qilin_run PRIVATE tools/common)
+    target_link_libraries(qilin_run PRIVATE qilin_core qilin_video qilin_gfx qilin_board qilin_runtime qilin_warnings)
     qilin_tool(qilin_run)
 endif()

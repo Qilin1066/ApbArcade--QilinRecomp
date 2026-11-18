@@ -186,6 +186,9 @@ public:
     }
 
     [[nodiscard]] constexpr unsigned bank() const noexcept { return bank_; }
+    // The RAM behind the view: page 0 is bank 0 (alphanumerics, then motion
+    // objects at word 0xC00), pages 1 and 2 banks 2 and 3 (the playfield).
+    [[nodiscard]] constexpr const std::array<std::array<std::uint16_t, 0x1000>, 3>& pages() const noexcept { return pages_; }
 
     [[nodiscard]] constexpr std::uint16_t read_window(std::uint16_t address) const noexcept {
         return bank_ == 1 ? 0xffff : pages_[page_index()][(address & 0x1fffu) / 2];

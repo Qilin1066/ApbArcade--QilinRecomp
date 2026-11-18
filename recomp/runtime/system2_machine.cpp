@@ -145,12 +145,23 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
             if (log) log->push_back({'C', soundlatch_.data, main_time});
         }
         break;
-    case Area::xscroll:
-        xscroll_ = combine(xscroll_, data, mask);
+    case Area::xscroll: {
+        const auto value = combine(xscroll_, data, mask);
+        if (video_sink && value != xscroll_) video_sink->draw_through(*this, vpos());
+        xscroll_ = value;
         break;
-    case Area::yscroll:
-        yscroll_ = combine(yscroll_, data, mask);
+    }
+    case Area::yscroll: {
+        const auto value = combine(yscroll_, data, mask);
+        if (video_sink && value != yscroll_) video_sink->draw_through(*this, vpos());
+        yscroll_ = value;
+        if (yscroll_ & 0x10) {
+            pending_scroll_y_ = yscroll_ >> 6;
+        } else {
+            playfield_scroll_y_ = (yscroll_ >> 6) - vpos();
+        }
         break;
+    }
     case Area::in0_watchdog:
         if (low) {
             watchdog_deadline_ = main_time + watchdog_period;
@@ -158,6 +169,8 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         }
         break;
     case Area::video:
+        // Motion object 0's link word: the start of the list.
+        if (video_sink && video_.bank() == 0 && (address & 0x1fff) == 0x1806) video_sink->draw_through(*this, vpos());
         video_.write_window(address, combine(video_.read_window(address), data, mask));
         break;
     default:
@@ -286,7 +299,12 @@ void Machine::run_events(std::int64_t now) {
         if (t == next_scanline_event_) {
             const auto line = static_cast<unsigned>((t % cycles_per_frame) / cycles_per_scanline);
             scanline_int_ = (interrupt_enable_ & 4) != 0;   // the 32V interrupt, every 64 lines
+            if (line == 0 && pending_scroll_y_ >= 0) {
+                playfield_scroll_y_ = pending_scroll_y_;
+                pending_scroll_y_ = -1;
+            }
             if (line == vblank_line) {
+                if (video_sink) video_sink->vblank(*this);
                 video_int_ = (interrupt_enable_ & 8) != 0;
                 ++frames_;
                 if (log) log->push_back({'F', sound_ram_[0x02], t});   // a frame, with the sound program's status

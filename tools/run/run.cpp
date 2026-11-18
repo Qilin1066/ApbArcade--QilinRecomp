@@ -2,6 +2,7 @@
 // scheduled by recomp/runtime/game, from power-on for a number of frames.
 //
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
+//             [--frame-out FRAME:FILE]...
 //
 // The inputs are qilin_refrun's, so runs of the two can be compared.
 //
@@ -11,6 +12,7 @@
 // build with both -DQILIN_GEN_DIR (qilin lift) and -DQILIN_SOUND_GEN_DIR
 // (qilin lift --cpu sound).
 
+#include "frame_capture.hpp"
 #include "game.hpp"
 #include "romset.hpp"
 #include "system2_machine.hpp"
@@ -36,12 +38,19 @@ int main(int argc, char** argv) {
     std::vector<std::uint64_t> coins;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
     int pedal = -1, steer = 0;
+    tools::FrameCapture capture;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string_view flag = argv[i], value = argv[i + 1];
         std::uint64_t number = 0;
         std::from_chars(value.data(), value.data() + value.size(), number);
         if (flag == "--frames") frames = number;
         else if (flag == "--log") log_path = value;
+        else if (flag == "--frame-out") {
+            if (!capture.add(value)) {
+                std::print(stderr, "qilin_run: --frame-out wants FRAME:FILE\n");
+                return 2;
+            }
+        }
         else if (flag == "--coin") coins.push_back(number);
         else if (flag == "--pedal") pedal = static_cast<int>(number);
         else if (flag == "--steer") steer = static_cast<int>(number);
@@ -65,9 +74,11 @@ int main(int argc, char** argv) {
     sys2::Machine machine(set->region(rom::Region::main_cpu), set->region(rom::Region::sound_cpu));
     std::vector<sys2::Machine::LogEntry> log;
     if (!log_path.empty()) machine.log = &log;
+    capture.attach(*set, machine);
     game::Scheduler scheduler(machine);
     // The same inputs as qilin_refrun: coins for 3 frames, presses for 10.
     scheduler.on_frame = [&](std::uint64_t frame) {
+        capture.poll(machine);
         const bool coin = std::ranges::any_of(coins, [&](std::uint64_t f) { return frame >= f && frame < f + 3; });
         machine.inputs.in1 = static_cast<std::uint8_t>(coin ? 0xb0 : 0xf0);
         std::uint16_t in0 = 0xffff;

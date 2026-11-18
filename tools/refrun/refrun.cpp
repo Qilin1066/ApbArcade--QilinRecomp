@@ -4,6 +4,7 @@
 //
 //   qilin_refrun <rom-dir> [--frames N] [--quantum CYCLES] [--coin FRAME]... [--press MASK:FRAME]...
 //                [--pedal VALUE] [--steer VALUE] [--seeds FILE] [--seeds-out FILE]
+//                [--frame-out FRAME:FILE]...
 //
 // --coin closes the left coin switch for 3 frames; --press pulls the IN0
 // bits in MASK (hex, active low: 0080 and 0040 are buttons 1 and 2) low for
@@ -36,6 +37,7 @@
 #include "m6502_reference.h"
 #include "romset.hpp"
 #include "system2_machine.hpp"
+#include "frame_capture.hpp"
 #include "t11_decoder.hpp"
 #include "t11_reference.h"
 
@@ -96,6 +98,7 @@ int main(int argc, char** argv) {
     int pedal = -1, steer = 0;
     std::string seeds_out, log_path;
     std::vector<cfg::Loc> initial_seeds;
+    tools::FrameCapture capture;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string_view flag = argv[i];
         const std::string_view value = argv[i + 1];
@@ -106,6 +109,12 @@ int main(int argc, char** argv) {
         else if (flag == "--coin") coins.push_back(number);
         else if (flag == "--seeds-out") seeds_out = value;
         else if (flag == "--log") log_path = value;
+        else if (flag == "--frame-out") {
+            if (!capture.add(value)) {
+                std::print(stderr, "qilin_refrun: --frame-out wants FRAME:FILE\n");
+                return 2;
+            }
+        }
         else if (flag == "--seeds") {
             const auto loaded = cfg::read_seeds(std::string(value));
             if (!loaded) {
@@ -164,7 +173,9 @@ int main(int argc, char** argv) {
 
     std::uint64_t reported_second = 0;
     std::uint64_t last_steer_frame = ~0ull;
+    capture.attach(*set, m);
     while (m.frames() < frames_wanted) {
+        capture.poll(m);
         // Coins: the left coin switch (IN1 bit 6, active low) closed for 3 frames.
         const bool coin = std::ranges::any_of(coins, [&](std::uint64_t f) { return m.frames() >= f && m.frames() < f + 3; });
         m.inputs.in1 = static_cast<std::uint8_t>(coin ? 0xb0 : 0xf0);
