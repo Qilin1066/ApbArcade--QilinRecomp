@@ -4,8 +4,9 @@
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
 //             [--frame-out FRAME:FILE]... [--draw 1] [--wav FILE]
 //
-// --wav FILE records the board's sound (the YM2151 and both POKEYs, mixed
-// as MAME mixes them; no speech yet) as a 16-bit stereo WAV at 55,930 Hz.
+// --wav FILE records the board's sound (the YM2151, both POKEYs
+// and the TMS5220's speech, mixed as MAME mixes them) as a 16-bit stereo WAV
+// at 55,930 Hz.
 //
 // --draw 1 draws every frame with the reference renderer, as apb does, to
 // measure what video costs.
@@ -97,6 +98,7 @@ int main(int argc, char** argv) {
     scheduler.on_frame = [&](std::uint64_t frame) {
         capture.poll(machine);
         if (audio) {
+            machine.advance_speech(machine.sound_time);
             audio->advance(machine.sound_time);
             sound.insert(sound.end(), audio->frames().begin(), audio->frames().end());
             audio->frames().clear();
@@ -124,8 +126,9 @@ int main(int argc, char** argv) {
     std::print("Sound: released from reset {} times; {} commands ({} read), {} replies ({} read); {} NMIs, {} IRQs.\n",
                s.sound_resets, c.sound_commands, c.sound_command_reads, c.sound_replies, c.sound_reply_reads, s.sound_nmis,
                s.sound_irqs);
-    std::print("Main: {} interrupts taken, {} services; {} watchdog strobes; {} EEPROM writes; {} bytes to the speech chip.\n",
-               s.main_interrupts, s.main_services, c.watchdog_strobes, c.eeprom_writes, c.speech_bytes);
+    std::print("Main: {} interrupts taken, {} services; {} watchdog strobes; {} EEPROM writes.\n", s.main_interrupts,
+               s.main_services, c.watchdog_strobes, c.eeprom_writes);
+    std::print("Speech: {} bytes written to the TMS5220, {} samples made.\n", c.speech_bytes, machine.speech().samples());
     std::print("T-11 at {:04X}, PSW {:03o}, banks {}/{}; CP lines {:X}, interrupt enable {:X}; 6502 at {:04X}.\n",
                scheduler.main.cpu.r[7], scheduler.main.cpu.psw, machine.bank(0), machine.bank(1), machine.main_cp_lines(),
                machine.interrupt_enable(), scheduler.sound.cpu.pc);

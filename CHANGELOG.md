@@ -30,7 +30,14 @@ Known difference from MAME: interrupts are taken at service points, so where the
   - The POKEYs skip what can't change the output: stretches between clock ticks and counter wraps are counted in one go (checked against one step at a time on random registers), and a POKEY with every channel silent isn't run, so its channels keep their phase until it's heard. APB leaves both POKEYs silent all game, with two 16-bit channels borrowing every 7 cycles; running them cost four times as much as everything else together.
   - Sound costs about 0.8% of a desktop core.
   - `qilin_run --wav FILE` records it. `apb` queues it to SDL3, keeping one to four frames queued (`--mute` turns it off).
-  - Speech (the TMS5220) is next.
+- **The speech chip** (`recomp/runtime/system2_speech.*`): a TMS5220C, MAME's `tms5220.cpp` adapted to run outside its device framework (`third_party/mame-tms5220`, every line of the chip's logic MAME's, the differences listed in its header), on the board.
+  - It's part of the board, not only of the sound. The 6502 holds /WS low and waits on /READY (IN1 bit 2), which comes back 16 chip clocks later once the chip has taken the byte. With the FIFO full, the write waits until enough has been spoken. Before this the board always reported it ready.
+  - It runs in main-CPU cycles: 16 or 12 a chip clock as `switch_6502_w` sets 625 or 833 kHz, a sample every 80 clocks. It's brought up to date before every access and at each 32V event, as MAME updates its stream first.
+  - It's reset with the board and when the sound reset is released (MAME's `sndrst_6502_w`).
+  - Its samples are interpolated into the mix at 0.75 into both sides, scaled by the volume latch's bits 5-7.
+  - APB sends the speak-external command at start-up and then streams silence frames, about 500 bytes a second. The reference run and the native run both go through attract mode and a credited game, 20,000 frames each, with every executed location covered and no watchdog reset.
+  - Unit-tested: the /READY timing, the FIFO filling, speech starting at nine bytes, and voiced frames making sound.
+  - `qilin_run` reports the bytes written and the samples made.
 - **`qilin_game`**: the lifted code and the scheduler as one library, shared by `apb` and `qilin_run` (compiled once).
 - **`qilin_run --draw 1`**: draws every frame, as `apb` does, and reports the bands drawn.
 - **`--frame-out FRAME:FILE`** for `qilin_run` and `qilin_refrun`: saves a frame as a PNG (384 × 512, as the cabinet shows it). Only the frames asked for are drawn, so runs keep their speed. The native and reference runs give identical frames until their inputs are read at different moments (the steering dial, by frame 2,900 of a credited game).

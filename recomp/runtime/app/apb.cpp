@@ -18,7 +18,7 @@
 // preferences folder for "Qilin/apb". Everything else follows the board:
 // one game frame per VBLANK, 166,400 main-CPU cycles (60.1 Hz), paced to
 // the clock; a frame is drawn as MAME draws it and shown on the next present.
-// Sound (the YM2151 and the POKEYs; no speech yet) is made as the 6502
+// Sound (the YM2151, the POKEYs and the TMS5220's speech) is made as the 6502
 // writes it and queued to SDL at 55,930 Hz, SDL resampling for the device.
 // The queue is kept between one and four frames ahead.
 //
@@ -253,6 +253,7 @@ int main(int argc, char** argv) {
             throw game::Stop{game::Stop::frames, "closed"};
         }
         if (sound) {
+            machine.advance_speech(machine.sound_time);
             audio.advance(machine.sound_time);
             auto& made = audio.frames();
             // Keep the queue between one and four frames: drop what would

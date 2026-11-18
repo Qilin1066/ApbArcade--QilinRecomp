@@ -15,12 +15,16 @@
 // Writes come from the board with the sound cycle they happen on (the
 // machine's sound sink); the sound is made up to that cycle first, so a
 // write takes effect exactly when the 6502 made it, as MAME's stream update
-// before a write does. The TMS5220 (speech) is not modelled yet.
+// before a write does. The TMS5220's speech (the board runs the chip; see
+// system2_speech.hpp) arrives as samples at 7.8 or 10.4 kHz with the main
+// cycle each starts on, and is interpolated to the output rate: at 0.75
+// into both sides, scaled by the volume latch's bits 5-7.
 
 #include "system2_machine.hpp"
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -75,6 +79,7 @@ public:
     void ym_write(bool data, std::uint8_t value, std::int64_t sound_time) override;
     void ym_reset(bool running, std::int64_t sound_time) override;
     void mixer_write(std::uint8_t value, std::int64_t sound_time) override;
+    void speech_sample(std::int16_t value, std::int64_t main_cycle) override;
 
     // Makes the sound up to a sound cycle.
     void advance(std::int64_t sound_time);
@@ -89,7 +94,13 @@ private:
     bool ym_running_ = true;   // MAME's ym2151_device starts out of reset
     std::array<PokeySound, 2> pokey_;
     std::array<std::uint32_t, 2> pokey_sum_{};
-    double ym_gain_ = 1.0, pokey_gain_ = 1.0;
+    double ym_gain_ = 1.0, pokey_gain_ = 1.0, speech_gain_ = 1.0;
+    struct SpeechSample {
+        std::int64_t at;
+        std::int16_t value;
+    };
+    SpeechSample speech_last_{0, 0};
+    std::deque<SpeechSample> speech_;
     std::int64_t time_ = 0;
     std::vector<std::int16_t> frames_;
 };

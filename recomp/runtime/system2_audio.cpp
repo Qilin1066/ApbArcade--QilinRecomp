@@ -303,6 +303,11 @@ void Audio::mixer_write(std::uint8_t value, std::int64_t sound_time) {
     advance(sound_time);
     ym_gain_ = gain(value, 0, {100, 47, 22});
     pokey_gain_ = gain(value, 3, {47, 22});
+    speech_gain_ = gain(value, 5, {100, 47, 22});
+}
+
+void Audio::speech_sample(std::int16_t value, std::int64_t main_cycle) {
+    speech_.push_back({main_cycle, value});
 }
 
 void Audio::advance(std::int64_t sound_time) {
@@ -324,8 +329,21 @@ void Audio::emit() {
     constexpr double pokey_scale = 1.0 / 32768.0 / cycles_per_sample;
     const double pokey[2] = {pokey_sum_[0] * pokey_scale, pokey_sum_[1] * pokey_scale};
     pokey_sum_ = {};
+    // Speech at the middle of this frame's cycles, between the samples either side.
+    const double at = static_cast<double>(time_ - cycles_per_sample / 2) * sound_clock_den / sound_clock_num;
+    while (!speech_.empty() && static_cast<double>(speech_.front().at) <= at) {
+        speech_last_ = speech_.front();
+        speech_.pop_front();
+    }
+    double speech = speech_last_.value;
+    if (!speech_.empty()) {
+        const SpeechSample& next = speech_.front();
+        const double f = (at - static_cast<double>(speech_last_.at)) / static_cast<double>(next.at - speech_last_.at);
+        speech += (next.value - speech_last_.value) * std::clamp(f, 0.0, 1.0);
+    }
+    speech = speech / 32768.0 * 0.75 * speech_gain_;
     for (int side = 0; side < 2; ++side) {
-        const double v = out.data[side] / 32768.0 * 0.60 * ym_gain_ + pokey[side] * 1.35 * pokey_gain_;
+        const double v = out.data[side] / 32768.0 * 0.60 * ym_gain_ + pokey[side] * 1.35 * pokey_gain_ + speech;
         frames_.push_back(static_cast<std::int16_t>(std::clamp(std::lround(v * 32767.0), -32768L, 32767L)));
     }
 }

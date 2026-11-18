@@ -65,8 +65,12 @@ add_library(qilin_runtime INTERFACE)
 target_include_directories(qilin_runtime INTERFACE recomp/runtime)
 
 # The System 2 board as both CPUs see it: run by the reference run now, by the game later.
-add_library(qilin_board STATIC recomp/runtime/system2_machine.cpp)
-target_link_libraries(qilin_board PUBLIC qilin_runtime PRIVATE qilin_warnings)
+# MAME's TMS5220, adapted to run outside its device framework (built with its own warnings).
+add_library(qilin_tms5220 STATIC third_party/mame-tms5220/tms5220_core.cpp)
+target_include_directories(qilin_tms5220 SYSTEM PUBLIC third_party/mame-tms5220)
+target_compile_features(qilin_tms5220 PUBLIC cxx_std_17)
+add_library(qilin_board STATIC recomp/runtime/system2_machine.cpp recomp/runtime/system2_speech.cpp)
+target_link_libraries(qilin_board PUBLIC qilin_runtime qilin_tms5220 PRIVATE qilin_warnings)
 # Sound as MAME makes it: ymfm's YM2151 (vendored, unmodified), the POKEYs, the mixer.
 add_library(qilin_ymfm STATIC third_party/ymfm/ymfm_opm.cpp)
 target_include_directories(qilin_ymfm SYSTEM PUBLIC third_party/ymfm)

@@ -18,6 +18,7 @@
 // write, a POKEY's RANDOM, the switches on ALLPOT). Their audio comes later.
 
 #include "system2.hpp"
+#include "system2_speech.hpp"
 
 #include <array>
 #include <cstdint>
@@ -38,6 +39,11 @@ inline constexpr std::int64_t sound_clock_num = 14'318'181;
 inline constexpr std::int64_t sound_clock_den = 80'000'000;
 [[nodiscard]] constexpr std::int64_t sound_cycles_at(std::int64_t main_cycles) noexcept {
     return main_cycles * sound_clock_num / sound_clock_den;
+}
+// The first main-CPU cycle at or after a sound-CPU cycle (no overflow for centuries).
+[[nodiscard]] constexpr std::int64_t main_cycles_at(std::int64_t sound_cycles) noexcept {
+    const std::int64_t q = sound_cycles / sound_clock_num, r = sound_cycles % sound_clock_num;
+    return q * sound_clock_den + (r * sound_clock_den + sound_clock_num - 1) / sound_clock_num;
 }
 
 // The switches and controls, as the ports read them. Active-low bits read 1 when idle.
@@ -136,8 +142,16 @@ public:
         virtual void ym_write(bool data, std::uint8_t value, std::int64_t sound_time) = 0;
         virtual void ym_reset(bool running, std::int64_t sound_time) = 0;   // the YM2151's reset line, active low
         virtual void mixer_write(std::uint8_t value, std::int64_t sound_time) = 0;
+        // A speech sample from the TMS5220, starting at a main-CPU cycle.
+        virtual void speech_sample(std::int16_t value, std::int64_t main_cycle) = 0;
     };
     SoundSink* sound_sink = nullptr;
+
+    // The speech chip, and bringing it up to a sound-CPU cycle (its samples
+    // go to the sound sink). The board does this before every access to it
+    // and at each 32V event; a front end does it before taking sound.
+    [[nodiscard]] const Speech& speech() const noexcept { return speech_; }
+    void advance_speech(std::int64_t to_sound_time) { speech_.advance(main_cycles_at(to_sound_time)); }
     // The scanline the beam is on, at main_time.
     [[nodiscard]] int vpos() const noexcept { return static_cast<int>((main_time % cycles_per_frame) / cycles_per_scanline); }
     struct Counters {
@@ -199,6 +213,8 @@ private:
     std::uint8_t tms_data_ = 0;
     bool sound_reset_ = true, sound_irq_ = false, sndrst_state_ = false;
     void sndrst_w(bool state, std::int64_t at_sound_time);   // MAME's sndrst_6502_w
+    void switch_w(std::uint8_t value, std::int64_t at_main_time);   // MAME's switch_6502_w
+    Speech speech_;
     std::uint8_t coin_counters_ = 0, switch_bits_ = 0, mixer_ = 0;
 
     // Events (main-CPU cycles).

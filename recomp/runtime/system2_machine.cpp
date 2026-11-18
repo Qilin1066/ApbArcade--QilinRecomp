@@ -38,10 +38,14 @@ std::uint8_t Pokey::read(unsigned offset, std::uint8_t allpot, std::int64_t soun
 Machine::Machine(std::span<const std::uint8_t> main_rom, std::span<const std::uint8_t> sound_rom)
     : main_rom_(main_rom), sound_rom_(sound_rom) {
     eeprom_.fill(0xff);   // MAME's default EEPROM contents, without a saved one
+    speech_.on_sample = [this](std::int16_t value, std::int64_t at) {
+        if (sound_sink) sound_sink->speech_sample(value, at);
+    };
     reset();
 }
 
 void Machine::reset() {
+    speech_.reset(main_time);   // MAME resets every device with the machine
     interrupt_enable_ = 0;
     pending_enable_ = -1;
     sound_reset_w(1);
@@ -186,7 +190,12 @@ void Machine::sound_reset_w(std::uint8_t data) {
     // sndrst_6502_w(0), coincount_w(0), switch_6502_w(0)
     sndrst_w(false, sound_cycles_at(main_time));
     coin_counters_ = 0;
-    switch_bits_ = 0;
+    switch_w(0, main_time);
+}
+
+void Machine::switch_w(std::uint8_t value, std::int64_t at_main_time) {
+    switch_bits_ = value;
+    speech_.set_divider(16 - (12 | ((value >> 5) & 1)), at_main_time);
 }
 
 void Machine::sndrst_w(bool state, std::int64_t at_sound_time) {
@@ -194,6 +203,7 @@ void Machine::sndrst_w(bool state, std::int64_t at_sound_time) {
     sndrst_state_ = state;
     if (sound_sink) sound_sink->ym_reset(state, at_sound_time);
     if (state) {   // 0 -> 1: the TMS5220 reset and mixer_w(0)
+        speech_.reset(main_cycles_at(at_sound_time));
         mixer_ = 0;
         if (sound_sink) sound_sink->mixer_write(0, at_sound_time);
     }
@@ -216,8 +226,8 @@ std::uint8_t Machine::sound_read(std::uint16_t address) {
     case 1: return inputs.leta[r & 3];
     case 3: return pokey_[1].read(r, inputs.dsw1, sound_time);
     case 4:   // IN1
-        return static_cast<std::uint8_t>((inputs.in1 & 0xf0) | (soundlatch_.pending ? 0x01 : 0) |
-                                         (mainlatch_.pending ? 0x02 : 0));   // bit 2: the TMS5220 is ready
+        return static_cast<std::uint8_t>((inputs.in1 & 0xf0) | (soundlatch_.pending ? 0x01 : 0) | (mainlatch_.pending ? 0x02 : 0) |
+                                         (speech_.not_ready(main_cycles_at(sound_time)) ? 0x04 : 0));
     case 5:   // YM2151 status: busy, no timer flags
         return sound_time < ym_busy_until_ ? 0x80 : 0x00;
     case 6:   // sound_6502_r: the main CPU's command; clocks CP0 and drops the NMI
@@ -261,9 +271,13 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
         return;
     case 7:
         switch (r & 0x0e) {
-        case 0x0: tms_data_ = value; return;
-        case 0x2:           // TMS5220 write strobe
-            ++counters.speech_bytes;
+        case 0x0:   // the TMS5220's data latch
+            tms_data_ = value;
+            speech_.data_w(value, main_cycles_at(sound_time));
+            return;
+        case 0x2:   // /WS: 0x1872 high, 0x1873 low (MAME's tms5220_strobe_w)
+            if (r & 1) ++counters.speech_bytes;
+            speech_.wsq_w(1 - static_cast<int>(r & 1), main_cycles_at(sound_time));
             return;
         case 0x4:           // sound_6502_w: the reply; clocks CP1
             p2portwr_ = (interrupt_enable_ & 2) != 0;
@@ -280,7 +294,7 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
             mixer_ = value;
             if (sound_sink) sound_sink->mixer_write(value, sound_time);
             return;
-        case 0xc: switch_bits_ = value; return;
+        case 0xc: switch_w(value, main_cycles_at(sound_time)); return;
         case 0xe:
             sndrst_w((value & 1) != 0, sound_time);
             return;
@@ -313,6 +327,7 @@ void Machine::run_events(std::int64_t now) {
         if (t == next_scanline_event_) {
             const auto line = static_cast<unsigned>((t % cycles_per_frame) / cycles_per_scanline);
             scanline_int_ = (interrupt_enable_ & 4) != 0;   // the 32V interrupt, every 64 lines
+            speech_.advance(t);   // keeps the speech samples coming between accesses
             if (line == 0 && pending_scroll_y_ >= 0) {
                 playfield_scroll_y_ = pending_scroll_y_;
                 pending_scroll_y_ = -1;

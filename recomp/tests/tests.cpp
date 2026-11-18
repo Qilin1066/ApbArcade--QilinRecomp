@@ -669,6 +669,38 @@ void test_audio() {
     CHECK(quieter > 0 && quieter < peak);
 }
 
+void test_speech() {
+    // APB's wiring: a byte into the latch, /WS low, wait for /READY, /WS
+    // high. /READY goes inactive at /WS low and comes back 16 chip clocks
+    // later (256 main cycles at the 625 kHz clock), when the chip takes the
+    // byte; with the FIFO full, only once the chip has spoken some.
+    sys2::Speech speech;
+    int peak = 0;
+    std::uint64_t made = 0;
+    speech.on_sample = [&](std::int16_t v, std::int64_t) { peak = std::max(peak, std::abs(int{v})); ++made; };
+    std::int64_t t = 1000;
+    auto write = [&](std::uint8_t value) {   // returns the main cycles /READY was inactive
+        speech.data_w(value, t);
+        speech.wsq_w(0, t += 4);
+        const std::int64_t from = t;
+        while (speech.not_ready(t)) ++t;
+        speech.wsq_w(1, t += 4);
+        return t - 4 - from;
+    };
+    CHECK(!speech.not_ready(t));
+    CHECK(write(0x60) == 256);   // speak external
+    // Bytes go into the 16-byte FIFO in 16 clocks each; nine start the
+    // speech; once it's full, a write waits for the chip to speak some.
+    bool quick = true;
+    for (int i = 0; i < 9; ++i) quick = quick && write(0x5a) == 256;
+    CHECK(quick);
+    std::int64_t longest = 0;
+    for (int i = 0; i < 12; ++i) longest = std::max(longest, write(0x5a));
+    CHECK(longest > 10'000);
+    speech.advance(t + 2'000'000);   // 0.2 s of speech from the FIFO
+    CHECK(made > 1000 && peak > 100);
+}
+
 int main() {
     test_sha1();
     test_rom_set();
@@ -683,6 +715,7 @@ int main() {
     test_machine();
     test_video();
     test_audio();
+    test_speech();
     test_sound_cfg();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
