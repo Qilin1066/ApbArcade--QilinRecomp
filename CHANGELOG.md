@@ -12,6 +12,7 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 ## [Unreleased]
 
 ### Added
+- **Presets on the Display page**: *Original* (whole multiples, plain pixels: the arcade's picture, and the default), *Arcade monitor* (as big as fits, the CRT look) and *Smooth* (as big as fits, smoothed pixel art). One click sets the picture's size and look (the CRT's sliders back to their defaults); full screen, the display, vsync and the device are left alone. The preset the settings match is highlighted, else "(set by hand)". Checked in `qilin_input_tests`.
 - **Looks for the picture** (the settings menu's Display page): plain pixels (a blit, as before), smoothed pixel art, or a CRT. Saved in `apb.ini` (`effect`, `crt_scanlines`, `crt_mask`).
   - *Smoothed pixel art:* an edge-directed upscaler written for this project after the idea of Hyllian's xBR. Where the colours around a pixel's corner say an edge crosses it (at 45 degrees, or shallow or steep at 1:2), the part of the pixel beyond the edge's line takes the neighbour's colour, anti-aliased to one window pixel. Flat areas and straight edges stay exactly as drawn.
   - *CRT:* each raster line is a beam whose height grows with its brightness, with darker gaps between lines, and an aperture grille's phosphor stripes, added up in linear light. APB's monitor stood upright, so the scanlines run down the screen (`Config::upright_tube`). The gaps fade out below about two window pixels a line, where they'd only make moiré. Scanline and stripe strength are sliders.

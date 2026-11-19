@@ -39,15 +39,16 @@ Vulkan 1.3 core is the floor; optional features and limits come from v3dv on a P
 **Low-end reference:** a Raspberry Pi 4–class board. It is what efficiency is measured against and tested on, not a floor.
 
 ## Settings, not platform branches
-Enhancements live behind a settings file with presets:
-- *Cabinet:* original 512 × 384 portrait raster, integer-scaled and letterboxed, original 60.1 Hz timing.
-- *Desktop:* larger scales, a look (smoothed pixel art or a CRT), high-refresh presentation of the same game frames.
+Enhancements are options in the settings file (and the menu), never mandatory; the original is the default. The Display page's presets:
+- *Original:* the 512 × 384 raster upright, scaled by whole multiples and letterboxed, plain pixels, original 60.1 Hz timing.
+- *Arcade monitor:* as big as fits, the CRT look.
+- *Smooth:* as big as fits, smoothed pixel art.
 
 ## Roadmap
 1. **Foundations** ✅ (v0.12.0): ROM set verified against MAME's digests, C++23 and CI on six configurations, the vendored Vulkan 1.3 renderer, the System 2 device models checked against MAME, MAME's T-11 core vendored as the reference CPU, and a full T-11 decoder verified against MAME on every opcode word.
 2. **CPU coverage:** 🔨 ✅ bank-aware analysis keyed by physical address (v0.13.0); ✅ function discovery from the code's structure; ✅ jump tables by value range; ✅ the lifter (functions, locals, MAME's bus order and cycles, checked returns, v0.14.0); ✅ a **differential test of every lifted function against MAME's T-11 core**, and of every instruction form in CI (v0.14.0). ✅ the 6502 sound program the same way: decoder, analysis with exact RTS jump tables, a lifter whose instruction bodies are MAME's microcode, differential tests (v0.15.0). ✅ a reference-CPU run of the game (`qilin_refrun`) confirms dynamic targets, with a seeded random player and the self-test menus to reach the rest of the game. ✅ `qilin coverage` accounts for every ROM byte: with no seeds (v0.16.0: the analysis alone finds everything the reference runs execute), 100% of the T-11's code areas and 100% of the 6502's ROM explained as code, tables, data (referenced, indexed, pointed to, or read by a reference run) or fill, with no unknown byte; guessed code entries must look like code (no text, a balanced stack, no leading branch).
 3. **Native startup:** the scheduler and board services; reach the first original frame with sound and input synchronized. Record the first unsupported address or board operation on every failure.
 4. **Playable at original settings:** parity with MAME, cabinet controls, EEPROM, the device matrix; measure low-end performance before adding quality settings.
-5. **Display settings:** 🔨 ✅ the settings menu's Display page (v0.16.0): full screen on any display, whole-multiple, fit or fill scaling, smooth or sharp, vsync, the graphics device. ✅ Looks: smoothed pixel art and a CRT, by fragment shaders; plain pixels stay a blit. 🔬 In-between frames (2×, 3×, 4× for high-refresh displays; one frame of delay; off by default): prototyped in `qilin_tween`, awaiting a decision. To come: presets for cabinet and desktop output, variable-refresh pacing. Ruled out: a sideways (landscape) picture, which would hide the road ahead; and a wider picture filled from the board's off-screen map, which the game keeps current only 8-16 pixels beyond the edge.
+5. **Display settings:** 🔨 ✅ the settings menu's Display page (v0.16.0): full screen on any display, whole-multiple, fit or fill scaling, smooth or sharp, vsync, the graphics device. ✅ Looks: smoothed pixel art and a CRT, by fragment shaders; plain pixels stay a blit. 🔬 In-between frames (2×, 3×, 4× for high-refresh displays; one frame of delay; off by default): prototyped in `qilin_tween`, awaiting a decision. ✅ Presets: Original, Arcade monitor, Smooth. To come: variable-refresh pacing. Ruled out: a sideways (landscape) picture, which would hide the road ahead; and a wider picture filled from the board's off-screen map, which the game keeps current only 8-16 pixels beyond the edge.
 
 Releases are tagged `vX.Y.Z`; `1.0.0` is the first build that plays the game end to end at original settings.

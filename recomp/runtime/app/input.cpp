@@ -87,6 +87,29 @@ std::string Binding::describe() const {
 
 // ---- Settings ---------------------------------------------------------------
 
+void apply_preset(DisplaySettings& d, std::size_t preset) {
+    const DisplayPreset& p = display_presets.at(preset);
+    const DisplaySettings defaults;
+    d.scaling = p.scaling;
+    d.effect = p.effect;
+    d.smooth = p.smooth;
+    d.scanlines = defaults.scanlines;
+    d.mask = defaults.mask;
+}
+
+int matching_preset(const DisplaySettings& d) {
+    const DisplaySettings defaults;
+    for (std::size_t i = 0; i < display_presets.size(); ++i) {
+        const DisplayPreset& p = display_presets[i];
+        // Smoothing only matters with no effect; the sliders only with the CRT.
+        if (d.scaling != p.scaling || d.effect != p.effect) continue;
+        if (p.effect == gfx::Effect::none && d.smooth != p.smooth) continue;
+        if (p.effect == gfx::Effect::crt && (d.scanlines != defaults.scanlines || d.mask != defaults.mask)) continue;
+        return static_cast<int>(i);
+    }
+    return -1;
+}
+
 bool Settings::load(const std::string& path) {
     std::ifstream in(path);
     if (!in) return false;

@@ -143,6 +143,26 @@ int main() {
     CHECK(loaded.display.monitor == "Monitor = 2" && loaded.display.gpu == "Some GPU");
     CHECK(loaded.display.effect == gfx::Effect::crt && loaded.display.scanlines == 0.25f && loaded.display.mask == 0.75f);
     CHECK(app::Settings{}.display.scaling == gfx::Scaling::integer && app::Settings{}.display.vsync);
+    // Presets: the defaults are Original; each preset matches itself after it's applied, and
+    // leaves full screen, vsync and the display alone; a slider moved by hand is no preset.
+    {
+        app::DisplaySettings d;
+        CHECK(app::matching_preset(d) == 0);
+        d.fullscreen = true;
+        d.vsync = false;
+        d.monitor = "Second";
+        for (std::size_t i = 0; i < app::display_presets.size(); ++i) {
+            app::apply_preset(d, i);
+            CHECK(app::matching_preset(d) == static_cast<int>(i));
+            CHECK(d.fullscreen && !d.vsync && d.monitor == "Second");
+        }
+        app::apply_preset(d, 1);   // the CRT
+        CHECK(d.effect == gfx::Effect::crt);
+        d.scanlines = 0.5f;
+        CHECK(app::matching_preset(d) == -1);
+        app::apply_preset(d, 1);
+        CHECK(d.scanlines == app::DisplaySettings{}.scanlines && app::matching_preset(d) == 1);
+    }
     std::filesystem::remove(path);
 
     // While the menu is open, the cabinet's controls rest.

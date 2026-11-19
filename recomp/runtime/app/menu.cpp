@@ -427,10 +427,26 @@ void Menu::display_tab() {
     SDL_free(displays);
 
     ImGui::SeparatorText("Picture");
+    const int preset = matching_preset(d);
+    ImGui::TextUnformatted("Preset");
+    bool changed = false;
+    for (std::size_t i = 0; i < display_presets.size(); ++i) {
+        ImGui::SameLine();
+        const bool chosen = preset == static_cast<int>(i);
+        if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(display_presets[i].name)) {
+            apply_preset(d, i);
+            changed = true;
+        }
+        if (chosen) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", display_presets[i].about);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled(preset < 0 ? "(set by hand)" : "");
     int scaling = static_cast<int>(d.scaling);
     ImGui::TextUnformatted("Size");
     ImGui::SameLine();
-    bool changed = ImGui::RadioButton("Whole multiples (sharpest)", &scaling, static_cast<int>(gfx::Scaling::integer));
+    changed |= ImGui::RadioButton("Whole multiples (sharpest)", &scaling, static_cast<int>(gfx::Scaling::integer));
     ImGui::SameLine();
     changed |= ImGui::RadioButton("Fit", &scaling, static_cast<int>(gfx::Scaling::fit));
     ImGui::SameLine();

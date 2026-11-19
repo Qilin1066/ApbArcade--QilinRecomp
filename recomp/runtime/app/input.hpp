@@ -59,6 +59,25 @@ struct DisplaySettings {
     std::string gpu;            // the Vulkan device's name; empty: the best one (used at start-up)
 };
 
+// One-click settings for the picture (the Display page's presets): its size
+// and look only, never full screen, the display, vsync or the device.
+struct DisplayPreset {
+    const char* name;
+    const char* about;
+    gfx::Scaling scaling;
+    gfx::Effect effect;
+    bool smooth;
+};
+inline constexpr std::array<DisplayPreset, 3> display_presets{{
+    {"Original", "The arcade's picture exactly: whole multiples, plain pixels (the default).", gfx::Scaling::integer, gfx::Effect::none, true},
+    {"Arcade monitor", "As big as fits, with the look of the cabinet's CRT.", gfx::Scaling::fit, gfx::Effect::crt, false},
+    {"Smooth", "As big as fits, with pixel art's steps smoothed into lines.", gfx::Scaling::fit, gfx::Effect::pixel_art, false},
+}};
+// Sets the picture to a preset (the CRT's sliders back to their defaults).
+void apply_preset(DisplaySettings& d, std::size_t preset);
+// The preset the picture is set to now, or -1 (set by hand).
+[[nodiscard]] int matching_preset(const DisplaySettings& d);
+
 struct Settings {
     std::array<Binding, 6> buttons;    // each besides the built-in keys and gamepad buttons
     Steering steering = Steering::keys_and_pad;
