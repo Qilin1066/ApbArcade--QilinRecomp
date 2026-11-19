@@ -108,6 +108,7 @@ private:
     }
 
     bool instruction(const cfg::Node& node);
+    bool instruction_body(const cfg::Node& node);
     void transfer(Loc target);                 // goto within the function, or leave
     void leave(const std::string& pc);          // write state back and return, PC = pc
     void call(const std::string& target, std::optional<Loc> static_target, std::uint16_t return_pc);
@@ -311,13 +312,34 @@ void FunctionWriter::call(const std::string& target, std::optional<Loc> static_t
     straight_cycles_ = 0;
 }
 
+// An instruction that touches memory first tells the board how many cycles
+// are left: MAME charges an instruction's cycles before its accesses, and the
+// board times what the game does to its I/O (latches, video, the speech chip)
+// by them, as MAME's devices see the CPU's local time.
 bool FunctionWriter::instruction(const cfg::Node& node) {
+    const auto start = body_.size();
+    const bool ok = instruction_body(node);
+    const auto charge = body_.find("    ic -= ", start);
+    if (charge != std::string::npos) {
+        const auto after = body_.find('\n', charge) + 1;
+        const std::string_view rest(body_.data() + after, body_.size() - after);
+        if (rest.find("b.read") != std::string_view::npos || rest.find("b.write") != std::string_view::npos)
+            body_.insert(after, "    b.icount = ic;\n");
+    }
+    return ok;
+}
+
+bool FunctionWriter::instruction_body(const cfg::Node& node) {
     const auto& i = node.insn;
     insn_ = &i;
     pc_ = at_.pc;
     dynamic_write_ = false;
     ok_ = true;
     out() += std::format("    // {:04X}  {}\n", at_.pc, t11::disassemble(i, at_.pc));
+    // service_interval 0: the board gets its turn before every instruction
+    // once the slice is used up, so events and interrupts land on the same
+    // instruction boundary as on MAME's core.
+    if (options_.service_interval == 0) service_point(at_.pc);
     line(std::format("ic -= {};", i.cycles));
     fetch();   // the opcode
     straight_cycles_ += i.cycles;
@@ -334,7 +356,7 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
             line(std::format("if (b.bank[{}] != {}) {{ QL_SYNC(); c.r[7] = {}; return; }}", at_.window(), at_.bank, hex(next_pc)));
         }
         if (fall) {
-            if (straight_cycles_ >= options_.service_interval) service_point(next_pc);
+            if (options_.service_interval != 0 && straight_cycles_ >= options_.service_interval) service_point(next_pc);
             transfer(*fall);
         } else {
             leave(hex(next_pc));   // into a window whose bank isn't known here
@@ -384,7 +406,7 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
         line("t = b.read16(static_cast<std::uint16_t>(r6 & 0xFFFE)); r6 = static_cast<std::uint16_t>(r6 + 2);");
         line("res = b.read16(static_cast<std::uint16_t>(r6 & 0xFFFE)); r6 = static_cast<std::uint16_t>(r6 + 2);");
         // MAME checks the interrupt lines at once after RTI and RTT.
-        line("QL_SYNC(); c.r[7] = t; c.psw = static_cast<std::uint8_t>(res); if (b.interrupt_due()) [[unlikely]] b.service(); return;");
+        line("QL_SYNC(); c.r[7] = t; c.psw = static_cast<std::uint8_t>(res); if (b.interrupt_due()) [[unlikely]] b.check_interrupts(); return;");
         return ok_;
     case Op::rts: {
         const unsigned r = i.reg;
@@ -572,7 +594,10 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
         // PSW = (PSW & ~0xEF) | (dst & 0xEF): T is kept.
         line("c.psw = static_cast<std::uint8_t>((c.psw & 0x10) | (dst & 0xE0)); n = (dst >> 3) & 1; z = (dst >> 2) & 1; v = (dst >> 1) & 1; cf = dst & 1;");
         if (fall) {
-            service_point(next_pc, true);   // MAME checks interrupts at once after MTPS
+            // MAME checks the lines at once after MTPS (in the same step, the board
+            // not running first): the interrupt is taken here, its handler runs.
+            line(std::format("if (b.interrupt_due()) [[unlikely]] {{ QL_SYNC(); c.r[7] = {0}; b.check_interrupts(); if (c.r[7] != {0}) return; QL_LOAD(); }}", hex(next_pc)));
+            if (options_.service_interval != 0) service_point(next_pc);
         }
         break;
     default: {

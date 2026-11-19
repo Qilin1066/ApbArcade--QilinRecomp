@@ -63,6 +63,8 @@ public:
 	uint16_t reg(int index) const { return m_reg[index].w.l; }
 	void set_reg(int index, uint16_t value) { m_reg[index].d = value; }
 	uint8_t psw() const { return m_psw.b.l; }
+	// Within step(): minus the cycles charged so far (MAME's local time in the instruction).
+	int icount() const { return m_icount; }
 	void set_psw(uint8_t value) { m_psw.d = value; }
 	bool waiting() const { return m_wait_state != 0; }
 	// The PC of the instruction step() last executed (MAME's m_ppc).

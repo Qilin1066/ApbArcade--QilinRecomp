@@ -25,7 +25,8 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode and a credited game, 20,000 frames each, about 60× real time, no unlifted code |
 | Video: the CPU reference renderer (playfield, motion objects, alphanumerics, MAME's priority rule and partial updates) | ✅ boot screens, high scores and gameplay render; `--frame-out FRAME:FILE` saves a frame as a PNG |
 | Video through Vulkan: CPU frames uploaded and shown in a window, scaled by whole numbers | ✅ tested on Mesa's software driver with validation, under a virtual X server |
-| The `apb` executable: window and input on SDL3, the EEPROM saved | 🔨 written, not yet built or played here (SDL3 couldn't be fetched in this environment) |
+| The `apb` executable: window and input on SDL3, the EEPROM saved | ✅ built against SDL3 3.4.20 (fetched) and run on Linux in a virtual X display through Mesa's software Vulkan: attract mode in the window, the EEPROM saved; not yet played with real controls |
+| Native and MAME's cores agree frame for frame (`--frame-hashes`) | ✅ attract mode, a credited game, self-test, eight random games of 60,000 frames: every frame identical |
 | Sound: the YM2151 (ymfm, as MAME), both POKEYs (a port of MAME's), MAME's mixer; `qilin_run --wav`, and SDL3 audio in `apb` | ✅ music on coin-up and in the game |
 | Speech: the TMS5220C (MAME's, adapted) on the board, its READY line read by the 6502 | ✅ in a credited game the chip speaks (about 5 s in 66 s of play); not yet listened to |
 

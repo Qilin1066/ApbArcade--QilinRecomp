@@ -337,6 +337,7 @@ void Machine::run_events(std::int64_t now) {
                 video_int_ = (interrupt_enable_ & 8) != 0;
                 ++frames_;
                 if (log) log->push_back({'F', sound_ram_[0x02], t});   // a frame, with the sound program's status
+                if (on_vblank) on_vblank(frames_);
             }
             next_scanline_event_ = line + 64 <= vblank_line ? t + 64 * cycles_per_scanline
                                                             : t - line * cycles_per_scanline + cycles_per_frame;

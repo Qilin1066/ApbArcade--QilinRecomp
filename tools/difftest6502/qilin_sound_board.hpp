@@ -84,6 +84,7 @@ struct Board : Memory {
         yielding = true;
         ++yields;
     }
+    void interrupt_window(int) {}   // no interrupt lines in a trial
     [[noreturn]] void unlifted() { throw Stop{Stop::unlifted}; }
 };
 

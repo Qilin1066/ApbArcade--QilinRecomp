@@ -6,6 +6,7 @@
 // random bus traffic.
 
 #include "cfg.hpp"
+#include "controls.hpp"
 #include "m6502_cfg.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
@@ -701,8 +702,57 @@ void test_speech() {
     CHECK(made > 1000 && peak > 100);
 }
 
+// The wheel, the stick and the pedal arithmetic (recomp/runtime/app/controls.hpp).
+void test_controls() {
+    using namespace qilin::controls;
+    // A 900-degree wheel at 160 counts a turn: a quarter turn right is 40 counts.
+    Wheel wheel({900, 160, 1.0, 0, false});
+    CHECK(wheel.update(0) == 0);                       // the first reading only sets where it is
+    int total = 0;
+    for (int i = 1; i <= 50; ++i) total += wheel.update(0.2 * i / 50);   // 0.2 of half of 900 = 90 degrees
+    CHECK(total == 40);
+    for (int i = 49; i >= 0; --i) total += wheel.update(0.2 * i / 50);
+    CHECK(total == 0);                                 // back to where it started, nothing lost or gained
+    // Slow turns aren't lost to rounding: 1000 tiny steps add up.
+    Wheel slow({900, 160, 1.0, 0, false});
+    slow.update(0);
+    total = 0;
+    for (int i = 1; i <= 1000; ++i) total += slow.update(0.2 * i / 1000);
+    CHECK(total == 40);
+    // Held at the lock, a stopped wheel keeps the dial turning; at the edge's start, not yet.
+    Wheel lock({900, 160, 0.9, 6, false});
+    lock.update(1.0);
+    CHECK(lock.update(1.0) == 6);
+    CHECK(lock.update(1.0) == 6);
+    Wheel left({900, 160, 0.9, 6, false});
+    left.update(-1.0);
+    CHECK(left.update(-1.0) == -6);
+    Wheel edge({900, 160, 0.9, 6, false});
+    edge.update(0.9);
+    CHECK(edge.update(0.9) == 0);
+    Wheel inverted({900, 160, 1.0, 0, true});
+    inverted.update(0);
+    CHECK(inverted.update(0.1) < 0);
+    // A stick: nothing inside the dead zone, the full rate at full deflection.
+    Rate stick;
+    CHECK(stick.update(0.1) == 0);
+    CHECK(stick.update(1.0) == 6);
+    CHECK(stick.update(-1.0) == -6);
+    // Pedals: a reversed one (1 released, -1 floored), the dead zones, APB's inverted ADC.
+    const PedalSettings reversed{1, -1, 0.04};
+    CHECK(pedal_travel(1, reversed) == 0);
+    CHECK(pedal_travel(-1, reversed) == 1);
+    CHECK(pedal_travel(0.98, reversed) == 0);
+    CHECK(std::abs(pedal_travel(0, reversed) - 0.5) < 1e-9);
+    CHECK(pedal_adc(0) == 0x3f);
+    CHECK(pedal_adc(1) == 0);
+    const PedalSettings flat{0.5, 0.5, 0.04};
+    CHECK(pedal_travel(0.7, flat) == 0);              // uncalibrated: no throttle, not a stuck one
+}
+
 int main() {
     test_sha1();
+    test_controls();
     test_rom_set();
     test_memory_map();
     test_bank_select();

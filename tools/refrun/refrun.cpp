@@ -4,7 +4,7 @@
 //
 //   qilin_refrun <rom-dir> [--frames N] [--quantum CYCLES] [--coin FRAME]... [--press MASK:FRAME]...
 //                [--pedal VALUE] [--steer VALUE] [--seeds FILE] [--seeds-out FILE]
-//                [--frame-out FRAME:FILE]... [--monkey SEED] [--test-switch 1] [--executed-out FILE] [--reads-out FILE]
+//                [--frame-out FRAME:FILE]... [--frame-hashes FILE] [--monkey SEED] [--test-switch 1] [--executed-out FILE] [--reads-out FILE]
 //
 // --coin closes the left coin switch for 3 frames; --press pulls the IN0
 // bits in MASK (hex, active low: 0080 and 0040 are buttons 1 and 2) low for
@@ -38,7 +38,7 @@
 #include "romset.hpp"
 #include "system2_machine.hpp"
 #include "frame_capture.hpp"
-#include "monkey.hpp"
+#include "script.hpp"
 #include "t11_decoder.hpp"
 #include "t11_reference.h"
 
@@ -61,25 +61,45 @@ using namespace qilin;
 struct MainBus final : t11_device::Bus {
     sys2::Machine& m;
     bool note_reads = false;
+    const t11_device* cpu = nullptr;   // set once the core exists
+    // I/O sees MAME's local time: the instruction's start plus the cycles it has charged.
+    struct Now {
+        MainBus& bus;
+        std::int64_t was;
+        explicit Now(MainBus& b) : bus(b), was(b.m.main_time) {
+            if (bus.cpu) bus.m.main_time = was - bus.cpu->icount();
+        }
+        ~Now() { bus.m.main_time = was; }
+    };
     std::vector<std::uint32_t> pending;   // ROM words (physical) the current instruction read as data
     explicit MainBus(sys2::Machine& machine) : m(machine) {}
     void note(std::uint16_t a) {
         if (note_reads && a >= 0x4000) pending.push_back(sys2::rom_offset(a, m.bank(0), m.bank(1)) / 2);
     }
     std::uint16_t fetch(std::uint16_t a) override { return m.main_fetch(a); }
-    std::uint16_t read_word(std::uint16_t a) override { note(a); return m.main_read16(a); }
-    void write_word(std::uint16_t a, std::uint16_t d) override { m.main_write16(a, d); }
-    std::uint8_t read_byte(std::uint16_t a) override { note(a); return m.main_read8(a); }
-    void write_byte(std::uint16_t a, std::uint8_t d) override { m.main_write8(a, d); }
+    std::uint16_t read_word(std::uint16_t a) override { note(a); Now now(*this); return m.main_read16(a); }
+    void write_word(std::uint16_t a, std::uint16_t d) override { Now now(*this); m.main_write16(a, d); }
+    std::uint8_t read_byte(std::uint16_t a) override { note(a); Now now(*this); return m.main_read8(a); }
+    void write_byte(std::uint16_t a, std::uint8_t d) override { Now now(*this); m.main_write8(a, d); }
 };
 
 struct SoundBus final : m6502_device::Bus {
     sys2::Machine& m;
+    const m6502_device* cpu = nullptr;   // set once the core exists
+    // The chips see MAME's local time: the instruction's start plus the bus cycles before this one.
+    struct Now {
+        SoundBus& bus;
+        std::int64_t was;
+        explicit Now(SoundBus& b) : bus(b), was(b.m.sound_time) {
+            if (bus.cpu) bus.m.sound_time = was + bus.cpu->elapsed();
+        }
+        ~Now() { bus.m.sound_time = was; }
+    };
     explicit SoundBus(sys2::Machine& machine) : m(machine) {}
-    std::uint8_t read(std::uint16_t a) override { return m.sound_read(a); }
-    std::uint8_t read_sync(std::uint16_t a) override { return m.sound_read(a); }
-    std::uint8_t read_arg(std::uint16_t a) override { return m.sound_read(a); }
-    void write(std::uint16_t a, std::uint8_t v) override { m.sound_write(a, v); }
+    std::uint8_t read(std::uint16_t a) override { Now now(*this); return m.sound_read(a); }
+    std::uint8_t read_sync(std::uint16_t a) override { Now now(*this); return m.sound_read(a); }
+    std::uint8_t read_arg(std::uint16_t a) override { Now now(*this); return m.sound_read(a); }
+    void write(std::uint16_t a, std::uint8_t v) override { Now now(*this); m.sound_write(a, v); }
 };
 
 // Where a location was first entered from, for the report.
@@ -101,14 +121,10 @@ int main(int argc, char** argv) {
     }
     std::uint64_t frames_wanted = 1800;
     std::int64_t quantum = 64;
-    std::vector<std::uint64_t> coins;
-    std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
-    int pedal = -1, steer = 0;
+    tools::Script script;
     std::string seeds_out, log_path, executed_out, reads_out;
     std::vector<cfg::Loc> initial_seeds;
     tools::FrameCapture capture;
-    std::optional<tools::Monkey> monkey;
-    bool test_switch = false;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string_view flag = argv[i];
         const std::string_view value = argv[i + 1];
@@ -116,7 +132,8 @@ int main(int argc, char** argv) {
         std::from_chars(value.data(), value.data() + value.size(), number);
         if (flag == "--frames") frames_wanted = number;
         else if (flag == "--quantum") quantum = static_cast<std::int64_t>(std::max<std::uint64_t>(number, 1));
-        else if (flag == "--coin") coins.push_back(number);
+        else if (script.option(flag, value)) {}
+        else if (flag == "--frame-hashes") capture.hashes_path = value;
         else if (flag == "--seeds-out") seeds_out = value;
         else if (flag == "--executed-out") executed_out = value;
         else if (flag == "--reads-out") reads_out = value;
@@ -134,18 +151,6 @@ int main(int argc, char** argv) {
                 return 1;
             }
             initial_seeds = *loaded;
-        }
-        else if (flag == "--monkey") monkey.emplace(number);
-        else if (flag == "--test-switch") test_switch = number != 0;
-        else if (flag == "--pedal") pedal = static_cast<int>(number);
-        else if (flag == "--steer") steer = static_cast<int>(number);
-        else if (flag == "--press") {
-            const auto colon = value.find(':');
-            unsigned mask = 0;
-            std::uint64_t frame = 0;
-            std::from_chars(value.data(), value.data() + colon, mask, 16);
-            if (colon != std::string_view::npos) std::from_chars(value.data() + colon + 1, value.data() + value.size(), frame);
-            presses.emplace_back(static_cast<std::uint16_t>(mask), frame);
         }
         else {
             std::print(stderr, "qilin_refrun: unknown option {}\n", flag);
@@ -167,6 +172,7 @@ int main(int argc, char** argv) {
     if (!reads_out.empty()) main_bus.note_reads = true;
     SoundBus sound_bus(m);
     t11_device t11(main_bus, 0x36ff);
+    main_bus.cpu = &t11;
     t11.reset();
     m6502_device m6502(sound_bus);
     bool sound_was_held = true;
@@ -194,37 +200,10 @@ int main(int argc, char** argv) {
     };
 
     std::uint64_t reported_second = 0;
-    std::uint64_t last_steer_frame = ~0ull, last_monkey_frame = ~0ull;
-    sys2::Inputs monkey_inputs;
-    capture.attach(*set, m);
+    if (!capture.attach(*set, m)) return 1;
+    script.attach(m);   // the controls change at each vblank, on the cycle qilin_run changes them
     while (m.frames() < frames_wanted) {
         capture.poll(m);
-        // Coins: the left coin switch (IN1 bit 6, active low) closed for 3 frames.
-        const bool coin = std::ranges::any_of(coins, [&](std::uint64_t f) { return m.frames() >= f && m.frames() < f + 3; });
-        m.inputs.in1 = static_cast<std::uint8_t>(coin ? 0xb0 : 0xf0);
-        std::uint16_t in0 = 0xffff;
-        for (const auto& [mask, frame] : presses) {
-            if (m.frames() >= frame && m.frames() < frame + 10) in0 = static_cast<std::uint16_t>(in0 & ~mask);
-        }
-        m.inputs.in0 = in0;
-        if (pedal >= 0) m.inputs.adc[1] = static_cast<std::uint8_t>(pedal);
-        if (steer != 0 && m.frames() != last_steer_frame) {
-            last_steer_frame = m.frames();
-            m.inputs.leta[0] = static_cast<std::uint8_t>(m.inputs.leta[0] + steer);
-        }
-        if (monkey && m.frames() != last_monkey_frame) {
-            last_monkey_frame = m.frames();
-            monkey->apply(m.frames(), monkey_inputs);
-        }
-        if (monkey) {
-            m.inputs.in0 = static_cast<std::uint16_t>(m.inputs.in0 & monkey_inputs.in0);
-            if (monkey_inputs.in1 != 0xf0) m.inputs.in1 = monkey_inputs.in1;
-            m.inputs.adc[1] = monkey_inputs.adc[1];
-            m.inputs.leta[0] = monkey_inputs.leta[0];
-        }
-        // The self-test switch (IN0 bit 15, active low): held from power-on, the game runs its tests and menus.
-        if (test_switch) m.inputs.in0 = static_cast<std::uint16_t>(m.inputs.in0 & 0x7fff);
-
         const auto slice_end = std::min(m.next_event(), m.main_time + quantum);
         sync_lines();
         bool first = true;
@@ -280,7 +259,9 @@ int main(int argc, char** argv) {
             while (m.sound_time < sound_target) {
                 const bool sequence = m6502.taking_interrupt() || m6502.resetting();
                 const std::uint16_t pc = m6502.npc();
+                sound_bus.cpu = &m6502;   // only within a step: its bus cycles are counted from the step's start
                 m.sound_time += m6502.step();
+                sound_bus.cpu = nullptr;
                 if (!sequence) {
                     if (pc < 0x4000) {
                         ++sound_ram_code[pc];

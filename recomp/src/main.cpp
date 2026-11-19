@@ -8,7 +8,7 @@
 //   qilin cfg    <rom-dir> [--cpu main|sound] [--seeds FILE] [--all]
 //                                               control flow from reset: what is reached,
 //                                               and everything not yet followed
-//   qilin lift   <rom-dir> [--cpu main|sound] [--seeds FILE] --out DIR
+//   qilin lift   <rom-dir> [--cpu main|sound] [--seeds FILE] [--service-interval CYCLES] --out DIR
 //                                               lift every function to C++ (DIR is gitignored
 //                                               when it's gen/: never commit generated code)
 //
@@ -51,7 +51,7 @@ int usage() {
                "       qilin verify <rom-dir>\n"
                "       qilin insns <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
                "       qilin cfg <rom-dir> [--cpu main|sound] [--seeds FILE] [--all] [--why FILE]\n"
-               "       qilin lift <rom-dir> [--cpu main|sound] [--seeds FILE] --out DIR\n"
+               "       qilin lift <rom-dir> [--cpu main|sound] [--seeds FILE] [--service-interval CYCLES] --out DIR\n"
                "       qilin coverage <rom-dir> [--seeds FILE] [--reads FILE] [--check-seeds FILE] [--list]\n");
     return 2;
 }
@@ -409,9 +409,15 @@ int lift(const std::vector<std::string_view>& args) {
     std::string_view out_dir;
     bool sound = false;
     std::vector<qilin::cfg::Loc> seeds;
+    qilin::lift::Options options;
+    bool service_interval_given = false;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--out" && i + 1 < args.size()) {
             out_dir = args[++i];
+        } else if (args[i] == "--service-interval" && i + 1 < args.size()) {
+            const auto v = args[++i];
+            if (std::from_chars(v.data(), v.data() + v.size(), options.service_interval).ec != std::errc{}) return usage();
+            service_interval_given = true;
         } else if (args[i] == "--seeds" && i + 1 < args.size()) {
             auto loaded = qilin::cfg::read_seeds(std::string(args[++i]));
             if (!loaded) {
@@ -438,14 +444,17 @@ int lift(const std::vector<std::string_view>& args) {
     std::size_t functions = 0, instructions = 0;
     if (sound) {
         const auto program = qilin::m6502::Program::analyze(set->region(rom::Region::sound_cpu));
-        auto result = qilin::lift6502::lift(program);
+        qilin::lift6502::Options sound_options;
+        sound_options.service_interval = options.service_interval;
+        if (!service_interval_given) sound_options = {};
+        auto result = qilin::lift6502::lift(program, sound_options);
         for (auto& f : result.files) files.emplace_back(std::move(f.name), std::move(f.text));
         failures = std::move(result.failures);
         functions = result.functions;
         instructions = result.instructions;
     } else {
         const auto program = qilin::cfg::Program::analyze(*set, seeds);
-        auto result = qilin::lift::lift(program);
+        auto result = qilin::lift::lift(program, options);
         for (auto& f : result.files) files.emplace_back(std::move(f.name), std::move(f.text));
         failures = std::move(result.failures);
         functions = result.functions;

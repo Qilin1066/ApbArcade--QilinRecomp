@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -133,6 +134,11 @@ public:
         virtual void vblank(const Machine& machine) = 0;
     };
     VideoSink* video_sink = nullptr;
+
+    // Optional: called at the start of each vblank, on the exact cycle the
+    // frame count goes up (after the video sink), with the new count. Tools
+    // change the controls here, so every run sees them change at the same moment.
+    std::function<void(std::uint64_t frames)> on_vblank;
 
     // Optional: told of every write that changes the sound, with the sound
     // cycle it happens on (the audio model makes the sound up to it first).

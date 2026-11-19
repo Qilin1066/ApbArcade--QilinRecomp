@@ -39,6 +39,7 @@ public:
 
 	void reset();                  // MAME's device_reset: the reset sequence runs on the next step
 	int step();                    // runs one instruction (with its prefetch); returns its cycles
+	int elapsed() const { return (1 << 20) - m_icount; }   // within step(): bus cycles counted so far
 	void set_input_line(int line, bool asserted);
 
 	uint16_t pc() const { return m_PC; }       // the address after the prefetched opcode

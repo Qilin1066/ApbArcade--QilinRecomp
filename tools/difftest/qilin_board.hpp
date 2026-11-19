@@ -94,6 +94,7 @@ struct Board : Memory {
     }
     void wait() { throw Stop{Stop::wait}; }
     bool interrupt_due() { return false; }   // no interrupt lines in a trial
+    void check_interrupts() {}
     void reset_output() { trace.push_back({Access::reset, 0, 0}); }
     [[noreturn]] void unlifted() { throw Stop{Stop::unlifted}; }
 };

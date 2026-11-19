@@ -34,7 +34,8 @@ struct Result {
 };
 
 struct Options {
-    unsigned service_interval = 128;   // most cycles a straight run goes without a service check
+    unsigned service_interval = 0;   // 0: the board gets its turn before any instruction once the slice is used up, as on MAME (exact);
+                                     // N: only at loop back edges and after straight runs of N cycles (faster, interrupts later)
     std::size_t functions_per_file = 64;
 };
 

@@ -142,7 +142,7 @@ void FunctionWriter::go(std::uint16_t target, bool service) {
         return;
     }
     referenced_.insert(target);
-    if (service || target <= pc_ || straight_ >= options_.service_interval) {
+    if (options_.service_interval != 0 && (service || target <= pc_ || straight_ >= options_.service_interval)) {
         const auto k = resumes_.size();
         resumes_.push_back(target);
         line(std::format("if (ic <= 0) [[unlikely]] {{ resume = {}; goto service; }}", k));
@@ -161,8 +161,22 @@ void FunctionWriter::instruction(std::uint16_t pc, const m6502::Node& node) {
         line(std::format("Q6_SYNC(); c.pc = {}; b.unlifted(); return;", hex(pc)));
         return;
     }
+    if (options_.service_interval == 0) {
+        // Before every instruction, as MAME's 6502 runs whole instructions
+        // until its slice is used up: the slice ends on the same instruction.
+        const auto k = resumes_.size();
+        resumes_.push_back(pc);
+        line(std::format("if (ic <= 0) [[unlikely]] {{ resume = {}; goto service; }}", k));
+        straight_ = 0;
+    }
+    // MAME decides on an interrupt at the end of each instruction, with the
+    // I flag as it was before CLI, PLP or SEI changed it and after RTI did.
+    const bool sets_i = insn.opcode == 0x58 || insn.opcode == 0x28 || insn.opcode == 0x78;
+    if (sets_i) line("Q6_SYNC(); b.interrupt_window(-1); Q6_LOAD();");
     line(std::format("pc = {};", hex(static_cast<std::uint16_t>(pc + 1))));
     body_ += *code;
+    if (insn.opcode == 0x58 || insn.opcode == 0x28) line("Q6_SYNC(); b.interrupt_window(1); Q6_LOAD();");
+    if (insn.opcode == 0x40) line("Q6_SYNC(); b.interrupt_window(0); Q6_LOAD();");
     straight_ += insn.cycles;
     const auto next = insn.next(pc);
 
@@ -370,11 +384,13 @@ Result lift(const m6502::Program& program, const Options& options) {
         "#endif\n\n"
         "#define Q6_LOAD() (a = c.a, x = c.x, y = c.y, p = c.p, sp = c.sp, ic = b.icount)\n"
         "#define Q6_SYNC() (c.a = a, c.x = x, c.y = y, c.p = p, c.sp = sp, b.icount = ic)\n"
-        "#define Q6_READ(adr) (--ic, b.read(static_cast<std::uint16_t>(adr)))\n"
-        "#define Q6_WRITE(adr, val) (--ic, b.write(static_cast<std::uint16_t>(adr), static_cast<std::uint8_t>(val)))\n"
-        "#define Q6_PC() (--ic, b.read_arg(pc))\n"
-        "#define Q6_ARG(adr) (--ic, b.read_arg(static_cast<std::uint16_t>(adr)))\n"
-        "#define Q6_PREFETCH() (--ic, b.read_sync(pc))\n"
+        "// Each bus cycle: the board is told the cycles left before it (MAME's\n"
+        "// microcode accesses, then counts), so the chips see MAME's local time.\n"
+        "#define Q6_READ(adr) (b.icount = ic--, b.read(static_cast<std::uint16_t>(adr)))\n"
+        "#define Q6_WRITE(adr, val) (b.icount = ic--, b.write(static_cast<std::uint16_t>(adr), static_cast<std::uint8_t>(val)))\n"
+        "#define Q6_PC() (b.icount = ic--, b.read_arg(pc))\n"
+        "#define Q6_ARG(adr) (b.icount = ic--, b.read_arg(static_cast<std::uint16_t>(adr)))\n"
+        "#define Q6_PREFETCH() (b.icount = ic--, b.read_sync(pc))\n"
         "#define Q6_NZ(v) rt6502::set_nz(p, static_cast<std::uint8_t>(v))\n"
         "#define Q6_ADC(v) rt6502::adc(a, p, static_cast<std::uint8_t>(v))\n"
         "#define Q6_SBC(v) rt6502::sbc(a, p, static_cast<std::uint8_t>(v))\n"

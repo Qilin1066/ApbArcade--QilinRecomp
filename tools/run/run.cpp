@@ -2,7 +2,7 @@
 // scheduled by recomp/runtime/game, from power-on for a number of frames.
 //
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
-//             [--frame-out FRAME:FILE]... [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
+//             [--frame-out FRAME:FILE]... [--frame-hashes FILE] [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
 //
 // --wav FILE records the board's sound (the YM2151, both POKEYs
 // and the TMS5220's speech, mixed as MAME mixes them) as a 16-bit stereo WAV
@@ -11,7 +11,8 @@
 // --draw 1 draws every frame with the reference renderer, as apb does, to
 // measure what video costs.
 //
-// The inputs are qilin_refrun's, so runs of the two can be compared.
+// The inputs are qilin_refrun's and change on the same cycle (tools/common/script.hpp),
+// so runs of the two can be compared frame by frame (--frame-hashes).
 //
 // Reports how far the game got (frames, the sound handshake, interrupts
 // taken, sound resets) and why it stopped: the frame count, the watchdog, or
@@ -20,7 +21,7 @@
 // (qilin lift --cpu sound).
 
 #include "frame_capture.hpp"
-#include "monkey.hpp"
+#include "script.hpp"
 #include "system2_audio.hpp"
 #include "wav.hpp"
 #include "game.hpp"
@@ -47,11 +48,7 @@ int main(int argc, char** argv) {
     }
     std::uint64_t frames = 600;
     std::string_view log_path, wav_path;
-    std::optional<tools::Monkey> monkey;
-    bool test_switch = false;
-    std::vector<std::uint64_t> coins;
-    std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
-    int pedal = -1, steer = 0;
+    tools::Script script;
     tools::FrameCapture capture;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string_view flag = argv[i], value = argv[i + 1];
@@ -60,8 +57,8 @@ int main(int argc, char** argv) {
         if (flag == "--frames") frames = number;
         else if (flag == "--log") log_path = value;
         else if (flag == "--wav") wav_path = value;
-        else if (flag == "--monkey") monkey.emplace(number);
-        else if (flag == "--test-switch") test_switch = number != 0;
+        else if (script.option(flag, value)) {}
+        else if (flag == "--frame-hashes") capture.hashes_path = value;
         else if (flag == "--draw") capture.draw_all = number != 0;
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
@@ -69,17 +66,7 @@ int main(int argc, char** argv) {
                 return 2;
             }
         }
-        else if (flag == "--coin") coins.push_back(number);
-        else if (flag == "--pedal") pedal = static_cast<int>(number);
-        else if (flag == "--steer") steer = static_cast<int>(number);
-        else if (flag == "--press") {
-            const auto colon = value.find(':');
-            unsigned mask = 0;
-            std::uint64_t frame = 0;
-            std::from_chars(value.data(), value.data() + colon, mask, 16);
-            if (colon != std::string_view::npos) std::from_chars(value.data() + colon + 1, value.data() + value.size(), frame);
-            presses.emplace_back(static_cast<std::uint16_t>(mask), frame);
-        } else {
+        else {
             std::print(stderr, "qilin_run: unknown option {}\n", flag);
             return 2;
         }
@@ -92,7 +79,8 @@ int main(int argc, char** argv) {
     sys2::Machine machine(set->region(rom::Region::main_cpu), set->region(rom::Region::sound_cpu));
     std::vector<sys2::Machine::LogEntry> log;
     if (!log_path.empty()) machine.log = &log;
-    capture.attach(*set, machine);
+    if (!capture.attach(*set, machine)) return 1;
+    script.attach(machine);
     std::unique_ptr<sys2::Audio> audio;
     std::vector<std::int16_t> sound;
     if (!wav_path.empty()) {
@@ -100,8 +88,8 @@ int main(int argc, char** argv) {
         machine.sound_sink = audio.get();
     }
     game::Scheduler scheduler(machine);
-    // The same inputs as qilin_refrun: coins for 3 frames, presses for 10.
-    scheduler.on_frame = [&](std::uint64_t frame) {
+    // The controls change at each vblank (script.attach), as in qilin_refrun.
+    scheduler.on_frame = [&](std::uint64_t) {
         capture.poll(machine);
         if (audio) {
             machine.advance_speech(machine.sound_time);
@@ -109,24 +97,6 @@ int main(int argc, char** argv) {
             sound.insert(sound.end(), audio->frames().begin(), audio->frames().end());
             audio->frames().clear();
         }
-        const bool coin = std::ranges::any_of(coins, [&](std::uint64_t f) { return frame >= f && frame < f + 3; });
-        machine.inputs.in1 = static_cast<std::uint8_t>(coin ? 0xb0 : 0xf0);
-        std::uint16_t in0 = 0xffff;
-        for (const auto& [mask, at] : presses) {
-            if (frame >= at && frame < at + 10) in0 = static_cast<std::uint16_t>(in0 & ~mask);
-        }
-        machine.inputs.in0 = in0;
-        if (pedal >= 0) machine.inputs.adc[1] = static_cast<std::uint8_t>(pedal);
-        if (steer != 0) machine.inputs.leta[0] = static_cast<std::uint8_t>(machine.inputs.leta[0] + steer);
-        if (monkey) {
-            sys2::Inputs chosen = machine.inputs;
-            monkey->apply(frame, chosen);
-            machine.inputs.in0 = static_cast<std::uint16_t>(machine.inputs.in0 & chosen.in0);
-            if (chosen.in1 != 0xf0) machine.inputs.in1 = chosen.in1;
-            machine.inputs.adc[1] = chosen.adc[1];
-            machine.inputs.leta[0] = chosen.leta[0];
-        }
-        if (test_switch) machine.inputs.in0 = static_cast<std::uint16_t>(machine.inputs.in0 & 0x7fff);
     };
     const auto start = std::chrono::steady_clock::now();
     const auto stop = scheduler.run(frames);

@@ -23,6 +23,7 @@
 //                                  with cpu.r[7] = the PC to resume at
 //   void wait();                   WAIT: until an interrupt has been taken
 //   bool interrupt_due();          an interrupt would be taken now, at cpu.psw's
+//   void check_interrupts();       take one now (after RTI, RTT, MTPS, when interrupt_due())
 //                                  priority (MAME looks after MTPS, RTI and RTT
 //                                  at once, not at the end of the timeslice)
 //   void reset_output();           RESET: the T-11's reset line pulse

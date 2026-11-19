@@ -114,6 +114,7 @@ qilin_tool(qilin)
 enable_testing()
 add_executable(qilin_tests recomp/tests/tests.cpp)
 target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qilin_warnings)
+target_include_directories(qilin_tests PRIVATE recomp/runtime/app)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
 

@@ -38,7 +38,7 @@ struct Result {
 };
 
 struct Options {
-    unsigned service_interval = 64;    // most cycles a straight run goes without a service check
+    unsigned service_interval = 0;     // 0: a slice ends before any instruction once used up, as on MAME (exact); N: at most N cycles over
     std::size_t functions_per_file = 32;
 };
 

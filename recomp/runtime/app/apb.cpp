@@ -247,11 +247,13 @@ int main(int argc, char** argv) {
     const double frame_ns = 166400.0 / 10e6 * 1e9;
     std::uint64_t start = SDL_GetTicksNS(), paced_from = 0;
     bool quit = false;
+    // The controls change at the start of each vblank, on the cycle MAME's
+    // inputs would (and qilin_run's scripted ones do).
+    machine.on_vblank = [&](std::uint64_t frame) {
+        if (!controls.update(machine, frame)) quit = true;
+    };
     scheduler.on_frame = [&](std::uint64_t frame) {
-        if (!controls.update(machine, frame)) {
-            quit = true;
-            throw game::Stop{game::Stop::frames, "closed"};
-        }
+        if (quit) throw game::Stop{game::Stop::frames, "closed"};
         if (sound) {
             machine.advance_speech(machine.sound_time);
             audio.advance(machine.sound_time);

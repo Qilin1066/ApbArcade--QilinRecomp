@@ -6,14 +6,14 @@
 // state itself leads there on MAME's cores, or the native code went wrong
 // after it.
 //
-//   qilin_handoff <rom-dir> --at FRAME [--frames N] [--monkey SEED] [--test-switch 1] [--quantum CYCLES]
+//   qilin_handoff <rom-dir> --at FRAME [--frames N] [--quantum CYCLES] and qilin_run's controls (--coin, --press, --pedal, --steer, --monkey, --test-switch)
 //
 // Reports, per frame of the reference run, the lowest T-11 stack pointer and
 // any T-11 execution outside ROM. Needs your ROMs and both lifts, like qilin_run.
 
 #include "game.hpp"
 #include "m6502_reference.h"
-#include "monkey.hpp"
+#include "script.hpp"
 #include "romset.hpp"
 #include "system2_machine.hpp"
 #include "t11_reference.h"
@@ -56,8 +56,7 @@ int main(int argc, char** argv) {
     }
     std::uint64_t at = 0, frames = 300;
     std::int64_t quantum = 64;
-    std::optional<std::uint64_t> monkey_seed;
-    bool test_switch = false;
+    tools::Script script;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string_view flag = argv[i], value = argv[i + 1];
         std::uint64_t number = 0;
@@ -65,8 +64,7 @@ int main(int argc, char** argv) {
         if (flag == "--at") at = number;
         else if (flag == "--frames") frames = number;
         else if (flag == "--quantum") quantum = static_cast<std::int64_t>(number);
-        else if (flag == "--monkey") monkey_seed = number;
-        else if (flag == "--test-switch") test_switch = number != 0;
+        else if (script.option(flag, value)) {}
         else {
             std::print(stderr, "qilin_handoff: unknown option {}\n", flag);
             return 2;
@@ -80,16 +78,8 @@ int main(int argc, char** argv) {
 
     // ---- Natively, to the frame ----
     sys2::Machine native(set->region(rom::Region::main_cpu), set->region(rom::Region::sound_cpu));
-    std::optional<tools::Monkey> monkey;
-    if (monkey_seed) monkey.emplace(*monkey_seed);
-    const auto apply_inputs = [&](sys2::Machine& m, std::uint64_t frame) {
-        m.inputs.in0 = 0xffff;
-        m.inputs.in1 = 0xf0;
-        if (monkey) monkey->apply(frame, m.inputs);
-        if (test_switch) m.inputs.in0 = static_cast<std::uint16_t>(m.inputs.in0 & 0x7fff);
-    };
+    script.attach(native);
     game::Scheduler scheduler(native);
-    scheduler.on_frame = [&](std::uint64_t frame) { apply_inputs(native, frame); };
     const auto stop = scheduler.run(at);
     if (stop.reason != game::Stop::frames) {
         std::print("The native run stopped before frame {}: {}\n", at, stop.detail);
@@ -103,6 +93,7 @@ int main(int argc, char** argv) {
     sys2::Machine m = native;
     m.video_sink = nullptr;
     m.sound_sink = nullptr;
+    script.drive(m);
     MainBus main_bus(m);
     SoundBus sound_bus(m);
     t11_device t11(main_bus, 0x36ff);
@@ -133,7 +124,6 @@ int main(int argc, char** argv) {
             lowest = 0xffff;
             outside = 0;
         }
-        apply_inputs(m, m.frames());
         const auto slice_end = std::min(m.next_event(), m.main_time + quantum);
         sync_lines();
         bool first = true;
