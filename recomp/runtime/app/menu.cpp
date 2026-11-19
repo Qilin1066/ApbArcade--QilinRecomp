@@ -28,6 +28,19 @@ void meter(const char* label, double value, bool centred) {
 
 }  // namespace
 
+SDL_DisplayID display_named(const std::string& name) {
+    if (name.empty()) return 0;
+    int count = 0;
+    SDL_DisplayID* displays = SDL_GetDisplays(&count);
+    SDL_DisplayID found = 0;
+    for (int i = 0; i < count && displays && !found; ++i) {
+        const char* n = SDL_GetDisplayName(displays[i]);
+        if (n && name == n) found = displays[i];
+    }
+    SDL_free(displays);
+    return found;
+}
+
 Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::string settings_path)
     : window_(window), renderer_(renderer), input_(input), path_(std::move(settings_path)) {
     gfx::Overlay o;
@@ -93,9 +106,15 @@ void Menu::save() {
 void Menu::handle(const SDL_Event& e) {
     if (ok_ && (open_ || SDL_GetTicks() < hint_until_)) ImGui_ImplSDL3_ProcessEvent(&e);
     switch (e.type) {
+    case SDL_EVENT_WINDOW_ENTER_FULLSCREEN: input_.settings.display.fullscreen = true; break;
+    case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: input_.settings.display.fullscreen = false; break;
     case SDL_EVENT_KEY_DOWN:
         if (e.key.repeat) break;
         if (e.key.key == SDLK_F1) toggle();
+        if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) {
+            set_fullscreen(!input_.settings.display.fullscreen);
+            save();
+        }
         // Escape opens the menu, or closes it (unless a control is being set:
         // then it gives up waiting for one).
         if (e.key.key == SDLK_ESCAPE) {
@@ -156,6 +175,10 @@ void Menu::frame() {
                 controls_tab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Display")) {
+                display_tab();
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Game")) {
                 game_tab();
                 ImGui::EndTabItem();
@@ -181,7 +204,9 @@ void Menu::controls_tab() {
     buttons_section();
     ImGui::Separator();
     if (ImGui::Button("Reset all controls to the defaults")) {
+        const DisplaySettings display = input_.settings.display;   // the display isn't a control
         input_.settings = Settings{};
+        input_.settings.display = display;
         input_.configure();
     }
 }
@@ -360,6 +385,77 @@ void Menu::buttons_section() {
         if (auto heard = input_.heard()) s.buttons[listening_button_] = *heard;
         listening_button_ = -1;
     }
+}
+
+void Menu::set_fullscreen(bool fullscreen) {
+    input_.settings.display.fullscreen = fullscreen;
+    if (!SDL_SetWindowFullscreen(window_, fullscreen)) std::fprintf(stderr, "apb: full screen: %s\n", SDL_GetError());
+}
+
+void Menu::move_to_display(SDL_DisplayID display) {
+    const bool fullscreen = input_.settings.display.fullscreen;
+    if (fullscreen) SDL_SetWindowFullscreen(window_, false);
+    SDL_SetWindowPosition(window_, static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(display)),
+                          static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(display)));
+    if (fullscreen) SDL_SetWindowFullscreen(window_, true);
+    const char* name = SDL_GetDisplayName(display);
+    input_.settings.display.monitor = name ? name : "";
+}
+
+void Menu::display_tab() {
+    DisplaySettings& d = input_.settings.display;
+    const auto apply = [&] {
+        renderer_.set_scaling(d.scaling, d.smooth);
+        renderer_.set_vsync(d.vsync);
+    };
+    bool fullscreen = d.fullscreen;
+    if (ImGui::Checkbox("Full screen (Alt+Enter or F11)", &fullscreen)) set_fullscreen(fullscreen);
+
+    int count = 0;
+    SDL_DisplayID* displays = SDL_GetDisplays(&count);
+    const SDL_DisplayID current = SDL_GetDisplayForWindow(window_);
+    const char* current_name = current ? SDL_GetDisplayName(current) : nullptr;
+    if (ImGui::BeginCombo("Display", current_name ? current_name : "?")) {
+        for (int i = 0; i < count && displays; ++i) {
+            const char* name = SDL_GetDisplayName(displays[i]);
+            if (ImGui::Selectable(strf("%s##%u", name ? name : "?", static_cast<unsigned>(displays[i])).c_str(), displays[i] == current))
+                move_to_display(displays[i]);
+        }
+        ImGui::EndCombo();
+    }
+    SDL_free(displays);
+
+    ImGui::SeparatorText("Picture");
+    int scaling = static_cast<int>(d.scaling);
+    ImGui::TextUnformatted("Size");
+    ImGui::SameLine();
+    bool changed = ImGui::RadioButton("Whole multiples (sharpest)", &scaling, static_cast<int>(gfx::Scaling::integer));
+    ImGui::SameLine();
+    changed |= ImGui::RadioButton("Fit", &scaling, static_cast<int>(gfx::Scaling::fit));
+    ImGui::SameLine();
+    changed |= ImGui::RadioButton("Fill the window", &scaling, static_cast<int>(gfx::Scaling::stretch));
+    if (changed) d.scaling = static_cast<gfx::Scaling>(scaling);
+    if (renderer_.smooth_supported()) {
+        changed |= ImGui::Checkbox("Smooth (at sizes that aren't whole multiples)", &d.smooth);
+    } else {
+        ImGui::TextDisabled("Smooth scaling: this graphics device can't (the picture is scaled sharp).");
+    }
+    changed |= ImGui::Checkbox("Vsync (wait for the display: no tearing)", &d.vsync);
+    if (changed) apply();
+    ImGui::TextDisabled("The game itself always runs at the cabinet's 60.1 frames a second.");
+
+    ImGui::SeparatorText("Graphics device");
+    const auto& devices = renderer_.devices();
+    const std::string label = d.gpu.empty() ? "The best one" : d.gpu;
+    if (ImGui::BeginCombo("Device", label.c_str())) {
+        if (ImGui::Selectable("The best one", d.gpu.empty())) d.gpu.clear();
+        for (const auto& name : devices)
+            if (ImGui::Selectable(name.c_str(), d.gpu == name)) d.gpu = name;
+        ImGui::EndCombo();
+    }
+    ImGui::Text("In use: %s", renderer_.device_name().c_str());
+    const std::string& wanted = d.gpu.empty() ? (devices.empty() ? renderer_.device_name() : devices.front()) : d.gpu;
+    if (wanted != renderer_.device_name()) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "The device changes the next time apb starts.");
 }
 
 void Menu::game_tab() {

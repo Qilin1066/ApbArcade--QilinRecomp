@@ -13,7 +13,8 @@
 //
 // A window, when there is one, gets each presented frame by a blit from the
 // frame buffer into the acquired swapchain image: no shaders, and the blit
-// converts to whatever format the window has.
+// converts to whatever format the window has. The blit scales by a whole
+// number, to fit, or to fill (Config::scaling), sharp or smooth.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -109,6 +110,17 @@ public:
         config_.window_height = height;
         swapchain_stale_ = true;
     }
+    void set_scaling(Scaling scaling, bool smooth) override {
+        config_.scaling = scaling;
+        config_.smooth = smooth;
+    }
+    void set_vsync(bool vsync) override {
+        if (config_.vsync == vsync) return;
+        config_.vsync = vsync;
+        swapchain_stale_ = true;
+    }
+    bool smooth_supported() const override { return linear_blit_; }
+    const std::vector<std::string>& devices() const override { return devices_; }
     Image read_front_buffer() override { return read(color_[front_]); }
     Image read_back_buffer() override { return read(color_[back_]); }
     uint32_t validation_errors() const override { return validation_errors_; }
@@ -149,6 +161,8 @@ private:
 
     Config config_;
     std::string device_name_;
+    std::vector<std::string> devices_;   // usable devices, best first
+    bool linear_blit_ = false;
     uint32_t validation_errors_ = 0;
 
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -283,6 +297,7 @@ bool VulkanRenderer::pick_device(std::string* error) {
     }
     std::string rejected;
     int best_score = -1;
+    std::vector<std::pair<int, std::string>> usable;
     for (uint32_t i = 0; i < devices.size(); ++i) {
         if (config_.gpu >= 0 && uint32_t(config_.gpu) != i) continue;
         VkPhysicalDeviceProperties props{};
@@ -326,6 +341,8 @@ bool VulkanRenderer::pick_device(std::string* error) {
         if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) score = 4;
         else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) score = 3;
         else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU) score = 2;
+        usable.emplace_back(score, props.deviceName);
+        if (!config_.gpu_name.empty() && config_.gpu_name == props.deviceName) score += 100;   // the one asked for
         if (score > best_score) {
             best_score = score;
             gpu_ = devices[i];
@@ -339,6 +356,15 @@ bool VulkanRenderer::pick_device(std::string* error) {
                      : "no graphics device can run the renderer (" + rejected + ")";
         return false;
     }
+    std::ranges::stable_sort(usable, [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (auto& [score, name] : usable) devices_.push_back(std::move(name));
+    if (!config_.gpu_name.empty() && config_.gpu_name != device_name_) {
+        std::fprintf(stderr, "The graphics device \"%s\" isn't there (or can't run the renderer); using %s.\n",
+                     config_.gpu_name.c_str(), device_name_.c_str());
+    }
+    VkFormatProperties format{};
+    vkGetPhysicalDeviceFormatProperties(gpu_, VK_FORMAT_B8G8R8A8_UNORM, &format);
+    linear_blit_ = (format.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
     vkGetPhysicalDeviceMemoryProperties(gpu_, &memory_);
     uint32_t e = 0;
     vkEnumerateDeviceExtensionProperties(gpu_, nullptr, &e, nullptr);
@@ -588,27 +614,35 @@ void VulkanRenderer::show(Target& frame) {
     // layout change chains after it.
     barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_NONE,
             VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    const VkClearColorValue black{};
-    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdClearColorImage(cmd_, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
-    barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-            VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-
-    // Scale: the largest whole number that fits, or below 1x, the largest fit.
-    const double sx = double(swapchain_extent_.width) / config_.width, sy = double(swapchain_extent_.height) / config_.height;
-    double scale = std::min(sx, sy);
-    const bool whole = scale >= 1.0;
-    if (whole) scale = std::floor(scale);
-    const auto w = std::max<int32_t>(1, int32_t(config_.width * scale)), h = std::max<int32_t>(1, int32_t(config_.height * scale));
-    const int32_t x = (int32_t(swapchain_extent_.width) - w) / 2, y = (int32_t(swapchain_extent_.height) - h) / 2;
+    // Where the frame goes (Scaling in gfx.hpp), centred.
+    const int32_t window_w = int32_t(swapchain_extent_.width), window_h = int32_t(swapchain_extent_.height);
+    const double sx = double(window_w) / config_.width, sy = double(window_h) / config_.height;
+    double scale_x = std::min(sx, sy), scale_y = scale_x;
+    if (config_.scaling == Scaling::integer && scale_x >= 1.0) scale_x = scale_y = std::floor(scale_x);
+    if (config_.scaling == Scaling::stretch) {
+        scale_x = sx;
+        scale_y = sy;
+    }
+    const auto w = std::clamp<int32_t>(int32_t(std::lround(config_.width * scale_x)), 1, window_w);
+    const auto h = std::clamp<int32_t>(int32_t(std::lround(config_.height * scale_y)), 1, window_h);
+    const int32_t x = (window_w - w) / 2, y = (window_h - h) / 2;
+    // Whole multiples are pixel-exact; other scales are smooth if asked and the device can.
+    const bool exact = w % int32_t(config_.width) == 0 && h % int32_t(config_.height) == 0;
+    const VkFilter filter = !exact && config_.smooth && linear_blit_ ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    if (w < window_w || h < window_h) {   // black borders
+        const VkClearColorValue black{};
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd_, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
+        barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    }
     VkImageBlit blit{};
     blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.srcOffsets[1] = {int32_t(config_.width), int32_t(config_.height), 1};
     blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.dstOffsets[0] = {x, y, 0};
     blit.dstOffsets[1] = {x + w, y + h, 1};
-    vkCmdBlitImage(cmd_, frame.image, frame.layout, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
-                   whole ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+    vkCmdBlitImage(cmd_, frame.image, frame.layout, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, filter);
     if (overlay_) {
         // The overlay draws over the picture, in a pass of its own on the window's image.
         barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,

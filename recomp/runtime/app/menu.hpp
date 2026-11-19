@@ -1,6 +1,7 @@
 #pragma once
 // The recomp's own settings menu, over the game (F1 or Escape, or a
-// gamepad's Start or Guide): the controls now, the graphics options later.
+// gamepad's Start or Guide): the controls and the display. Alt+Enter or
+// F11 switches full screen whether it's open or not.
 // Dear ImGui (third_party/imgui, MIT) drawn by its Vulkan backend in the
 // renderer's overlay pass, with its SDL3 backend for mouse, keys and pads.
 // While it's open the game is paused.
@@ -14,6 +15,9 @@
 #include <string>
 
 namespace qilin::app {
+
+// The connected display with this name, or 0.
+[[nodiscard]] SDL_DisplayID display_named(const std::string& name);
 
 class Menu {
 public:
@@ -34,8 +38,13 @@ public:
     void frame();
     [[nodiscard]] bool quit_requested() const noexcept { return quit_; }
 
+    // The window to full screen (borderless, on its display) or back.
+    void set_fullscreen(bool fullscreen);
+
 private:
     void controls_tab();
+    void display_tab();
+    void move_to_display(SDL_DisplayID display);
     void steering_section();
     void pedal_section();
     void buttons_section();

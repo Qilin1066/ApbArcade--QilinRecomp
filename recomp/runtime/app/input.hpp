@@ -9,6 +9,7 @@
 // A binding names a device by its GUID, so it survives replugging.
 
 #include "controls.hpp"
+#include "gfx.hpp"
 #include "system2_machine.hpp"
 
 #include <SDL3/SDL.h>
@@ -45,6 +46,16 @@ inline constexpr std::array<const char*, 6> button_keys{"button1", "button2", "b
 
 enum class Steering { keys_and_pad, wheel, mouse };
 
+// How the game is shown (the menu's Display tab).
+struct DisplaySettings {
+    gfx::Scaling scaling = gfx::Scaling::integer;
+    bool smooth = true;         // bilinear at scales that aren't whole
+    bool vsync = true;
+    bool fullscreen = false;    // borderless, at the display's own mode
+    std::string monitor;        // the display's name; empty: the primary display
+    std::string gpu;            // the Vulkan device's name; empty: the best one (used at start-up)
+};
+
 struct Settings {
     std::array<Binding, 6> buttons;    // each besides the built-in keys and gamepad buttons
     Steering steering = Steering::keys_and_pad;
@@ -55,6 +66,7 @@ struct Settings {
     double mouse_counts = 0.25;        // dial counts per pixel the mouse (or spinner) moves
     double stick_counts = 6;           // dial counts a frame, stick or keys at full
     int friction = 20;                 // force feedback on the bound wheel, percent; 0 off
+    DisplaySettings display;
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;

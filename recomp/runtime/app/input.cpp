@@ -128,6 +128,13 @@ bool Settings::load(const std::string& path) {
     mouse_counts = std::clamp(num("mouse_counts", mouse_counts), 0.01, 8.0);
     stick_counts = std::clamp(num("stick_counts", stick_counts), 1.0, 32.0);
     friction = static_cast<int>(std::clamp(num("friction", friction), 0.0, 100.0));
+    const auto scaling = get("scaling");
+    display.scaling = scaling == "fit" ? gfx::Scaling::fit : scaling == "stretch" ? gfx::Scaling::stretch : gfx::Scaling::integer;
+    display.smooth = num("smooth", 1) != 0;
+    display.vsync = num("vsync", 1) != 0;
+    display.fullscreen = num("fullscreen", 0) != 0;
+    display.monitor = std::string(get("monitor"));
+    display.gpu = std::string(get("gpu"));
     return true;
 }
 
@@ -147,6 +154,10 @@ bool Settings::save(const std::string& path) const {
     binding("pedal_axis", pedal_axis);
     out << strf("pedal_released = %.9g\npedal_floored = %.9g\npedal_deadzone = %.9g\n", pedal.released, pedal.floored, pedal.deadzone);
     out << strf("mouse_counts = %.9g\nstick_counts = %.9g\nfriction = %d\n", mouse_counts, stick_counts, friction);
+    const char* scaling = display.scaling == gfx::Scaling::fit ? "fit" : display.scaling == gfx::Scaling::stretch ? "stretch" : "integer";
+    out << strf("scaling = %s\nsmooth = %d\nvsync = %d\nfullscreen = %d\n", scaling, display.smooth ? 1 : 0, display.vsync ? 1 : 0,
+                display.fullscreen ? 1 : 0);
+    out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';
     return static_cast<bool>(out);
 }
 

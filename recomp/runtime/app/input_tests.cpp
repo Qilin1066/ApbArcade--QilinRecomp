@@ -131,6 +131,7 @@ int main() {
 
     // The settings file keeps all of it.
     const auto path = (std::filesystem::temp_directory_path() / "apb_input_test.ini").string();
+    input.settings.display = {gfx::Scaling::stretch, false, false, true, "Monitor = 2", "Some GPU"};
     CHECK(input.settings.save(path));
     app::Settings loaded;
     CHECK(loaded.load(path));
@@ -138,6 +139,9 @@ int main() {
     CHECK(loaded.wheel_axis.name == "Test wheel");
     CHECK(loaded.pedal_axis.text() == input.settings.pedal_axis.text() && std::abs(loaded.pedal.floored - far) < 1e-6);
     CHECK(loaded.buttons[0].text() == input.settings.buttons[0].text());
+    CHECK(loaded.display.scaling == gfx::Scaling::stretch && !loaded.display.smooth && !loaded.display.vsync && loaded.display.fullscreen);
+    CHECK(loaded.display.monitor == "Monitor = 2" && loaded.display.gpu == "Some GPU");
+    CHECK(app::Settings{}.display.scaling == gfx::Scaling::integer && app::Settings{}.display.vsync);
     std::filesystem::remove(path);
 
     // While the menu is open, the cabinet's controls rest.

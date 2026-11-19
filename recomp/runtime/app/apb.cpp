@@ -13,9 +13,13 @@
 //   9                  service coin
 //   F2                 the self-test switch (on/off)
 //   F1 or Escape       the settings menu       (Start or Guide)
+//   Alt+Enter or F11   full screen (on/off)
 // The menu sets up wheels (any: a direct-drive wheel that spins freely, as
 // the cabinet's did, or one that stops at a lock), pedals and extra button
-// bindings; they're kept in apb.ini next to the EEPROM.
+// bindings, and the display: full screen, which display, the picture's size
+// (whole multiples, fit or fill; sharp or smooth), vsync and the graphics
+// device. They're kept in apb.ini next to the EEPROM; --no-vsync and --gpu N
+// override the saved ones for one run.
 //
 // The EEPROM (high scores, audits, settings) is kept in SDL's per-user
 // preferences folder for "Qilin/apb". Everything else follows the board:
@@ -116,22 +120,38 @@ int main(int argc, char** argv) {
     const auto set = rom::RomSet::load(options.rom_dir);
     if (!set) fail(set.error());
 
-    // The window: the cabinet's monitor turned upright, scaled by a whole number.
+    // The player's settings: the controls (for the input below) and the display.
+    const std::string settings_path = pref_path("apb.ini");
+    app::Settings saved;
+    saved.load(settings_path);
+
+    // The window: the cabinet's monitor turned upright, scaled by a whole
+    // number, on the display it was last on; or full screen there.
     constexpr int width = sys2::Frame::height, height = sys2::Frame::width;   // 384 x 512 after ROT270
+    SDL_DisplayID display = app::display_named(saved.display.monitor);
+    if (!display) display = SDL_GetPrimaryDisplay();
     int scale = options.scale;
     if (scale <= 0) {
         SDL_Rect usable{};
         scale = 1;
-        if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable)) scale = std::max(1, std::min(usable.w / width, (usable.h - 64) / height));
+        if (SDL_GetDisplayUsableBounds(display, &usable)) scale = std::max(1, std::min(usable.w / width, (usable.h - 64) / height));
     }
-    SDL_Window* window = SDL_CreateWindow("APB", width * scale, height * scale, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    SDL_Window* window = SDL_CreateWindow("APB", width * scale, height * scale,
+                                          SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
     if (!window) fail(std::string("can't open a window: ") + SDL_GetError());
+    SDL_SetWindowPosition(window, static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(display)), static_cast<int>(SDL_WINDOWPOS_CENTERED_DISPLAY(display)));
+    if (saved.display.fullscreen && !SDL_SetWindowFullscreen(window, true)) std::fprintf(stderr, "apb: full screen: %s\n", SDL_GetError());
+    SDL_ShowWindow(window);
+    SDL_SyncWindow(window);
 
     gfx::Config config;
     config.width = width;
     config.height = height;
-    config.gpu = options.gpu;
-    config.vsync = options.vsync;
+    config.gpu = options.gpu;                     // --gpu N wins over the saved device
+    if (options.gpu < 0) config.gpu_name = saved.display.gpu;
+    config.vsync = options.vsync && saved.display.vsync;
+    config.scaling = saved.display.scaling;
+    config.smooth = saved.display.smooth;
     Uint32 count = 0;
     const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&count);
     if (!extensions) fail(std::string("SDL has no Vulkan: ") + SDL_GetError());
@@ -179,8 +199,7 @@ int main(int argc, char** argv) {
     // (Pointers, so they go before the renderer and SDL do.)
     auto input_owner = std::make_unique<app::Input>();
     app::Input& input = *input_owner;
-    const std::string settings_path = pref_path("apb.ini");
-    input.settings.load(settings_path);
+    input.settings = saved;
     input.configure();
     auto menu_owner = std::make_unique<app::Menu>(window, *renderer, input, settings_path);
     app::Menu& menu = *menu_owner;
@@ -232,7 +251,7 @@ int main(int argc, char** argv) {
             renderer->write_back_buffer(pixels.data());
             menu.frame();
             renderer->present();
-            if (!options.vsync) SDL_Delay(16);
+            if (!renderer->config().vsync) SDL_Delay(16);
             events();
             input.apply(machine.inputs);   // keeps the meters live; the cabinet's controls rest
             paced_from = frame;

@@ -16,10 +16,16 @@
 
 namespace qilin::gfx {
 
+// How a frame fills the window: the largest whole multiple of its size that
+// fits (pixel-exact; below 1x, the largest fit), the largest fit with its
+// shape kept, or the whole window.
+enum class Scaling : uint8_t { integer, fit, stretch };
+
 struct Config {
     uint32_t width = 512, height = 384;  // the frame buffers' size in pixels: System 2's visible area
     uint32_t back_buffers = 1;           // with the front buffer, one more image
     int gpu = -1;                        // index among the Vulkan devices; -1 picks the best one
+    std::string gpu_name;                // or the device with this name, if it's there (else the best one)
     bool validation = false;             // Vulkan validation layers, if installed (also QILIN_VK_VALIDATION=1)
 
     // A window to present to (optional). The windowing library gives the
@@ -29,6 +35,8 @@ struct Config {
     std::function<uint64_t(void* instance)> create_surface;
     uint32_t window_width = 0, window_height = 0;  // the window's size in pixels
     bool vsync = true;                             // FIFO; otherwise mailbox or immediate where offered
+    Scaling scaling = Scaling::integer;
+    bool smooth = true;                            // bilinear when the scale isn't whole; else nearest pixel
 };
 
 // What a UI drawn over the window (the settings menu) needs to draw with
@@ -78,6 +86,14 @@ public:
     virtual void present() = 0;
     // The window's size in pixels changed (the swapchain is rebuilt at the next present).
     virtual void resize_window(uint32_t width, uint32_t height) = 0;
+    // How frames fill the window, from the next present.
+    virtual void set_scaling(Scaling scaling, bool smooth) = 0;
+    // Waits for the display's refresh or not (the swapchain is rebuilt at the next present).
+    virtual void set_vsync(bool vsync) = 0;
+    // Whether the device can scale smoothly (a linear blit from the frame format); if not, frames are scaled sharp.
+    virtual bool smooth_supported() const = 0;
+    // The names of the Vulkan devices that can run the renderer, best first.
+    virtual const std::vector<std::string>& devices() const = 0;
     virtual uint64_t frames_presented() const = 0;
     // The frame buffers are numbered 0 … back_buffers; these say which is which now.
     virtual uint32_t back_index() const = 0;
