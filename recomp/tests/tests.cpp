@@ -672,6 +672,36 @@ void test_video() {
         same = same && p[0] == rgba[i * 4 + 2] && p[1] == rgba[i * 4 + 1] && p[2] == rgba[i * 4] && p[3] == 255;
     }
     CHECK(same);
+
+    // Partial updates as MAME's screen makes them: a request from vblank
+    // (line 384 on) draws nothing, the next frame starting at line 0. APB
+    // links motion object 0 to the top half's list at line ~392 and to the
+    // bottom half's at ~194; drawing the whole next frame at 392 showed it
+    // with the list about to be replaced, and cars vanished.
+    sys2::Video video(g);
+    m.main_write16(0x1700, 0);
+    (void)m.main_read16(0x8000);                 // the slapstic to bank 0: motion objects at 0x3800
+    (void)m.main_read16(0x8080);
+    CHECK(m.video().bank() == 0);
+    m.main_write16(0x3808 + 0, static_cast<std::uint16_t>(396 << 6));   // object 1: sprite 0 at line 100,
+    m.main_write16(0x3808 + 2, 0);
+    m.main_write16(0x3808 + 4, static_cast<std::uint16_t>(50 << 6));    // x 50, linking back to 0
+    m.main_write16(0x3808 + 6, 0);
+    m.main_write16(0x3806, 1 << 3);              // object 0 links to it
+    video.draw_through(m, 392);                  // in vblank: nothing drawn
+    CHECK(video.bands() == 0);
+    m.main_write16(0x3806, 0);                   // the list replaced before line 0: empty
+    video.draw_through(m, 50);
+    video.vblank(m);
+    CHECK(video.bands() == 2 && video.frame().pens[103 * sys2::Frame::width + 55] == 128);
+    video.draw_through(m, 120);                  // the object's list for lines 0-120
+    m.main_write16(0x3806, 1 << 3);
+    video.draw_through(m, 400);                  // vblank again: ignored
+    video.vblank(m);
+    CHECK(video.bands() == 4 && video.frame().pens[103 * sys2::Frame::width + 55] == 128);
+    m.main_write16(0x3806, 1 << 3);
+    video.vblank(m);
+    CHECK(video.frame().pens[103 * sys2::Frame::width + 55] == 8);   // sprite 0's pen 8 at (5, 3)
 }
 
 void test_audio() {

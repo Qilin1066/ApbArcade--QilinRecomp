@@ -149,7 +149,8 @@ public:
 
     // Optional: told when the picture must be drawn up to a scanline, where
     // MAME forces a partial update (before a changed scroll register or a
-    // write to motion object 0's link), and at the start of vblank, where
+    // write to motion object 0's link, and every 64 lines: atarimo.cpp's
+    // force_update), and at the start of vblank, where
     // MAME draws the rest of the frame (VIDEO_UPDATE_BEFORE_VBLANK).
     struct VideoSink {
         virtual ~VideoSink() = default;

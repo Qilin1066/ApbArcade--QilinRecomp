@@ -100,8 +100,7 @@ class Recorder final : public sys2::Machine::VideoSink {
 public:
     explicit Recorder(sys2::Video& video) : video_(video) {}
     void draw_through(const sys2::Machine& machine, int scanline) override {
-        scanline = std::min(scanline, H - 1);
-        if (scanline >= next_) {
+        if (scanline < H && scanline >= next_) {   // vblank's requests draw nothing, as MAME's (system2_video.cpp)
             if (recording) {
                 Band b;
                 b.first = next_;

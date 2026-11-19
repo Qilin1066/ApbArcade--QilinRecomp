@@ -322,6 +322,11 @@ void Machine::run_events(std::int64_t now) {
             const auto line = static_cast<unsigned>((t % cycles_per_frame) / cycles_per_scanline);
             scanline_int_ = (interrupt_enable_ & 4) != 0;   // the 32V interrupt, every 64 lines
             speech_.advance(t);   // keeps the speech samples coming between accesses
+            // MAME's motion objects force a partial update every 64 lines
+            // (atarimo.cpp force_update: at lines 64, 128 ... 320, drawn
+            // through the line before), so each band shows the sprite list
+            // and playfield as they were then, not as they are at vblank.
+            if (video_sink && line > 0 && line < vblank_line) video_sink->draw_through(*this, static_cast<int>(line) - 1);
             if (line == 0 && pending_scroll_y_ >= 0) {
                 playfield_scroll_y_ = pending_scroll_y_;
                 pending_scroll_y_ = -1;

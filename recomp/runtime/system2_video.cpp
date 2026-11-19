@@ -171,8 +171,13 @@ void render(const Machine& machine, const Graphics& graphics, Frame& frame, int 
 }
 
 void Video::draw_through(const Machine& machine, int scanline) {
-    scanline = std::min(scanline, static_cast<int>(Frame::height) - 1);
-    if (scanline < next_line_) return;
+    // A request from vblank (lines 384-415) draws nothing: MAME clips it to
+    // the visible area, which ends at 383, and starts the next frame's
+    // drawing at line 0. (Clamping it to 383 drew the whole next frame early,
+    // with the list the game was about to replace: APB rewrites the motion
+    // object list's head at line ~392 for the top of the screen and ~194 for
+    // the bottom, so cars came and went with the wrong half's list.)
+    if (scanline >= static_cast<int>(Frame::height) || scanline < next_line_) return;
     if (!only_.empty() && std::ranges::find(only_, frames_) == only_.end()) return;
     render(machine, graphics_, *drawing_, next_line_, scanline);
     ++bands_;
