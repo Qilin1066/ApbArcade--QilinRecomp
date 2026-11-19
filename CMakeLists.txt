@@ -298,6 +298,13 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     add_library(qilin_game STATIC recomp/runtime/game/game.cpp ${QILIN_GEN_SOURCES} ${QILIN_SOUND_GEN_SOURCES})
     target_include_directories(qilin_game PUBLIC recomp/runtime/game "${QILIN_GEN_DIR}" "${QILIN_SOUND_GEN_DIR}")
     target_link_libraries(qilin_game PUBLIC qilin_board qilin_runtime PRIVATE qilin_warnings)
+    if(MSVC)
+        # The lifted files are large (over a megabyte of source each): more
+        # sections than an object file holds without /bigobj; compiled in
+        # parallel; and the labels and locals every function declares, used
+        # or not, aren't worth a warning each.
+        target_compile_options(qilin_game PRIVATE /bigobj /MP /wd4102 /wd4189 /wd4101)
+    endif()
 
     add_executable(qilin_run tools/run/run.cpp)
     target_include_directories(qilin_run PRIVATE tools/common)
