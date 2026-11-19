@@ -429,6 +429,61 @@ void test_cfg_mask_table_and_window_pointer() {
     CHECK(program.nodes().contains(cfg::Loc{0x4102, 12}));
 }
 
+// A byte index minus a constant, bounded by an unsigned compare: the range
+// wraps past 0 before the CMP, and the BHI's fall-through still proves 24
+// entries (APB's form at 5618 in bank 8).
+void test_cfg_wrapped_index() {
+    namespace cfg = qilin::cfg;
+    Image image;
+    image.put(0x8000, {
+        005001,               // 8000 CLR R1
+        0153701, 0x0100,      // 8002 BISB @#100,R1     R1 = 0..255
+        010100,               // 8006 MOV R1,R0
+        0162700, 024,         // 8008 SUB #24,R0        R0 = -20..235: wraps
+        020027, 027,          // 800C CMP R0,#27
+        0101003,              // 8010 BHI 8018
+        006300,               // 8012 ASL R0
+        066007, 0x9000,       // 8014 ADD 9000(R0),PC   (PC after = 8018)
+        000207,               // 8018 RTS PC
+    });
+    for (unsigned k = 0; k < 24; ++k) image.put(0x9000 + 2 * k, {static_cast<std::uint16_t>(0x100 + 4 * k)});
+    image.put(0x9030, {0x0001});   // past the end: odd, never a target
+    for (unsigned k = 0; k < 24; ++k) image.put(0x8118 + 4 * k, {000240, 000207});
+    const auto set = image.set();
+    const auto program = cfg::Program::analyze(set);
+    const auto& table = program.nodes().at(cfg::Loc{0x8014, 0});
+    CHECK(table.flow == cfg::Flow::table && table.table.size() == 24 && !table.heuristic_table);
+}
+
+// A proven table outranks a guess: a function found only through a pointer
+// in data holds a table whose first target, a three-word CMP, has a third
+// word that a later data pointer would make the start of a NEG X(R0), hiding
+// the real code after it (APB's table at D5BA and the data word D5D4).
+void test_cfg_table_over_guess() {
+    namespace cfg = qilin::cfg;
+    Image image;
+    image.put(0x8000, {000777});   // reset: BR .
+    image.put(0x8100, {
+        013700, 0x0100,       // 8100 MOV @#100,R0
+        020027, 3,            // 8104 CMP R0,#3
+        0101003,              // 8108 BHI 8110
+        006300,               // 810A ASL R0
+        066007, 0x9000,       // 810C ADD 9000(R0),PC   (PC after = 8110)
+        000207,               // 8110 RTS PC
+    });
+    image.put(0x9000, {0x00F0, 0x0100, 0x0110, 0x0120});
+    image.put(0x8200, {023737, 0x0200, 0x0B30, 000207, 000207});   // CMP @#200,@#5460; RTS; RTS
+    for (const std::uint32_t at : {0x8210u, 0x8220u, 0x8230u}) image.put(at, {000207});
+    image.put(0xA000, {0x8100, 0x8204});   // data: the function, and the misleading word
+    const auto set = image.set();
+    const auto program = cfg::Program::analyze(set);
+    const auto table = program.nodes().find(cfg::Loc{0x810C, 0});
+    CHECK(table != program.nodes().end() && table->second.flow == cfg::Flow::table && table->second.table.size() == 4 &&
+          !table->second.heuristic_table);
+    CHECK(program.nodes().contains(cfg::Loc{0x8200, 0}) && program.nodes().contains(cfg::Loc{0x8206, 0}));
+    CHECK(!program.functions().contains(cfg::Loc{0x8204, 0}) && program.denied_entries().contains(cfg::Loc{0x8204, 0}));
+}
+
 // The board model against MAME's atarisy2.cpp: the latches and the lines they
 // drive, the delayed interrupt enable, the 32V and VBLANK interrupts, the
 // sound IRQ (not while the 6502 is held in reset), the watchdog, sound-side
@@ -762,6 +817,8 @@ int main() {
     test_decoder();
     test_cfg();
     test_cfg_mask_table_and_window_pointer();
+    test_cfg_wrapped_index();
+    test_cfg_table_over_guess();
     test_machine();
     test_video();
     test_audio();

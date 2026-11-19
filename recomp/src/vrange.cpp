@@ -333,15 +333,26 @@ std::optional<State> narrow(const State& in, Op op, bool taken) {
         else if (!v.top() && (v.hi & 0xffff) == k) --v.hi;
         break;
     case ult: case ule: case ugt: case uge: {
-        const auto uv = unsigned_view(v);
-        if (!uv) return s;   // wraps: nothing to say
-        auto r = *uv;
-        if (rel == ult) r.hi = std::min<std::int32_t>(r.hi, k - 1);
-        if (rel == ule) r.hi = std::min<std::int32_t>(r.hi, k);
-        if (rel == ugt) r.lo = std::max<std::int32_t>(r.lo, k + 1);
-        if (rel == uge) r.lo = std::max<std::int32_t>(r.lo, k);
-        if (r.lo > r.hi) return std::nullopt;
-        v = make(r.lo, r.hi);
+        const auto bound = [&](Range r) {
+            if (rel == ult) r.hi = std::min<std::int32_t>(r.hi, k - 1);
+            if (rel == ule) r.hi = std::min<std::int32_t>(r.hi, k);
+            if (rel == ugt) r.lo = std::max<std::int32_t>(r.lo, k + 1);
+            if (rel == uge) r.lo = std::max<std::int32_t>(r.lo, k);
+            return r;
+        };
+        if (const auto uv = unsigned_view(v)) {
+            const auto r = bound(*uv);
+            if (r.lo > r.hi) return std::nullopt;
+            v = make(r.lo, r.hi);
+            break;
+        }
+        // The values wrap past 0xFFFF to 0 (a byte minus a constant, say):
+        // narrow the high run and the low run apart, then rejoin them.
+        const Range high = bound(v.lo < 0 ? Range{v.lo + 0x10000, 0xffff} : Range{v.lo, 0xffff});
+        const Range low = bound(v.lo < 0 ? Range{0, v.hi} : Range{0, v.hi - 0x10000});
+        const bool has_high = high.lo <= high.hi, has_low = low.lo <= low.hi;
+        if (!has_high && !has_low) return std::nullopt;
+        v = has_high && has_low ? make(high.lo - 0x10000, low.hi) : has_low ? make(low.lo, low.hi) : make(high.lo, high.hi);
         break;
     }
     case slt: case sle: case sgt: case sge: {

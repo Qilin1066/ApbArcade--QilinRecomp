@@ -130,14 +130,19 @@ public:
     [[nodiscard]] const std::set<std::uint16_t>& window_pointers() const noexcept { return window_pointers_; }
     // Whether code at entry decodes like real code until it joins known code
     // or ends a path (strict: also no traps, RTT or repeated branches).
-    [[nodiscard]] bool plausible_code(Loc entry, bool strict = false) const;
+    // On failure because a word is another instruction's operand, *conflict
+    // (if given) is set to that word.
+    [[nodiscard]] bool plausible_code(Loc entry, bool strict = false, Loc* conflict = nullptr) const;
+    // Guessed entries (pointers, data pointers, gaps) dropped because the
+    // instruction they start overlaps a target of a proven jump table.
+    [[nodiscard]] const std::set<Loc>& denied_entries() const noexcept { return denied_; }
     // Physical ROM offsets of every jump-table entry and bank entry-table word.
     [[nodiscard]] std::set<std::uint32_t> table_words() const;
 
 private:
     using Work = std::vector<std::pair<Loc, Banks>>;
     static Program analyze_once(const rom::RomSet& rom, const std::vector<Loc>& seeds,
-                                const std::map<Loc, std::size_t>& table_limits);
+                                const std::map<Loc, std::size_t>& table_limits, const std::set<Loc>& denied);
     void explore(Loc entry, Banks banks);
     void run(Work work);
     bool resolve_tables();
@@ -168,6 +173,8 @@ private:
     };
     std::map<Loc, Table> tables_;   // jump tables: targets, and whether proven
     std::map<Loc, std::size_t> table_limits_;   // heuristic tables cut short after overlapping code
+    std::set<Loc> denied_;                      // guessed entries not to seed again (see denied_entries)
+    std::set<Loc> blocking_;                    // instructions whose operand words block a proven table's target
     std::vector<std::pair<Loc, Loc>> overlaps_; // an instruction, and a location inside it decoded as code
     std::set<Loc> pointer_immediates_;
     std::set<Loc> pointer_entries_;

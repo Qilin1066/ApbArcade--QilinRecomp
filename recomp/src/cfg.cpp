@@ -130,9 +130,20 @@ std::optional<std::uint16_t> Program::word(Loc loc, unsigned offset) const {
 // analysis runs again from scratch, until no heuristic table overlaps code.
 Program Program::analyze(const rom::RomSet& rom, const std::vector<Loc>& seeds) {
     std::map<Loc, std::size_t> limits;
+    std::set<Loc> denied;
     for (int round = 0;; ++round) {
-        auto p = analyze_once(rom, seeds, limits);
+        auto p = analyze_once(rom, seeds, limits, denied);
         bool cut = false;
+        // A table whose index range is proven outranks a guess: an entry
+        // taken only because a pointer, a data word or a gap suggested it,
+        // whose first instruction covers a word a proven table jumps to, is
+        // dropped (APB: a data word D5D4 decoded as NEG 1003(R0), hiding
+        // D5D0, the first target of the table at D5BA).
+        for (const auto& owner : p.blocking_) {
+            const bool guessed = p.pointer_entries_.contains(owner) || p.data_pointer_entries_.contains(owner) ||
+                                 p.gap_entries_.contains(owner);
+            if (guessed && denied.insert(owner).second) cut = true;
+        }
         for (const auto& [instruction, inside] : p.overlaps_) {
             for (const auto& [loc, table] : p.tables_) {
                 if (!table.heuristic) {
@@ -157,10 +168,11 @@ Program Program::analyze(const rom::RomSet& rom, const std::vector<Loc>& seeds) 
 }
 
 Program Program::analyze_once(const rom::RomSet& rom, const std::vector<Loc>& seeds,
-                              const std::map<Loc, std::size_t>& table_limits) {
+                              const std::map<Loc, std::size_t>& table_limits, const std::set<Loc>& denied) {
     Program p;
     p.rom_ = &rom;
     p.table_limits_ = table_limits;
+    p.denied_ = denied;
     p.functions_.insert(Loc{reset_pc, 0});
     p.explore(Loc{reset_pc, 0}, Banks{{0, 0}});   // MAME's bank entries start at 0
     for (const auto& seed : seeds) {
@@ -577,7 +589,17 @@ bool Program::resolve_tables() {
                 const int tw = target >= 0x8000 ? -1 : (target >= 0x6000 ? 1 : 0);
                 if (tw >= 0 && node.banks_in.b[tw] == Banks::unknown) return false;
                 const Loc t{target, static_cast<std::uint8_t>(tw < 0 ? 0 : node.banks_in.b[tw])};
-                return !operand_words_.contains(t) && (nodes_.contains(t) || plausible_code(t));
+                Loc conflict{};
+                const bool ok = !operand_words_.contains(t) && (nodes_.contains(t) || plausible_code(t, false, &conflict));
+                const Loc blocked = operand_words_.contains(t) ? t : conflict;
+                if (!ok && !range.top() && operand_words_.contains(blocked)) {
+                    for (const std::uint16_t back : {2, 4}) {
+                        const Loc owner{static_cast<std::uint16_t>(blocked.pc - back), blocked.bank};
+                        const auto o = nodes_.find(owner);
+                        if (o != nodes_.end() && o->second.insn.legal && o->second.insn.words > back / 2) blocking_.insert(owner);
+                    }
+                }
+                return ok;
             }();
             if (!plausible) {
                 proven = false;
@@ -612,12 +634,13 @@ bool Program::resolve_tables() {
 // an instruction that ends the run (return, jump, branch always) through
 // instructions the T-11 executes, with no PC addressing a compiler or
 // assembler wouldn't write, inside the ROM.
-bool Program::plausible_code(Loc entry, bool strict) const {
+bool Program::plausible_code(Loc entry, bool strict, Loc* conflict) const {
     Loc at = entry;
     std::optional<Op> last_branch;
     for (int count = 0; count < 64; ++count) {
         const auto w0 = word(at, 0);
         if (!w0 || operand_words_.contains(at)) {
+            if (w0 && conflict) *conflict = at;
             return false;
         }
         const auto insn = t11::decode(*w0, word(at, 2).value_or(0), word(at, 4).value_or(0));
@@ -673,7 +696,7 @@ bool Program::plausible_code(Loc entry, bool strict) const {
 bool Program::seed_pointers() {
     bool grew = false;
     for (const auto entry : std::set(pointer_immediates_)) {
-        if (functions_.contains(entry) || rejected_pointers_.contains(entry)) {
+        if (functions_.contains(entry) || rejected_pointers_.contains(entry) || denied_.contains(entry)) {
             continue;
         }
         // A pointer immediate is as often a data address as a code one: it
@@ -986,7 +1009,7 @@ bool Program::seed_gaps() {
     }
     bool grew = false;
     for (const auto& [entry, window] : starts) {
-        if (nodes_.contains(entry) || operand_words_.contains(entry) || rejected_gaps_.contains(entry)) continue;
+        if (nodes_.contains(entry) || operand_words_.contains(entry) || rejected_gaps_.contains(entry) || denied_.contains(entry)) continue;
         Banks banks;
         if (window >= 0) banks.b[window] = entry.bank;
         if (!plausible_code(entry, true) || !explores_cleanly(entry, banks)) {
@@ -1023,7 +1046,7 @@ bool Program::seed_data_pointers() {
                 continue;
             }
             if (nodes_.contains(entry) || operand_words_.contains(entry) || code_words.contains(entry.physical()) ||
-                bank_table_words_.contains(entry.physical()) || rejected_data_pointers_.contains(entry)) {
+                bank_table_words_.contains(entry.physical()) || rejected_data_pointers_.contains(entry) || denied_.contains(entry)) {
                 continue;
             }
             found.emplace_back(entry, entry.pc >= 0x8000 ? -1 : window);
