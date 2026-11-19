@@ -294,6 +294,60 @@ if(SDL3_FOUND)
     add_test(NAME qilin_input_tests COMMAND qilin_input_tests)
 endif()
 
+# ---- The player kit: everything apb needs but the code lifted from the ROMs ----
+# For the Windows download (tools/player-kit): apb's main program, the
+# scheduler and every library apb links, merged into one archive, with the
+# headers the lifted code includes, qilin, and the flags and libraries to
+# build the rest with (kit.ninja). A player's own PC lifts its ROMs and
+# compiles only that code, with the same compiler, against the kit. Needs
+# SDL3 linked statically (the fetched one).
+option(QILIN_PLAYER_KIT "Build the player kit (tools/player-kit)" OFF)
+if(QILIN_PLAYER_KIT)
+    if(NOT TARGET SDL3-static OR NOT TARGET qilin_app)
+        message(FATAL_ERROR "the player kit needs SDL3 linked statically: configure with QILIN_FETCH_SDL3=ON and no installed SDL3")
+    endif()
+    add_library(qilin_kit_main OBJECT recomp/runtime/app/apb.cpp recomp/runtime/game/game.cpp)
+    target_include_directories(qilin_kit_main PRIVATE recomp/runtime/game)
+    target_link_libraries(qilin_kit_main PRIVATE qilin_app qilin_core qilin_video qilin_audio qilin_gfx qilin_board SDL3::SDL3 qilin_warnings)
+    set(kit_libraries qilin_app qilin_core qilin_video qilin_audio qilin_gfx qilin_imgui qilin_volk qilin_board qilin_tms5220 qilin_ymfm SDL3-static)
+    set(kit_archive "${CMAKE_BINARY_DIR}/libapb_kit.a")
+    set(mri "CREATE ${kit_archive}\n")
+    foreach(library IN LISTS kit_libraries)
+        string(APPEND mri "ADDLIB $<TARGET_FILE:${library}>\n")
+    endforeach()
+    string(APPEND mri "ADDMOD $<JOIN:$<TARGET_OBJECTS:qilin_kit_main>,\nADDMOD >\nSAVE\nEND\n")
+    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/apb_kit.mri" CONTENT "${mri}")
+    set(kit_depends qilin_kit_main ${kit_libraries})
+    add_custom_command(OUTPUT "${kit_archive}"
+        COMMAND "${CMAKE_COMMAND}" "-DAR=${CMAKE_AR}" "-DMRI=${CMAKE_BINARY_DIR}/apb_kit.mri" "-DOUT=${kit_archive}"
+                -P "${CMAKE_SOURCE_DIR}/tools/player-kit/merge.cmake"
+        DEPENDS ${kit_depends} $<TARGET_OBJECTS:qilin_kit_main> "${CMAKE_BINARY_DIR}/apb_kit.mri"
+        COMMENT "Merging the player kit's libraries" VERBATIM)
+    add_custom_target(qilin_kit ALL DEPENDS "${kit_archive}")
+    # The system libraries SDL3 and the renderer need (MinGW names).
+    set(kit_system_libraries -lm -lkernel32 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -ladvapi32
+        -lsetupapi -lshell32 -ldinput8 -lwinspool -lcomdlg32)
+    string(JOIN " " kit_system_text ${kit_system_libraries})
+    # What the lifted code is compiled and linked with: kit.ninja, included by
+    # the build.ninja the player's script writes ($kit is the kit's folder).
+    file(WRITE "${CMAKE_BINARY_DIR}/kit.ninja"
+        "# Written by CMake for the player kit (QILIN_PLAYER_KIT).\n"
+        "cxxflags = -O3 -DNDEBUG -std=c++23 -w -I$kit/include\n"
+        "ldflags = -static -O3\n"
+        "libs = $kit/lib/libapb_kit.a ${kit_system_text}\n")
+    # Linked with stand-ins for the lifted code: the kit is complete.
+    add_executable(qilin_kit_link_check tools/player-kit/link_check.cpp)
+    target_include_directories(qilin_kit_link_check PRIVATE recomp/runtime recomp/runtime/game third_party/mame-tms5220)
+    target_link_libraries(qilin_kit_link_check PRIVATE "${kit_archive}" ${kit_system_libraries})
+    add_dependencies(qilin_kit_link_check qilin_kit)
+
+    install(TARGETS qilin RUNTIME DESTINATION kit COMPONENT player)
+    install(FILES "${kit_archive}" DESTINATION kit/lib COMPONENT player)
+    install(FILES "${CMAKE_BINARY_DIR}/kit.ninja" DESTINATION kit COMPONENT player)
+    file(GLOB kit_headers recomp/runtime/*.hpp recomp/runtime/game/*.hpp third_party/mame-tms5220/*.h third_party/mame-tms5220/*.hxx)
+    install(FILES ${kit_headers} DESTINATION kit/include COMPONENT player)
+endif()
+
 if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     add_library(qilin_game STATIC recomp/runtime/game/game.cpp ${QILIN_GEN_SOURCES} ${QILIN_SOUND_GEN_SOURCES})
     target_include_directories(qilin_game PUBLIC recomp/runtime/game "${QILIN_GEN_DIR}" "${QILIN_SOUND_GEN_DIR}")

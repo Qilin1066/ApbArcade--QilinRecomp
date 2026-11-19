@@ -90,7 +90,9 @@ build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--on
 
 ### Playing it
 
-**On Windows, double-click.** With Visual Studio 2022 (17.10 or newer, the free Community edition, with "Desktop development with C++") and Git installed, in the project's folder:
+**On Windows, the download (nothing to install).** Each release has `APB-QilinComp-<version>-windows-x64.zip` (about 80 MB; GitHub builds it, `.github/workflows/player-kit.yml`). Unpack it and double-click **`Play APB.bat`**: the first time it asks for your ROM folder and builds the game from it, a couple of minutes, with the compiler inside the download (LLVM-MinGW: Clang, free and open source); after that it starts the game at once. The download has everything but the game's own code, prebuilt: the recompiler, the runtime, SDL3, the menu. The code made from the ROMs is made on the player's PC, from their own copy, and never distributed. See `tools/player-kit/` (`package.sh` builds the download on Linux; `play.ps1` is what Play runs).
+
+**On Windows, from the source, double-click.** With Visual Studio 2022 (17.10 or newer, the free Community edition, with "Desktop development with C++") and Git installed, in the project's folder:
 
 - **`Play APB.bat`** starts the game. The first time it builds it (15 to 40 minutes), asking for your ROM folder with a folder picker.
 - **`Update APB.bat`** gets the latest code, rebuilds only what changed, and starts the game.

@@ -3,6 +3,7 @@
 #include "system2.hpp"
 #include "vrange.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <charconv>
