@@ -13,6 +13,9 @@ namespace qilin::app {
 
 namespace {
 
+// The window's format, which ImGui's pipeline info points at for as long as it lives.
+VkFormat window_format = VK_FORMAT_UNDEFINED;
+
 void check_vk(VkResult r) {
     if (r != VK_SUCCESS) std::fprintf(stderr, "apb: Vulkan error %d in the menu\n", static_cast<int>(r));
 }
@@ -38,8 +41,9 @@ Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::strin
     ImGui::GetStyle().ScaleAllSizes(1.25f);
     ImGui::GetStyle().FontScaleMain = 1.25f;
     if (!ImGui_ImplSDL3_InitForVulkan(window_)) return;
+    sdl_backend_ = true;
 
-    format_ = o.format;
+    window_format = static_cast<VkFormat>(o.format);
     ImGui_ImplVulkan_InitInfo info{};
     info.ApiVersion = VK_API_VERSION_1_3;
     info.Instance = static_cast<VkInstance>(o.instance);
@@ -54,19 +58,19 @@ Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::strin
     info.PipelineInfoMain.PipelineRenderingCreateInfo = VkPipelineRenderingCreateInfo{};
     info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = reinterpret_cast<const VkFormat*>(&format_);
+    info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &window_format;
     info.CheckVkResultFn = check_vk;
     if (!ImGui_ImplVulkan_Init(&info)) return;
     ok_ = true;
     hint_until_ = SDL_GetTicks() + 8000;
+    // Steering by mouse or spinner: it's captured while playing.
+    SDL_SetWindowRelativeMouseMode(window_, input_.settings.steering == Steering::mouse);
 }
 
 Menu::~Menu() {
     renderer_.set_overlay({});
-    if (ok_) {
-        ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplSDL3_Shutdown();
-    }
+    if (ok_) ImGui_ImplVulkan_Shutdown();
+    if (sdl_backend_) ImGui_ImplSDL3_Shutdown();
     if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
 }
 
@@ -76,6 +80,7 @@ void Menu::set_open(bool open) {
     input_.playing = !open;
     input_.stop_listening();
     listening_button_ = -1;
+    finding_wheel_ = false;
     measuring_ = false;
     SDL_SetWindowRelativeMouseMode(window_, !open && input_.settings.steering == Steering::mouse);
     if (!open) save();   // closing the menu keeps what was set
@@ -97,6 +102,7 @@ void Menu::handle(const SDL_Event& e) {
             if (open_ && (input_.listening() != Input::Listen::none || measuring_)) {
                 input_.stop_listening();
                 listening_button_ = -1;
+                finding_wheel_ = false;
                 measuring_ = false;
             } else {
                 toggle();
@@ -104,13 +110,9 @@ void Menu::handle(const SDL_Event& e) {
         }
         break;
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-    case SDL_EVENT_GAMEPAD_BUTTON_UP: {
-        const bool down = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
-        if (e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) pad_back_ = down;
-        if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START) pad_start_ = down;
-        if (down && (e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE || (pad_back_ && pad_start_))) toggle();
+        // Start (the game has no use for it) or Guide; not Back, the gamepad's coin.
+        if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START || e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) toggle();
         break;
-    }
     default: break;
     }
 }
@@ -139,7 +141,7 @@ void Menu::frame() {
         ImGui::SetNextWindowBgAlpha(0.6f);
         ImGui::Begin("hint", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                           ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        ImGui::TextUnformatted("F1 or Esc (or Back + Start): settings");
+        ImGui::TextUnformatted("F1 or Esc (gamepad: Start): settings");
         ImGui::End();
     } else {
         ImGui::SetNextWindowPos(view->WorkPos);
@@ -206,6 +208,8 @@ void Menu::steering_section() {
         if (input_.listening() == Input::Listen::wheel) {
             ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Turn the wheel...");
         } else if (ImGui::Button("Find it")) {
+            listening_button_ = -1;
+            finding_wheel_ = true;
             input_.listen(Input::Listen::wheel);
         }
         if (!s.wheel_axis.empty()) {
@@ -245,7 +249,8 @@ void Menu::steering_section() {
         changed |= ImGui::SliderFloat("Sensitivity (dial counts per turn)", &counts, 32, 512, "%.0f");
         bool edge = s.wheel.edge < 1.0;
         changed |= ImGui::Checkbox("Keep turning while the wheel is held at its lock (for wheels that stop)", &edge);
-        float edge_start = static_cast<float>(edge ? s.wheel.edge : 0.92);
+        // (Unticked, the edge is 1; ticking it again starts from the default.)
+        float edge_start = static_cast<float>(s.wheel.edge < 1.0 ? s.wheel.edge : controls::WheelSettings{}.edge);
         float edge_rate = static_cast<float>(s.wheel.edge_rate);
         if (edge) {
             changed |= ImGui::SliderFloat("Starts this far to the lock", &edge_start, 0.6f, 0.99f, "%.2f");
@@ -272,16 +277,13 @@ void Menu::steering_section() {
         input_.configure();
     }
 
-    // What listening for the wheel found.
-    if (input_.listening() == Input::Listen::none) {
-        if (auto heard = input_.heard()) {
-            if (heard->kind == Binding::Kind::axis) {
-                if (listening_button_ < 0) {
-                    s.wheel_axis = *heard;
-                    s.wheel_axis.value = 0;
-                    input_.configure();
-                }
-            }
+    // What listening for the wheel found (only when it was the wheel being looked for).
+    if (finding_wheel_ && input_.listening() == Input::Listen::none) {
+        finding_wheel_ = false;
+        if (auto heard = input_.heard(); heard && heard->kind == Binding::Kind::axis) {
+            s.wheel_axis = *heard;
+            s.wheel_axis.value = 0;
+            input_.configure();
         }
     }
 }
@@ -305,7 +307,11 @@ void Menu::pedal_section() {
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) input_.stop_listening();
     } else {
-        if (ImGui::Button("Set up a pedal")) input_.listen(Input::Listen::pedal);
+        if (ImGui::Button("Set up a pedal")) {
+            listening_button_ = -1;
+            finding_wheel_ = false;
+            input_.listen(Input::Listen::pedal);
+        }
         if (!s.pedal_axis.empty()) {
             ImGui::SameLine();
             if (ImGui::Button("Remove it")) s.pedal_axis = {};
@@ -341,6 +347,7 @@ void Menu::buttons_section() {
             ImGui::TableNextColumn();
             if (ImGui::SmallButton("Set")) {
                 listening_button_ = i;
+                finding_wheel_ = false;
                 input_.listen(Input::Listen::button);
             }
             ImGui::SameLine();

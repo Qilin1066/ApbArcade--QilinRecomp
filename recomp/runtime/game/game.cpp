@@ -126,8 +126,14 @@ void Scheduler::main_wait() {
         m_.run_events(m_.main_time);
         if (m_.take_watchdog_expiry()) throw Stop{Stop::watchdog, "the watchdog ran out in WAIT"};
         if (m_.frames() >= stop_frames_) throw Stop{Stop::frames, {}};
+        if (m_.frames() != frames_seen_) {
+            frames_seen_ = m_.frames();
+            if (on_frame) on_frame(frames_seen_);
+        }
         next_main_slice();
-        if (take_main_interrupt(true)) return;
+        // Any interrupt ends the WAIT, whether its handler came back here or
+        // switched to another task (the lifted WAIT then leaves for the dispatcher).
+        if (take_main_interrupt(true) || main_interrupt_taken_) return;
     }
 }
 
@@ -138,6 +144,7 @@ bool Scheduler::main_interrupt_due() const {
 }
 
 bool Scheduler::take_main_interrupt(bool at_slice_start) {
+    main_interrupt_taken_ = false;
     const auto& irq = irq_table[m_.main_cp_lines() & 15];
     if (irq.priority <= (main.cpu.psw & 0340)) return false;
     const std::uint16_t resume = main.cpu.r[7];
@@ -163,6 +170,8 @@ bool Scheduler::take_main_interrupt(bool at_slice_start) {
     }
     if (!rt::dispatch(main)) unlifted_main();
     // Back from the handler: check again only if it came back here.
+    // (Set after the handler: interrupts it took nested reset the flag.)
+    main_interrupt_taken_ = true;
     return main.cpu.r[7] == resume;
 }
 
@@ -198,7 +207,8 @@ void Scheduler::run_sound() {
     if (sound_held_) {
         // Out of reset: MAME's reset sequence, 8 cycles, ending with the first opcode fetch.
         sound_held_ = false;
-        nmi_pending_ = false;                        // MAME's reset clears a pending NMI
+        nmi_pending_ = false;                        // MAME's reset clears a pending NMI...
+        decision_ = Decision::none;                  // ...and any interrupt it was about to take
         nmi_edges_seen_ = m_.sound_nmi_edges();
         ++counters.sound_resets;
         auto& c = sound.cpu;

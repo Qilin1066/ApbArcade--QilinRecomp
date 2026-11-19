@@ -15,20 +15,21 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | T-11 decoder (full instruction set, cycle counts, MAME-format disassembly) | ✅ agrees with MAME on all 65,536 opcode words: text, length, cycles and traps |
 | Board models: memory map, ROM banks, Slapstic 110, palette, interrupt latches, watchdog, sound latches | ✅ each checked against MAME's definitions |
 | Renderer: Vulkan 1.3 (shared with GBTGhoulies-Qilincomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
-| Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 24,063 instructions in 659 functions reached from reset, across the fixed ROM and all 12 code banks; 53% of the fixed ROM and 62% of the code banks proven code |
-| Lifter (`qilin lift`): one C++ function per guest function, registers and flags in locals, MAME's bus order and cycle counts, native calls with checked returns | ✅ all 659 functions, 25,554 instructions |
-| Differential test against MAME's T-11 core: registers, flags, cycles and every bus access in order | ✅ game functions: 32,698 trials, 0 mismatches; every instruction form (in CI): 145,606 trials, 0 mismatches |
+| Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 27,939 instructions in 814 functions (with the 16 seeds), across the fixed ROM and all 12 code banks: 78% of the fixed ROM and 66% of the code banks are code |
+| Lifter (`qilin lift`): one C++ function per guest function, registers and flags in locals, MAME's bus order and cycle counts, native calls with checked returns | ✅ all 814 functions (30,542 instructions, shared code counted per function) |
+| Differential test against MAME's T-11 core: registers, flags, cycles and every bus access in order | ✅ game functions: 6,512 trials, 5,060 matching runs, 0 mismatches; every instruction form (in CI): 148,992 trials, 146,125 matching runs, 0 mismatches |
 | Sound CPU: MAME's 6502 as the reference, a 6502 decoder | ✅ agrees with MAME on all 256 opcodes: text, length, cycles, page penalties, flow |
-| Sound program control flow (`qilin cfg --cpu sound`): exact RTS jump tables, infeasible branches pruned | ✅ 4,618 instructions in 66 functions from the three vectors; every table exact, nothing undocumented |
-| Sound lifter (`qilin lift --cpu sound`): MAME's microcode as the instruction bodies; yields and resumes mid-function | ✅ all 66 functions; difftest 3,312 trials, 0 mismatches; every instruction form (in CI): 23,520 trials, 0 mismatches |
+| Sound program control flow (`qilin cfg --cpu sound`): exact RTS jump tables, infeasible branches pruned | ✅ 4,742 instructions in 73 functions (the three vectors, then code nothing else reaches); every table exact |
+| Sound lifter (`qilin lift --cpu sound`): MAME's microcode as the instruction bodies; yields and resumes mid-function | ✅ all 73 functions; difftest 4,672 trials, 3,589 matching runs, 0 mismatches; every instruction form (in CI): 23,712 trials, 0 mismatches |
 | ROM coverage (`qilin coverage`): every byte code, table, data, fill or unknown | ✅ with the reference runs' 16 seeds: T-11 code areas and 6502 ROM 100% explained, no unknown byte; every executed location lifted |
-| The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode and a credited game, 20,000 frames each, about 60× real time, no unlifted code |
+| The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode, a credited game, 16 random games of 60,000 frames and 16 self-test sessions, no unlifted code; a credited game at about 34× real time on a desktop core |
 | Video: the CPU reference renderer (playfield, motion objects, alphanumerics, MAME's priority rule and partial updates) | ✅ boot screens, high scores and gameplay render; `--frame-out FRAME:FILE` saves a frame as a PNG |
 | Video through Vulkan: CPU frames uploaded and shown in a window, scaled by whole numbers | ✅ tested on Mesa's software driver with validation, under a virtual X server |
-| The `apb` executable: window and input on SDL3, the EEPROM saved | ✅ built against SDL3 3.4.20 (fetched) and run on Linux in a virtual X display through Mesa's software Vulkan: attract mode in the window, the EEPROM saved; not yet played with real controls |
+| The `apb` executable: window and input on SDL3, the EEPROM saved | ✅ built against SDL3 3.4.20 (fetched) and run on Linux in a virtual X display through Mesa's software Vulkan: attract mode, the settings menu (F1), the EEPROM and settings saved; not yet played with real controls |
 | Native and MAME's cores agree frame for frame (`--frame-hashes`) | ✅ attract mode, a credited game, self-test, eight random games of 60,000 frames: every frame identical |
 | Sound: the YM2151 (ymfm, as MAME), both POKEYs (a port of MAME's), MAME's mixer; `qilin_run --wav`, and SDL3 audio in `apb` | ✅ music on coin-up and in the game |
 | Speech: the TMS5220C (MAME's, adapted) on the board, its READY line read by the 6502 | ✅ in a credited game the chip speaks (about 5 s in 66 s of play); not yet listened to |
+| Controls: any wheel (direct-drive or with a lock), pedals, gamepads, mice and spinners; a settings menu (Dear ImGui) | ✅ tested on SDL's virtual wheel and pedals (`qilin_input_tests`, in CI); not yet tried on real ones |
 
 ## Versions and changes
 
@@ -111,7 +112,7 @@ build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N] [--mute]
 | Button 1 / 2 / 3 (MAME's numbering) | Left Ctrl or Z / Left Alt or X / Space or C | A / B / X |
 | Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
 | Self-test switch | F2 (toggles) | |
-| Settings menu (pauses the game) | F1 or Escape | Back + Start, or Guide |
+| Settings menu (pauses the game) | F1 or Escape | Start or Guide |
 
 **Wheels, pedals, spinners.** The settings menu sets them up; nothing is needed for the keyboard or a gamepad. APB's cabinet wheel spins freely and the game counts how far it turns, so a PC wheel drives it by how far its angle moves each frame:
 

@@ -1,6 +1,6 @@
 #pragma once
-// The recomp's own settings menu, over the game (F1, Escape, or Back and
-// Start together on a gamepad): the controls now, the graphics options later.
+// The recomp's own settings menu, over the game (F1 or Escape, or a
+// gamepad's Start or Guide): the controls now, the graphics options later.
 // Dear ImGui (third_party/imgui, MIT) drawn by its Vulkan backend in the
 // renderer's overlay pass, with its SDL3 backend for mouse, keys and pads.
 // While it's open the game is paused.
@@ -47,12 +47,12 @@ private:
     Input& input_;
     std::string path_;
     bool ok_ = false, open_ = false, quit_ = false, drawing_ = false;
-    std::uint32_t format_ = 0;              // the window's VkFormat, kept for ImGui's pipeline
     std::uint64_t hint_until_ = 0;          // SDL ticks (ms): the "F1: settings" hint shows until then
     int listening_button_ = -1;             // which cabinet button is waiting for a press
+    bool finding_wheel_ = false;            // or the wheel is being looked for
     bool measuring_ = false;                // measuring the wheel's rotation...
     double measure_from_ = 0;               // ...from this reading
-    bool pad_back_ = false, pad_start_ = false;
+    bool sdl_backend_ = false;              // ImGui's SDL3 backend is up (shut down even if Vulkan's never was)
 };
 
 } // namespace qilin::app

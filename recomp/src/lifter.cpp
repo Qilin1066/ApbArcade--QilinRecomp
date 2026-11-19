@@ -112,7 +112,7 @@ private:
     void transfer(Loc target);                 // goto within the function, or leave
     void leave(const std::string& pc);          // write state back and return, PC = pc
     void call(const std::string& target, std::optional<Loc> static_target, std::uint16_t return_pc);
-    void service_point(std::uint16_t resume_pc, bool when_due = false);
+    void service_point(std::uint16_t resume_pc);
     void table_switch(const cfg::Node& node, const std::string& pc);   // goto a table's targets, else fall through
 
     const cfg::Program& program_;
@@ -257,12 +257,11 @@ void FunctionWriter::leave(const std::string& pc) {
     line(std::format("QL_SYNC(); c.r[7] = {}; return;", pc));
 }
 
-// when_due: also when an interrupt would be taken now (after MTPS, where
-// MAME checks the lines at once, not at the end of the timeslice).
-void FunctionWriter::service_point(std::uint16_t resume_pc, bool when_due) {
+// The board's turn when the slice is used up, resuming at resume_pc.
+void FunctionWriter::service_point(std::uint16_t resume_pc) {
     const auto index = resumes_.size();
     resumes_.emplace_back(resume_pc, at_);
-    line(std::format("if (ic <= 0{}) [[unlikely]] {{ resume = {}; goto service; }}", when_due ? " || b.interrupt_due()" : "", index));
+    line(std::format("if (ic <= 0) [[unlikely]] {{ resume = {}; goto service; }}", index));
     body_ += std::format("S{}:\n", index);
     straight_cycles_ = 0;
 }

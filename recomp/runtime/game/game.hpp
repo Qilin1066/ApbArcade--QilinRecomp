@@ -87,6 +87,7 @@ private:
     Decision decision_ = Decision::none;  // a 6502 interrupt decision to make (see sound_interrupt_window)
     std::int64_t decide_after_ = 0;       // 'next': once the sound clock has passed this
     bool sampled_nmi_ = false, sampled_irq_ok_ = false;   // 'now': what it goes by
+    bool main_interrupt_taken_ = false;   // the last take_main_interrupt took one (wherever its handler went)
     std::uint64_t stop_frames_ = 0;
     std::uint64_t frames_seen_ = 0;
 };

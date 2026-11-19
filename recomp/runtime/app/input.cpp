@@ -301,7 +301,9 @@ void Input::handle(const SDL_Event& e) {
         if (playing) mouse_dx_ += e.motion.xrel;
         break;
     case SDL_EVENT_KEY_DOWN:
-        if (listen_ == Listen::button && !e.key.repeat && e.key.scancode != SDL_SCANCODE_ESCAPE && e.key.scancode != SDL_SCANCODE_F1) {
+        // Escape, F1 and F2 are the menu's and the test switch's, never a cabinet button.
+        if (listen_ == Listen::button && !e.key.repeat && e.key.scancode != SDL_SCANCODE_ESCAPE && e.key.scancode != SDL_SCANCODE_F1 &&
+            e.key.scancode != SDL_SCANCODE_F2) {
             heard_ = Binding{Binding::Kind::key, {}, {}, static_cast<int>(e.key.scancode), 0};
             listen_ = Listen::none;
         }
@@ -391,8 +393,17 @@ void Input::apply(sys2::Inputs& in) {
     }
 
     const bool* key = SDL_GetKeyboardState(nullptr);
+    // The gamepad defaults (stick, trigger, A/B/X, Back) come from gamepads
+    // that aren't bound as the wheel or the pedal: SDL knows some wheels as
+    // gamepads (their wheel as the left stick, their pedals as triggers), and
+    // that would steer twice.
+    auto defaults_from = [&](const Device& d) {
+        if (!d.gamepad) return false;
+        if (settings.steering == Steering::wheel && settings.wheel_axis.device == d.guid) return false;
+        return settings.pedal_axis.device != d.guid;
+    };
     auto pad = [&](SDL_GamepadButton b) {
-        return std::ranges::any_of(devices_, [&](const Device& d) { return d.gamepad && SDL_GetGamepadButton(d.gamepad, b); });
+        return std::ranges::any_of(devices_, [&](const Device& d) { return defaults_from(d) && SDL_GetGamepadButton(d.gamepad, b); });
     };
     auto bound = [&](Button b) { return playing && settings.buttons[static_cast<int>(b)].kind != Binding::Kind::none &&
                                         read(settings.buttons[static_cast<int>(b)]) > 0.5; };
@@ -424,7 +435,7 @@ void Input::apply(sys2::Inputs& in) {
     }
     int target = key[SDL_SCANCODE_UP] ? 0x3f : 0;
     for (const auto& d : devices_)
-        if (d.gamepad) target = std::max(target, SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 0x3f / 32767);
+        if (defaults_from(d)) target = std::max(target, SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 0x3f / 32767);
     pedal_ = target > pedal_ ? std::min(target, pedal_ + 8) : std::max(target, pedal_ - 8);
     travel = std::max(travel, pedal_ / 63.0);
     if (!live) travel = 0;
@@ -434,13 +445,14 @@ void Input::apply(sys2::Inputs& in) {
     // The steering wheel: a free-spinning dial on LETA0, counts a frame.
     double rate = (key[SDL_SCANCODE_RIGHT] ? 0.5 : 0) - (key[SDL_SCANCODE_LEFT] ? 0.5 : 0);
     for (const auto& d : devices_)
-        if (d.gamepad) {
+        if (defaults_from(d)) {
             const double x = SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0;
             if (std::abs(x) > std::abs(rate)) rate = x;
         }
     int counts = stick_.update(rate);
     if (settings.steering == Steering::wheel && !settings.wheel_axis.empty()) {
         if (const Device* d = find(settings.wheel_axis.device)) counts += wheel_.update(axis_of(d->joystick, settings.wheel_axis.index));
+        else wheel_.reset();   // unplugged: when it's back, its first reading only says where it is
     }
     if (settings.steering == Steering::mouse) {
         mouse_carry_ += mouse_dx_ * settings.mouse_counts;

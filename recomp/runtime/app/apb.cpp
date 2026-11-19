@@ -12,7 +12,7 @@
 //   5, 6               coin slots 1 and 2      (Back)
 //   9                  service coin
 //   F2                 the self-test switch (on/off)
-//   F1 or Escape       the settings menu       (Back and Start together, or Guide)
+//   F1 or Escape       the settings menu       (Start or Guide)
 // The menu sets up wheels (any: a direct-drive wheel that spins freely, as
 // the cabinet's did, or one that stops at a lock), pedals and extra button
 // bindings; they're kept in apb.ini next to the EEPROM.
