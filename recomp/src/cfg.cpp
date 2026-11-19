@@ -145,6 +145,22 @@ Program Program::analyze(const rom::RomSet& rom, const std::vector<Loc>& seeds) 
             if (guessed && denied.insert(owner).second) cut = true;
         }
         for (const auto& [instruction, inside] : p.overlaps_) {
+            // A guessed entry (a pointer, a data word, a gap) that turns out
+            // to lie inside an instruction the code's own flow reaches is the
+            // misreading: the guess is dropped. Guesses are taken before
+            // every table is sized, so flow can arrive later (APB: data words
+            // D152 and D182, inside the MOVs at D150 and D180 that the table
+            // at D146 leads to). A table's own target isn't dropped this way.
+            const bool guess = p.pointer_entries_.contains(inside) || p.data_pointer_entries_.contains(inside) || p.gap_entries_.contains(inside);
+            const auto targeted = [&](Loc at) {
+                for (const auto& [loc, table] : p.tables_)
+                    if (loc.bank == at.bank && std::find(table.targets.begin(), table.targets.end(), at.pc) != table.targets.end()) return true;
+                return false;
+            };
+            if (guess && !targeted(inside)) {
+                if (denied.insert(inside).second) cut = true;
+                continue;
+            }
             for (const auto& [loc, table] : p.tables_) {
                 if (!table.heuristic) {
                     continue;
@@ -985,19 +1001,57 @@ bool Program::explores_cleanly(Loc entry, Banks banks, bool continuation, bool h
 // nothing found a way into (unused, or reached in ways no analysis or run
 // has seen) is then there if control ever arrives at its start; data that
 // passes only adds lifted code nobody runs.
+// Data decodes as short "routines" all the time (a table of powers of two is
+// RTS R0, BR, BNE, ...), so a word inside a gap is taken as a routine's start
+// only if it reads like one laid down beside code: straight on from it, at
+// least two instructions (or a lone JMP @#f, a stub) that run into known code
+// or end exactly where known code, or another such routine, begins (routines
+// and stubs nothing reaches come in rows), with no RTS through a register
+// other than PC, no PC as a plain source (a table of pointers into D000-DFFF
+// reads as MOVB PC,...) and nothing the T-11 traps on.
+bool Program::abuts_code(Loc entry, int depth) const {
+    Loc at = entry;
+    for (int count = 0; count < 64; ++count) {
+        if (count > 0 && nodes_.contains(at)) return count >= 2;   // runs into known code
+        const auto w0 = word(at, 0);
+        if (!w0 || operand_words_.contains(at)) return false;
+        const auto insn = t11::decode(*w0, word(at, 2).value_or(0), word(at, 4).value_or(0));
+        if (!insn.legal || insn.op == Op::halt || insn.op == Op::wait || insn.op == Op::reset || insn.op == Op::rti ||
+            insn.op == Op::rtt || insn.op == Op::bpt || insn.op == Op::iot || insn.op == Op::emt || insn.op == Op::trap)
+            return false;
+        if (insn.op == Op::rts && insn.reg != 7) return false;
+        if (insn.operands >= 2 && insn.src.mode == 0 && insn.src.reg == 7) return false;
+        if (count == 0 && is_branch(insn.op)) return false;
+        const Loc next{insn.next(at.pc), at.bank};
+        const bool stub = count == 0 && insn.op == Op::jmp && insn.dst.mode == 3 && insn.dst.reg == 7;   // JMP @#f
+        if (insn.op == Op::rts || insn.op == Op::jmp || insn.op == Op::br)
+            return (count >= 1 || stub) && (nodes_.contains(next) || (depth < 16 && abuts_code(next, depth + 1)));
+        at = next;
+    }
+    return false;
+}
+
 bool Program::seed_gaps() {
     std::set<std::uint32_t> taken = table_words();
     for (const auto& [loc, node] : nodes_) {
         const unsigned n = node.insn.legal ? node.insn.words : 1u;
         for (unsigned i = 0; i < n; ++i) taken.insert(Loc{static_cast<std::uint16_t>(loc.pc + 2 * i), loc.bank}.physical());
     }
-    std::vector<std::pair<Loc, int>> starts;
+    struct Start {
+        Loc entry;
+        int window;
+        bool inside;   // not the gap's first word
+    };
+    std::vector<Start> starts;
     const auto scan = [&](std::uint32_t physical, std::uint32_t size, std::uint16_t cpu_base, int window, std::uint8_t bank) {
+        // A gap's first word, and every later word of it too, lowest first:
+        // a routine nothing reaches can follow data in the same gap (APB's
+        // at 9398, after a table). Those must also pass abuts_code.
         bool previous_taken = true;
         for (std::uint32_t offset = 0; offset < size; offset += 2) {
             const bool now_taken = taken.contains(physical + offset);
-            if (!now_taken && previous_taken && rom_->word(rom::Region::main_cpu, physical + offset)) {
-                starts.emplace_back(Loc{static_cast<std::uint16_t>(cpu_base + offset), bank}, window);
+            if (!now_taken && rom_->word(rom::Region::main_cpu, physical + offset)) {
+                starts.push_back({Loc{static_cast<std::uint16_t>(cpu_base + offset), bank}, window, !previous_taken});
             }
             previous_taken = now_taken;
         }
@@ -1008,10 +1062,12 @@ bool Program::seed_gaps() {
              static_cast<std::uint8_t>(bank));
     }
     bool grew = false;
-    for (const auto& [entry, window] : starts) {
+    for (const auto& [entry, window, inside] : starts) {
         if (nodes_.contains(entry) || operand_words_.contains(entry) || rejected_gaps_.contains(entry) || denied_.contains(entry)) continue;
         Banks banks;
         if (window >= 0) banks.b[window] = entry.bank;
+        // Not remembered as rejected: the code it must end against may be found later.
+        if (inside && !abuts_code(entry)) continue;
         if (!plausible_code(entry, true) || !explores_cleanly(entry, banks)) {
             rejected_gaps_.insert(entry);
             continue;

@@ -151,6 +151,8 @@ private:
     bool seed_bank_tables();
     bool seed_data_pointers();
     bool seed_gaps();
+    // A word inside a gap as a routine's start: see seed_gaps.
+    [[nodiscard]] bool abuts_code(Loc entry, int depth = 0) const;
     [[nodiscard]] bool explores_cleanly(Loc entry, Banks banks, bool continuation = false, bool handler = false) const;
     void find_bank_windows();
 

@@ -484,6 +484,27 @@ void test_cfg_table_over_guess() {
     CHECK(!program.functions().contains(cfg::Loc{0x8204, 0}) && program.denied_entries().contains(cfg::Loc{0x8204, 0}));
 }
 
+// Code nothing reaches, after data in the same gap: a routine that ends
+// exactly where known code begins is found (APB's at 9398), and tables of
+// powers of two beside code, which decode as RTS R0, BR, BNE..., are not.
+void test_cfg_routine_inside_gap() {
+    namespace cfg = qilin::cfg;
+    Image image;
+    image.put(0x8000, {004737, 0x8026, 004737, 0x8034, 000777});   // JSR PC,@#8026; JSR PC,@#8034; BR .
+    image.put(0x8010, {0x0080, 0x0100, 0x0200, 0x0400});           // a table, then zeros
+    image.put(0x8020, {010100, 006300, 000207});                   // MOV R1,R0; ASL R0; RTS PC: nothing calls it
+    image.put(0x8026, {005200, 000207});                           // INC R0; RTS PC
+    image.put(0x8030, {0x0100, 0x0080});                           // a table right against code
+    image.put(0x8034, {005300, 000207});                           // DEC R0; RTS PC
+    const auto set = image.set();
+    const auto program = cfg::Program::analyze(set);
+    const auto& nodes = program.nodes();
+    CHECK(nodes.contains(cfg::Loc{0x8026, 0}) && nodes.contains(cfg::Loc{0x8034, 0}));
+    CHECK(program.gap_entries().contains(cfg::Loc{0x8020, 0}) && nodes.contains(cfg::Loc{0x8024, 0}));
+    for (const std::uint16_t data : {0x8010, 0x8012, 0x8014, 0x8016, 0x8030, 0x8032}) CHECK(!nodes.contains(cfg::Loc{data, 0}));
+    for (const auto& f : program.findings()) CHECK(f.issue != cfg::Issue::overlap);
+}
+
 // The board model against MAME's atarisy2.cpp: the latches and the lines they
 // drive, the delayed interrupt enable, the 32V and VBLANK interrupts, the
 // sound IRQ (not while the 6502 is held in reset), the watchdog, sound-side
@@ -819,6 +840,7 @@ int main() {
     test_cfg_mask_table_and_window_pointer();
     test_cfg_wrapped_index();
     test_cfg_table_over_guess();
+    test_cfg_routine_inside_gap();
     test_machine();
     test_video();
     test_audio();
