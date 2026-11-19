@@ -11,6 +11,8 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+A soak test after all of the below: 24 random-player games of an hour each (216,000 frames, 24 hours of game time in all) run natively with no stop of any kind (watchdog, unlifted code, crash), and 4 of them identical to MAME's cores on every frame for the whole hour.
+
 ### Added
 - **Speed, on the Display page (with vsync): exact or matched to the display.**
   - *Exact* (the default) keeps the cabinet's 60.1 Hz, and the window now shows the newest finished frame at each refresh (Vulkan's mailbox mode, still tear-free, where the driver offers it).
