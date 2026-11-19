@@ -173,9 +173,9 @@ Program Program::analyze_once(const rom::RomSet& rom, const std::vector<Loc>& se
     p.find_bank_windows();
     for (bool grew = true; grew;) {
         grew = p.resolve_tables();
-        grew = p.seed_pointers() || grew;
         grew = p.seed_prologues() || grew;
         grew = p.seed_bank_tables() || grew;
+        if (!grew) grew = p.seed_pointers();        // once the bank entry tables are known
         if (!grew) grew = p.seed_data_pointers();   // last: only once nothing better is left
         if (!grew) grew = p.seed_gaps();            // and last of all, what nothing reaches
         for (const auto& [vector, handlers] : std::map(p.vectors_)) {
@@ -252,6 +252,24 @@ void Program::run(Work work) {
         Banks out = in;
         // Where control goes to 'target' with the banks 'out': a location, or
         // nothing if the target's window bank isn't known.
+        // The word a deferred operand (@#a, @a(PC)) points through, when
+        // that address is ROM in a bank known here.
+        const auto rom_pointer = [&](const t11::Operand& op, std::uint16_t after,
+                                     const Banks& banks) -> std::optional<std::uint16_t> {
+            std::uint16_t address = 0;
+            if (op.reg == 7 && op.mode == t11::index_deferred) address = static_cast<std::uint16_t>(after + op.word);
+            else return std::nullopt;
+            if (address < 0x4000 || (address & 1)) return std::nullopt;
+            std::uint8_t bank = 0;
+            if (address < 0x8000) {
+                const int w = address >= 0x6000 ? 1 : 0;
+                if (banks.b[w] == Banks::unknown) return std::nullopt;
+                bank = static_cast<std::uint8_t>(banks.b[w]);
+            }
+            const auto value = word(Loc{address, bank}, 0);
+            if (!value || (*value & 1) || *value < 0x4000) return std::nullopt;
+            return value;
+        };
         const auto locate = [&](std::uint16_t target) -> std::optional<Loc> {
             if (target >= 0x8000) {
                 return Loc{target, 0};
@@ -299,10 +317,13 @@ void Program::run(Work work) {
         // handler tables this way); one into the other window can't be placed.
         if (insn.legal && insn.op == Op::mov && !insn.byte && insn.src.immediate() && (insn.src.word & 1) == 0) {
             const Loc pointer{insn.src.word, 0};
+            const bool pushed = insn.dst.mode == t11::autodec && insn.dst.reg == 6;
             if (insn.src.word >= 0x8000) {
                 pointer_immediates_.insert(pointer);
+                if (pushed) pushed_pointers_.insert(pointer);
             } else if (insn.src.word >= 0x4000 && pointer.window() == loc.window()) {
                 pointer_immediates_.insert(Loc{insn.src.word, loc.bank});
+                if (pushed) pushed_pointers_.insert(Loc{insn.src.word, loc.bank});
             } else if (insn.src.word >= 0x4000) {
                 window_pointers_.insert(insn.src.word);
             }
@@ -382,6 +403,17 @@ void Program::run(Work work) {
                         if (call) {
                             functions_.insert(*t);
                         }
+                    }
+                } else if (const auto pointer = rom_pointer(insn.dst, next_pc, out); pointer) {
+                    // Through a pointer in ROM whose bank is known here (APB's
+                    // far calls: select a bank, JMP @x(PC) through its entry
+                    // table). The lifted code reads the pointer at run time; its
+                    // target is an entry like any other.
+                    node.flow = call ? Flow::call_dynamic : Flow::jump_dynamic;
+                    if (const auto t = locate(*pointer); t) {
+                        functions_.insert(*t);
+                        rom_pointer_entries_.insert(*t);
+                        callees.push_back(*t);
                     }
                 } else {
                     node.flow = call ? Flow::call_dynamic : Flow::jump_dynamic;
@@ -470,6 +502,38 @@ bool Program::resolve_tables() {
         }
         const bool add_pc = insn.op == Op::add && insn.dst.mode == 0 && insn.dst.reg == 7;
         const bool jmp_indexed = insn.op == Op::jmp && insn.dst.mode == t11::index_deferred;
+        // ADD #T,X(SP) then ADD @X(SP),PC: the caller passes an index into
+        // the stack slot, the first ADD makes it the address of an offset in
+        // the table T (APB's shift routine, 8402). The table is read up to
+        // its first offset that doesn't land between the dispatch and T, and
+        // the lifted code dispatches on the PC it computes.
+        if (add_pc && insn.src.mode == t11::index_deferred && insn.src.reg == 6 && loc.pc >= 0x8006) {
+            const auto base = nodes_.find(Loc{static_cast<std::uint16_t>(loc.pc - 6), loc.bank});
+            const auto& b = base != nodes_.end() ? base->second.insn : insn;
+            if (base == nodes_.end() || b.op != Op::add || !b.src.immediate() || b.dst.mode != t11::index ||
+                b.dst.reg != 6 || b.dst.word != insn.src.word || b.src.word < 0x8000 || (b.src.word & 1)) {
+                continue;
+            }
+            const auto after = insn.next(loc.pc);
+            Table table{{}, true, {}};
+            for (std::uint16_t slot = b.src.word; slot >= 0x8000 && table.targets.size() < 256; slot += 2) {
+                const auto entry = rom_->word(rom::Region::main_cpu, slot);
+                const auto target = static_cast<std::uint16_t>(after + entry.value_or(1));
+                if (!entry || (target & 1) || target < after || target >= b.src.word ||
+                    operand_words_.contains(Loc{target, 0}) || !(nodes_.contains(Loc{target, 0}) || plausible_code(Loc{target, 0})))
+                    break;
+                table.targets.push_back(target);
+                table.slots.push_back(slot);
+            }
+            if (table.targets.empty()) continue;
+            if (const auto known = tables_.find(loc); known == tables_.end() || known->second != table) {
+                tables_[loc] = table;
+                work.emplace_back(loc, node.banks_in);
+                std::erase_if(findings_, [&](const Finding& f) { return f.at == loc && f.issue == Issue::computed_jump; });
+                reported_.erase({Issue::computed_jump, loc});
+            }
+            continue;
+        }
         const auto& index = add_pc ? insn.src : insn.dst;
         if ((!add_pc && !jmp_indexed) || index.mode != (add_pc ? t11::index : t11::index_deferred) || index.reg > 5) {
             continue;
@@ -612,7 +676,16 @@ bool Program::seed_pointers() {
         if (functions_.contains(entry) || rejected_pointers_.contains(entry)) {
             continue;
         }
-        if (nodes_.contains(entry) || plausible_code(entry, true)) {
+        // A pointer immediate is as often a data address as a code one: it
+        // must decode and explore as cleanly as a code pointer in data. One
+        // to a bank entry table's slot is the address of a function pointer.
+        if (!nodes_.contains(entry) && bank_table_words_.contains(entry.physical())) {
+            rejected_pointers_.insert(entry);
+            continue;
+        }
+        if (nodes_.contains(entry) ||
+            (plausible_code(entry, true) &&
+             explores_cleanly(entry, Banks{}, pushed_pointers_.contains(entry), /*handler=*/true))) {
             functions_.insert(entry);
             pointer_entries_.insert(entry);
             explore(entry, Banks{});
@@ -770,7 +843,18 @@ bool Program::seed_bank_tables() {
 // few instructions rarely survives that. Landing inside another instruction
 // is allowed: real code does it (a skip over an operand), and APB's does it
 // in code only data pointers reach.
-bool Program::explores_cleanly(Loc entry, Banks banks) const {
+bool Program::explores_cleanly(Loc entry, Banks banks, bool continuation, bool handler) const {
+    // A guessed entry whose first instruction branches (on flags nobody set
+    // for it) or jumps away is a data word that decodes as a branch; JMP @#f
+    // into the fixed ROM is the exception, a stub in a table of them (and f
+    // is explored with it, so must itself explore cleanly).
+    if (const auto first = rom_->word(rom::Region::main_cpu, entry.physical())) {
+        const auto operand = rom_->word(rom::Region::main_cpu, entry.physical() + 2).value_or(0);
+        const auto insn = t11::decode(*first, operand, 0);
+        const bool stub = insn.op == Op::jmp && insn.dst.mode == 3 && insn.dst.reg == 7 && operand >= 0x8000 &&
+                          (operand & 1) == 0;
+        if (insn.op == Op::br || is_branch(insn.op) || (insn.op == Op::jmp && !stub)) return false;
+    }
     Program trial = *this;
     const std::size_t before = trial.findings_.size();
     trial.functions_.insert(entry);
@@ -785,11 +869,75 @@ bool Program::explores_cleanly(Loc entry, Banks banks) const {
                                  insn.dst.word >= 0x4000;
         return add_pc || jmp_indexed;
     };
+    // Text: in all the code the game runs, no more than two instructions in a
+    // row have opcode words of two printable ASCII bytes. Four in the new
+    // code of a guessed entry is a string being decoded.
+    {
+        const auto printable = [](std::uint16_t w) {
+            return (w & 0xff) >= 0x20 && (w & 0xff) <= 0x7e && (w >> 8) >= 0x20 && (w >> 8) <= 0x7e;
+        };
+        for (const auto& [loc, node] : trial.nodes_) {
+            if (nodes_.contains(loc)) continue;
+            Loc at = loc;
+            int run = 0;
+            for (auto n = trial.nodes_.find(at); n != trial.nodes_.end() && printable(n->second.insn.opcode) && run < 4;
+                 n = trial.nodes_.find(at)) {
+                ++run;
+                at.pc = n->second.insn.next(at.pc);
+            }
+            if (run >= 4) return false;
+        }
+    }
+    // The stack across the new code: a guessed entry that returns with
+    // something left pushed, or pops below its own return address, is data
+    // that happens to decode (MOV (SP)+ and RTS on words of a table, say).
+    // A continuation (an address pushed for a callee to return to) does pop
+    // what its pusher left beneath it; an interrupt handler (a pointer
+    // immediate may be one) returns with RTI.
+    {
+        std::map<Loc, int> depth{{entry, 0}};
+        std::vector<Loc> todo{entry};
+        while (!todo.empty()) {
+            const Loc at = todo.back();
+            todo.pop_back();
+            const auto n = trial.nodes_.find(at);
+            if (n == trial.nodes_.end() || nodes_.contains(at)) continue;   // joins code already proven
+            const auto& insn = n->second.insn;
+            int d = depth[at];
+            bool known = true;
+            const auto touch = [&](const t11::Operand& op, bool is_dst) {
+                if (op.reg != 6) return;
+                switch (op.mode) {
+                case t11::autoinc: case t11::autoinc_deferred: d -= 2; break;
+                case t11::autodec: case t11::autodec_deferred: d += 2; break;
+                case t11::reg:
+                    if (!is_dst || !writes_destination(insn.op)) break;
+                    if ((insn.op == Op::add || insn.op == Op::sub) && insn.src.immediate())
+                        d += insn.op == Op::sub ? insn.src.word : -static_cast<int>(insn.src.word);
+                    else known = false;
+                    break;
+                default: break;
+                }
+            };
+            if (insn.operands == 2) touch(insn.src, false);
+            if (insn.operands >= 1) touch(insn.dst, true);
+            if (!known) continue;
+            if (d < 0 && !continuation) return false;                // popped its caller's return address
+            const bool returns = n->second.flow == Flow::ret || (handler && n->second.flow == Flow::rti);
+            if (returns && (d > 0 || (d < 0 && !continuation))) return false;   // words left pushed
+            for (const auto& to : n->second.next) {
+                const auto [it, fresh] = depth.emplace(to, d);
+                if (fresh) todo.push_back(to);
+                else if (it->second != d && !nodes_.contains(to)) return false;   // paths disagree
+            }
+        }
+    }
     return std::none_of(trial.findings_.begin() + static_cast<std::ptrdiff_t>(before), trial.findings_.end(),
                         [&](const Finding& f) {
                             switch (f.issue) {
                             case Issue::computed_call: case Issue::unknown_bank: case Issue::byte_bank_write:
-                            case Issue::overlap:
+                                return false;
+                            case Issue::overlap:   // APB's own code does this (DC82)
                                 return false;
                             case Issue::computed_jump:
                                 return !table_form(f);
@@ -798,8 +946,13 @@ bool Program::explores_cleanly(Loc entry, Banks banks) const {
                             }
                         }) &&
            std::all_of(trial.nodes_.begin(), trial.nodes_.end(), [&](const auto& n) {
-               return nodes_.contains(n.first) || (n.second.insn.legal && n.second.flow != Flow::trap &&
-                                                   n.second.flow != Flow::halt && n.second.flow != Flow::rti);
+               if (nodes_.contains(n.first)) return true;
+               const auto& insn = n.second.insn;
+               // JSR or JMP to an autodecremented address is no compiler's or programmer's: data.
+               const bool transfer_autodec = (insn.op == Op::jsr || insn.op == Op::jmp) &&
+                                             (insn.dst.mode == 4 || insn.dst.mode == 5);
+               return insn.legal && !transfer_autodec && n.second.flow != Flow::trap &&
+                      n.second.flow != Flow::halt && (handler || n.second.flow != Flow::rti);
            });
 }
 

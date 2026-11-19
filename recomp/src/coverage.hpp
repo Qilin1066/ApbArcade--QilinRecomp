@@ -5,7 +5,9 @@
 //   code     an opcode or operand word of an instruction the analysis reached
 //   table    an entry of a jump table it sized
 //   data     from a ROM address code refers to (an immediate, an absolute or
-//            relative address, an index base) up to the next code or table
+//            relative address, an index base) up to the next code or table;
+//            every slot an index with a proven range can reach; what data
+//            points to; and what reference runs read as data (--reads)
 //   fill     runs of four or more 0x0000 or 0xFFFF words (T-11), or 0x00 or
 //            0xFF bytes (6502)
 //   data bank  a T-11 bank no code runs in (its contents are read, not run)
@@ -27,6 +29,7 @@ struct Options {
     bool list = false;                 // every unknown stretch, not just the totals
     std::vector<cfg::Loc> seeds;       // the seeds the analysis starts from
     std::string check_seeds;           // a seed file to place against the analysis, or empty
+    std::string reads;                 // ROM locations reference runs read as data (qilin_refrun --reads-out), or empty
 };
 
 // Prints the report; returns 3 if any unknown stretch looks like code, else 0.

@@ -4,7 +4,7 @@
 //
 //   qilin_refrun <rom-dir> [--frames N] [--quantum CYCLES] [--coin FRAME]... [--press MASK:FRAME]...
 //                [--pedal VALUE] [--steer VALUE] [--seeds FILE] [--seeds-out FILE]
-//                [--frame-out FRAME:FILE]... [--monkey SEED] [--test-switch 1] [--executed-out FILE]
+//                [--frame-out FRAME:FILE]... [--monkey SEED] [--test-switch 1] [--executed-out FILE] [--reads-out FILE]
 //
 // --coin closes the left coin switch for 3 frames; --press pulls the IN0
 // bits in MASK (hex, active low: 0080 and 0040 are buttons 1 and 2) low for
@@ -60,11 +60,16 @@ using namespace qilin;
 
 struct MainBus final : t11_device::Bus {
     sys2::Machine& m;
+    bool note_reads = false;
+    std::vector<std::uint32_t> pending;   // ROM words (physical) the current instruction read as data
     explicit MainBus(sys2::Machine& machine) : m(machine) {}
+    void note(std::uint16_t a) {
+        if (note_reads && a >= 0x4000) pending.push_back(sys2::rom_offset(a, m.bank(0), m.bank(1)) / 2);
+    }
     std::uint16_t fetch(std::uint16_t a) override { return m.main_fetch(a); }
-    std::uint16_t read_word(std::uint16_t a) override { return m.main_read16(a); }
+    std::uint16_t read_word(std::uint16_t a) override { note(a); return m.main_read16(a); }
     void write_word(std::uint16_t a, std::uint16_t d) override { m.main_write16(a, d); }
-    std::uint8_t read_byte(std::uint16_t a) override { return m.main_read8(a); }
+    std::uint8_t read_byte(std::uint16_t a) override { note(a); return m.main_read8(a); }
     void write_byte(std::uint16_t a, std::uint8_t d) override { m.main_write8(a, d); }
 };
 
@@ -99,7 +104,7 @@ int main(int argc, char** argv) {
     std::vector<std::uint64_t> coins;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> presses;
     int pedal = -1, steer = 0;
-    std::string seeds_out, log_path, executed_out;
+    std::string seeds_out, log_path, executed_out, reads_out;
     std::vector<cfg::Loc> initial_seeds;
     tools::FrameCapture capture;
     std::optional<tools::Monkey> monkey;
@@ -114,6 +119,7 @@ int main(int argc, char** argv) {
         else if (flag == "--coin") coins.push_back(number);
         else if (flag == "--seeds-out") seeds_out = value;
         else if (flag == "--executed-out") executed_out = value;
+        else if (flag == "--reads-out") reads_out = value;
         else if (flag == "--log") log_path = value;
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
@@ -156,6 +162,9 @@ int main(int argc, char** argv) {
     std::vector<sys2::Machine::LogEntry> log;
     if (!log_path.empty()) m.log = &log;
     MainBus main_bus(m);
+    // Who read each ROM word as data: (word, physical address of the reading instruction).
+    std::set<std::pair<std::uint32_t, std::uint32_t>> data_reads;
+    if (!reads_out.empty()) main_bus.note_reads = true;
     SoundBus sound_bus(m);
     t11_device t11(main_bus, 0x36ff);
     t11.reset();
@@ -229,6 +238,11 @@ int main(int argc, char** argv) {
             }
             const std::uint16_t pc = t11.ppc();
             const std::uint8_t bank = pc >= 0x8000 ? 0 : banks[pc >= 0x6000 ? 1 : 0];
+            if (!main_bus.pending.empty()) {
+                const auto reader = pc >= 0x4000 ? sys2::rom_offset(pc, banks[0], banks[1]) : 0xffffffffu;
+                for (const auto w : main_bus.pending) data_reads.emplace(w, reader);
+                main_bus.pending.clear();
+            }
             // Transfers that aren't to the next instruction (it is at most 6
             // bytes on): computed ones among them must land on lifted entries.
             if (pc >= 0x4000 && last_main_pc >= 0x4000 && (pc <= last_main_pc || pc > last_main_pc + 6)) {
@@ -389,6 +403,25 @@ int main(int argc, char** argv) {
         std::ofstream out(executed_out, std::ios::trunc);
         for (const auto& loc : executed) out << loc.name() << '\n';
         std::print("{} executed T-11 locations in {}.\n", executed.size(), executed_out);
+    }
+    if (!reads_out.empty()) {
+        // ROM locations the T-11 read as data, added to what the file lists: qilin coverage --reads.
+        std::set<cfg::Loc> reads;
+        if (const auto earlier = cfg::read_seeds(reads_out); earlier) reads.insert(earlier->begin(), earlier->end());
+        // A reader that sweeps a whole ROM (the checksums) is no
+        // evidence of what any one of them is: leave its reads out.
+        std::map<std::uint32_t, std::size_t> per_reader;
+        for (const auto& [w, reader] : data_reads) ++per_reader[reader];
+        for (const auto& [w, reader] : data_reads) {
+            if (per_reader[reader] > 8192) continue;
+            if (w * 2 >= 0x8000) reads.insert(loc_of(w * 2));
+        }
+        for (const auto& [reader, n] : per_reader) if (n > 8192) {
+            std::print("Left out the {} words read by the sweep at {}.\n", n, describe_physical(reader));
+        }
+        std::ofstream out(reads_out, std::ios::trunc);
+        for (const auto& loc : reads) out << loc.name() << '\n';
+        std::print("{} ROM words read as data in {}.\n", reads.size(), reads_out);
     }
     if (!seeds_out.empty()) {
         std::ofstream out(seeds_out, std::ios::trunc);

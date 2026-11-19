@@ -21,6 +21,7 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | Sound CPU: MAME's 6502 as the reference, a 6502 decoder | ✅ agrees with MAME on all 256 opcodes: text, length, cycles, page penalties, flow |
 | Sound program control flow (`qilin cfg --cpu sound`): exact RTS jump tables, infeasible branches pruned | ✅ 4,618 instructions in 66 functions from the three vectors; every table exact, nothing undocumented |
 | Sound lifter (`qilin lift --cpu sound`): MAME's microcode as the instruction bodies; yields and resumes mid-function | ✅ all 66 functions; difftest 3,312 trials, 0 mismatches; every instruction form (in CI): 23,520 trials, 0 mismatches |
+| ROM coverage (`qilin coverage`): every byte code, table, data, fill or unknown | ✅ with the reference runs' 16 seeds: T-11 code areas and 6502 ROM 100% explained, no unknown byte; every executed location lifted |
 | The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode and a credited game, 20,000 frames each, about 60× real time, no unlifted code |
 | Video: the CPU reference renderer (playfield, motion objects, alphanumerics, MAME's priority rule and partial updates) | ✅ boot screens, high scores and gameplay render; `--frame-out FRAME:FILE` saves a frame as a PNG |
 | Video through Vulkan: CPU frames uploaded and shown in a window, scaled by whole numbers | ✅ tested on Mesa's software driver with validation, under a virtual X server |
@@ -60,7 +61,7 @@ build/qilin verify "D:/APB Arcade Project"                       # all 36 files,
 build/qilin insns  "D:/APB Arcade Project" --from 8000 --to 8100 # T-11 listing (MAME syntax, cycles)
 build/qilin insns  "D:/APB Arcade Project" --banks 3,12 --from 4000 --to 4100
 build/qilin cfg    "D:/APB Arcade Project" [--all]               # control flow from reset, and all it can't follow yet
-build/qilin coverage "D:/APB Arcade Project" [--seeds S] [--list] [--check-seeds F]   # every ROM byte: code, table, data, fill or unknown
+build/qilin coverage "D:/APB Arcade Project" [--seeds S] [--reads R] [--list] [--check-seeds F]   # every ROM byte: code, table, data, fill or unknown (100% explained with the seeds)
 build/qilin lift   "D:/APB Arcade Project" --out gen             # lift to C++ (gen/ is gitignored: never commit it)
 build/qilin insns  "D:/APB Arcade Project" --cpu sound --from 4000 --to 4100   # 6502 listing
 build/qilin cfg    "D:/APB Arcade Project" --cpu sound [--all]   # the sound program's control flow

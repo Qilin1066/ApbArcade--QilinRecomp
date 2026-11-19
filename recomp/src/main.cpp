@@ -50,9 +50,9 @@ int usage() {
                "usage: qilin --version\n"
                "       qilin verify <rom-dir>\n"
                "       qilin insns <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
-               "       qilin cfg <rom-dir> [--cpu main|sound] [--seeds FILE] [--all]\n"
+               "       qilin cfg <rom-dir> [--cpu main|sound] [--seeds FILE] [--all] [--why FILE]\n"
                "       qilin lift <rom-dir> [--cpu main|sound] [--seeds FILE] --out DIR\n"
-               "       qilin coverage <rom-dir> [--seeds FILE] [--check-seeds FILE] [--list]\n");
+               "       qilin coverage <rom-dir> [--seeds FILE] [--reads FILE] [--check-seeds FILE] [--list]\n");
     return 2;
 }
 
@@ -255,10 +255,17 @@ int cfg_report(const std::vector<std::string_view>& args) {
     bool all = false;
     bool sound = false;
     std::optional<unsigned> at;
-    std::vector<qilin::cfg::Loc> seeds;
+    std::vector<qilin::cfg::Loc> seeds, why;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--all") {
             all = true;
+        } else if (args[i] == "--why" && i + 1 < args.size()) {
+            auto loaded = qilin::cfg::read_seeds(std::string(args[++i]));
+            if (!loaded) {
+                std::print(stderr, "qilin: {}\n", loaded.error());
+                return 1;
+            }
+            why = std::move(*loaded);
         } else if (args[i] == "--seeds" && i + 1 < args.size()) {
             auto loaded = qilin::cfg::read_seeds(std::string(args[++i]));
             if (!loaded) {
@@ -286,6 +293,42 @@ int cfg_report(const std::vector<std::string_view>& args) {
         return sound_cfg_report(*set, all, at);
     }
     const auto program = qilin::cfg::Program::analyze(*set, seeds);
+    if (!why.empty()) {
+        // For each location, the nearest function entries control reaches it from, and how each was found.
+        std::map<qilin::cfg::Loc, std::vector<qilin::cfg::Loc>> into;
+        for (const auto& [loc, node] : program.nodes()) {
+            for (const auto& n : node.next) into[n].push_back(loc);
+            if (node.target) into[*node.target].push_back(loc);
+        }
+        const auto how = [&](const qilin::cfg::Loc& e) {
+            std::string s;
+            if (std::ranges::count(seeds, e)) s += " seed";
+            if (program.prologue_entries().contains(e)) s += " prologue";
+            if (program.bank_table_entries().contains(e)) s += " bank-table";
+            if (program.pointer_entries().contains(e)) s += " pointer-immediate";
+            if (program.data_pointer_entries().contains(e)) s += " data-pointer";
+            if (program.gap_entries().contains(e)) s += " gap";
+            return s.empty() ? std::string(" reached") : s;
+        };
+        for (const auto& w : why) {
+            std::set<qilin::cfg::Loc> seen{w};
+            std::vector<qilin::cfg::Loc> todo{w};
+            std::string found;
+            while (!todo.empty()) {
+                const auto here = todo.back();
+                todo.pop_back();
+                if (program.functions().contains(here)) {
+                    found += std::format(" {}({})", here.name(), how(here).substr(1));
+                    if (how(here) != " reached") continue;
+                }
+                if (const auto it = into.find(here); it != into.end())
+                    for (const auto& from : it->second)
+                        if (seen.insert(from).second) todo.push_back(from);
+            }
+            std::print("{}:{}\n", w.name(), found.empty() ? std::string(" no entry") : found);
+        }
+        return 0;
+    }
     std::size_t fixed = 0, banked = 0, bytes = 0;
     std::set<unsigned> banks;
     for (const auto& [loc, node] : program.nodes()) {
@@ -314,6 +357,18 @@ int cfg_report(const std::vector<std::string_view>& args) {
                "immediates), {} return sites.\n",
                program.functions().size(), program.prologue_entries().size(), program.bank_table_entries().size(),
                program.pointer_entries().size(), program.return_sites().size());
+    const auto list_entries = [](std::string_view what, const auto& entries) {
+        if (entries.empty()) return;
+        std::string names;
+        for (const auto& loc : entries) names += " " + loc.name();
+        std::print("{} {}:{}.\n", entries.size(), what, names);
+    };
+    if (all) {
+        list_entries("entries from register-save prologues", program.prologue_entries());
+        list_entries("entries from pointer immediates", program.pointer_entries());
+    }
+    list_entries("entries from code pointers in ROM data", program.data_pointer_entries());
+    list_entries("entries in ROM nothing else reaches", program.gap_entries());
     std::size_t proven = 0, heuristic = 0;
     for (const auto& [loc, node] : program.nodes()) {
         if (node.flow == qilin::cfg::Flow::table) {
@@ -440,6 +495,8 @@ int coverage_report(const std::vector<std::string_view>& args) {
             options.seeds = std::move(*loaded);
         } else if (args[i] == "--check-seeds" && i + 1 < args.size()) {
             options.check_seeds = args[++i];
+        } else if (args[i] == "--reads" && i + 1 < args.size()) {
+            options.reads = args[++i];
         } else {
             return usage();
         }

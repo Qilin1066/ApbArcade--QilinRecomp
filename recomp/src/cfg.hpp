@@ -121,6 +121,7 @@ public:
     [[nodiscard]] const std::set<Loc>& bank_table_entries() const noexcept { return bank_table_entries_; }
     // Entries found as code pointers in ROM data (records, call tables).
     [[nodiscard]] const std::set<Loc>& data_pointer_entries() const noexcept { return data_pointer_entries_; }
+    [[nodiscard]] const std::set<Loc>& rom_pointer_entries() const noexcept { return rom_pointer_entries_; }
     // Speculative entries: starts of gaps no analysis reached that decode like code.
     [[nodiscard]] const std::set<Loc>& gap_entries() const noexcept { return gap_entries_; }
     // The window each bank runs in, from its absolute references to itself.
@@ -145,7 +146,7 @@ private:
     bool seed_bank_tables();
     bool seed_data_pointers();
     bool seed_gaps();
-    [[nodiscard]] bool explores_cleanly(Loc entry, Banks banks) const;
+    [[nodiscard]] bool explores_cleanly(Loc entry, Banks banks, bool continuation = false, bool handler = false) const;
     void find_bank_windows();
 
     void add(Loc loc, Banks banks, Work& work);
@@ -170,6 +171,8 @@ private:
     std::vector<std::pair<Loc, Loc>> overlaps_; // an instruction, and a location inside it decoded as code
     std::set<Loc> pointer_immediates_;
     std::set<Loc> pointer_entries_;
+    std::set<Loc> pushed_pointers_;
+    std::set<Loc> rom_pointer_entries_;   // targets of JMP/JSR @x(PC) through ROM in a known bank   // pointer immediates pushed with MOV #a,-(SP): maybe continuations
     std::set<Loc> rejected_pointers_;
     std::set<std::uint16_t> window_pointers_;
     std::set<std::uint16_t> save_helpers_;
