@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace qilin::app {
 
@@ -50,6 +51,8 @@ public:
     [[nodiscard]] bool quit_requested() const noexcept { return quit_; }
     // Set by apb when locking to the display didn't hold (shown on the Display page).
     std::string speed_note;
+    // A line shown in the window's corner for a few seconds (a controller coming or going).
+    void notify(std::string text);
 
     // The window to full screen (borderless, on its display) or back.
     void set_fullscreen(bool fullscreen);
@@ -70,6 +73,11 @@ private:
     std::string path_;
     bool ok_ = false, open_ = false, quit_ = false, drawing_ = false;
     std::uint64_t hint_until_ = 0;          // SDL ticks (ms): the "F1: settings" hint shows until then
+    struct Notice {
+        std::string text;
+        std::uint64_t until;                // SDL ticks (ms)
+    };
+    std::vector<Notice> notices_;
     int listening_button_ = -1;             // which cabinet button is waiting for a press
     bool finding_wheel_ = false;            // or the wheel is being looked for
     bool measuring_ = false;                // measuring the wheel's rotation...

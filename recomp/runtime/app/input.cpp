@@ -165,6 +165,7 @@ bool Settings::load(const std::string& path) {
     display.fullscreen = num("fullscreen", 0) != 0;
     display.monitor = std::string(get("monitor"));
     display.gpu = std::string(get("gpu"));
+    rom_dir = std::string(get("rom_dir"));
     return true;
 }
 
@@ -190,6 +191,7 @@ bool Settings::save(const std::string& path) const {
     const char* effect = display.effect == gfx::Effect::pixel_art ? "pixel_art" : display.effect == gfx::Effect::crt ? "crt" : "none";
     out << strf("effect = %s\ncrt_scanlines = %.9g\ncrt_mask = %.9g\n", effect, display.scanlines, display.mask);
     out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';
+    out << "rom_dir = " << rom_dir << '\n';
     return static_cast<bool>(out);
 }
 

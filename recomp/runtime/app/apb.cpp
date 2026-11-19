@@ -1,7 +1,10 @@
 // apb: the game, recompiled. A window (SDL3), the board's frames drawn by the
 // reference renderer and shown through Vulkan, and the cabinet's controls.
 //
-//   apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]
+//   apb [rom-dir] [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]
+//
+// With no rom-dir, the folder used last time (kept in apb.ini); if there's
+// none, or it no longer holds a verified set, apb asks with a folder picker.
 //
 // Controls (keyboard; gamepads, wheels, pedals and mice too):
 //   Left / Right       steering wheel          (left stick; a wheel; a mouse or spinner)
@@ -55,6 +58,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -74,9 +79,9 @@ struct Options {
 };
 
 bool parse(int argc, char** argv, Options& o) {
-    if (argc < 2) return false;
-    o.rom_dir = argv[1];
-    for (int i = 2; i < argc; ++i) {
+    int i = 1;
+    if (argc > 1 && std::string_view(argv[1]).substr(0, 2) != "--") o.rom_dir = argv[i++];   // else the saved folder, or ask
+    for (; i < argc; ++i) {
         const std::string_view flag = argv[i];
         auto number = [&](auto& out) {
             if (i + 1 >= argc) return false;
@@ -100,6 +105,59 @@ bool parse(int argc, char** argv, Options& o) {
     std::exit(1);
 }
 
+// A ROM set's error for a message box: the first lines, and how many more.
+std::string short_error(const std::string& error) {
+    std::string out;
+    std::size_t lines = 0, at = 0;
+    while (at < error.size()) {
+        const std::size_t end = std::min(error.find('\n', at), error.size());
+        if (++lines <= 4) out += (lines > 1 ? "\n" : "") + error.substr(at, end - at);
+        at = end + 1;
+    }
+    if (lines > 4) out += app::strf("\n  (and %zu more)", lines - 4);
+    return out;
+}
+
+// Asks for the ROM folder with the system's folder picker, saying why.
+// Nothing if the player cancels (or no picker can be shown: the error says so).
+std::optional<std::string> pick_rom_folder(const std::string& why, const std::string& start) {
+    SDL_MessageBoxButtonData buttons[2]{};
+    buttons[0] = {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Choose the folder"};
+    buttons[1] = {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Quit"};
+    const std::string text = why + "\n\nAPB needs the rev 7 ROM set (all 36 files, as MAME's apb set). Choose the folder that holds them.";
+    SDL_MessageBoxData box{};
+    box.flags = SDL_MESSAGEBOX_INFORMATION;
+    box.title = "APB: the ROMs";
+    box.message = text.c_str();
+    box.numbuttons = 2;
+    box.buttons = buttons;
+    int chosen = 0;
+    if (!SDL_ShowMessageBox(&box, &chosen) || chosen != 1) return std::nullopt;
+    struct Pick {
+        bool done = false;
+        std::optional<std::string> folder;
+        std::string error;
+    } pick;
+    SDL_ShowOpenFolderDialog(
+        [](void* user, const char* const* list, int) {
+            auto* p = static_cast<Pick*>(user);
+            if (!list) p->error = SDL_GetError();
+            else if (list[0]) p->folder = list[0];
+            p->done = true;
+        },
+        &pick, nullptr, start.empty() ? nullptr : start.c_str(), false);
+    while (!pick.done) {   // the dialog may answer on another thread, or need events pumped
+        SDL_PumpEvents();
+        SDL_Delay(10);
+    }
+    if (!pick.error.empty()) {
+        std::fprintf(stderr, "apb: no folder picker: %s\n", pick.error.c_str());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB", ("No folder picker could be shown (" + pick.error +
+                                 "). Give the ROM folder on the command line: apb <rom-dir>").c_str(), nullptr);
+    }
+    return pick.folder;
+}
+
 // A file in SDL's per-user preferences folder for "Qilin/apb".
 std::string pref_path(const char* file) {
     char* folder = SDL_GetPrefPath("Qilin", "apb");
@@ -114,7 +172,8 @@ std::string pref_path(const char* file) {
 int main(int argc, char** argv) {
     Options options;
     if (!parse(argc, argv, options)) {
-        std::fprintf(stderr, "usage: apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n");
+        std::fprintf(stderr, "usage: apb [rom-dir] [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n"
+                             "  (no rom-dir: the folder used last time, else apb asks for it)\n");
         return 2;
     }
     // Controllers count when the window isn't the active one too: started
@@ -125,13 +184,32 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "apb: SDL: %s\n", SDL_GetError());
         return 1;
     }
-    const auto set = rom::RomSet::load(options.rom_dir);
-    if (!set) fail(set.error());
-
-    // The player's settings: the controls (for the input below) and the display.
+    // The player's settings: the controls (for the input below), the display and the ROM folder.
     const std::string settings_path = pref_path("apb.ini");
     app::Settings saved;
     saved.load(settings_path);
+
+    // The ROMs: the folder given, else the one used last time, else ask (and
+    // ask again while the folder chosen doesn't hold a verified set).
+    std::string rom_dir = options.rom_dir ? options.rom_dir : saved.rom_dir;
+    auto set = rom::RomSet::load(rom_dir.empty() ? std::filesystem::path(".") : std::filesystem::path(rom_dir));
+    if (!set && options.rom_dir) fail(set.error());   // given on the command line: say what's wrong with it
+    std::string why;
+    if (!set) why = rom_dir.empty() ? "Where are your APB ROMs?" : "The ROMs in " + rom_dir + " aren't a complete rev 7 set: " + short_error(set.error());
+    while (!set) {
+        const auto folder = pick_rom_folder(why, rom_dir);
+        if (!folder) {
+            SDL_Quit();
+            return 0;
+        }
+        rom_dir = *folder;
+        set = rom::RomSet::load(rom_dir);
+        if (!set) why = "The ROMs in " + rom_dir + " aren't a complete rev 7 set: " + short_error(set.error());
+    }
+    if (rom_dir != saved.rom_dir) {
+        saved.rom_dir = rom_dir;
+        if (!saved.save(settings_path)) std::fprintf(stderr, "apb: couldn't write the settings to %s\n", settings_path.c_str());
+    }
 
     // The window: the cabinet's monitor turned upright, scaled by a whole
     // number, on the display it was last on; or full screen there.
@@ -217,6 +295,8 @@ int main(int argc, char** argv) {
     auto menu_owner = std::make_unique<app::Menu>(window, *renderer, input, settings_path);
     app::Menu& menu = *menu_owner;
     if (!menu.ok()) fail("the settings menu couldn't start on this window's Vulkan device");
+    for (const auto& d : input.devices()) menu.notify("Controller: " + d.name);
+    if (input.devices().empty()) menu.notify("No controller found yet (the keyboard works)");
 
     game::Scheduler scheduler(machine);
     const double frame_ns = 166400.0 / 10e6 * 1e9;
@@ -232,8 +312,26 @@ int main(int argc, char** argv) {
     auto events = [&] {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            // Controllers coming and going, shown in the window for a few seconds.
+            std::string leaving;
+            if (e.type == SDL_EVENT_JOYSTICK_REMOVED)
+                for (const auto& d : input.devices())
+                    if (d.id == e.jdevice.which) leaving = d.name;
             input.handle(e);
             menu.handle(e);
+            if (!leaving.empty()) menu.notify("Controller disconnected: " + leaving);
+            if (e.type == SDL_EVENT_JOYSTICK_ADDED) {
+                bool opened = false;
+                for (const auto& d : input.devices())
+                    if (d.id == e.jdevice.which) {
+                        menu.notify("Controller connected: " + d.name);
+                        opened = true;
+                    }
+                if (!opened) {
+                    const char* name = SDL_GetJoystickNameForID(e.jdevice.which);
+                    menu.notify(std::string("Controller found but couldn't be opened: ") + (name ? name : "(no name)"));
+                }
+            }
             switch (e.type) {
             case SDL_EVENT_QUIT: quit = true; break;
             case SDL_EVENT_KEY_DOWN:

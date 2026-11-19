@@ -118,7 +118,7 @@ void Menu::save() {
 }
 
 void Menu::handle(const SDL_Event& e) {
-    if (ok_ && (open_ || SDL_GetTicks() < hint_until_)) ImGui_ImplSDL3_ProcessEvent(&e);
+    if (ok_ && (open_ || SDL_GetTicks() < hint_until_ || !notices_.empty())) ImGui_ImplSDL3_ProcessEvent(&e);
     switch (e.type) {
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN: input_.settings.display.fullscreen = true; break;
     case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: input_.settings.display.fullscreen = false; break;
@@ -150,8 +150,15 @@ void Menu::handle(const SDL_Event& e) {
     }
 }
 
+void Menu::notify(std::string text) {
+    notices_.push_back({std::move(text), SDL_GetTicks() + 5000});
+    if (notices_.size() > 4) notices_.erase(notices_.begin());
+}
+
 void Menu::frame() {
-    const bool hint = !open_ && SDL_GetTicks() < hint_until_;
+    const std::uint64_t now = SDL_GetTicks();
+    std::erase_if(notices_, [&](const Notice& n) { return n.until <= now; });
+    const bool hint = !open_ && (now < hint_until_ || !notices_.empty());
     if (!ok_ || (!open_ && !hint)) {
         if (drawing_) {
             renderer_.set_overlay({});
@@ -174,7 +181,8 @@ void Menu::frame() {
         ImGui::SetNextWindowBgAlpha(0.6f);
         ImGui::Begin("hint", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                           ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        ImGui::TextUnformatted("F1 or Esc (gamepad: Start): settings");
+        for (const auto& n : notices_) ImGui::TextUnformatted(n.text.c_str());
+        if (now < hint_until_) ImGui::TextUnformatted("F1 or Esc (gamepad: Start or Menu): settings");
         ImGui::End();
     } else {
         ImGui::SetNextWindowPos(view->WorkPos);
@@ -218,9 +226,11 @@ void Menu::controls_tab() {
     buttons_section();
     ImGui::Separator();
     if (ImGui::Button("Reset all controls to the defaults")) {
-        const DisplaySettings display = input_.settings.display;   // the display isn't a control
+        const DisplaySettings display = input_.settings.display;   // the display and the ROM folder aren't controls
+        const std::string rom_dir = input_.settings.rom_dir;
         input_.settings = Settings{};
         input_.settings.display = display;
+        input_.settings.rom_dir = rom_dir;
         input_.configure();
     }
 }

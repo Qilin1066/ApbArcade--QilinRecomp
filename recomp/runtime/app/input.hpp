@@ -90,6 +90,7 @@ struct Settings {
     double stick_counts = 6;           // dial counts a frame, stick or keys at full
     int friction = 20;                 // force feedback on the bound wheel, percent; 0 off
     DisplaySettings display;
+    std::string rom_dir;               // where the ROMs were last found (apb with no folder given uses it)
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;
