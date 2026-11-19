@@ -15,18 +15,18 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | T-11 decoder (full instruction set, cycle counts, MAME-format disassembly) | ✅ agrees with MAME on all 65,536 opcode words: text, length, cycles and traps |
 | Board models: memory map, ROM banks, Slapstic 110, palette, interrupt latches, watchdog, sound latches | ✅ each checked against MAME's definitions |
 | Renderer: Vulkan 1.3 (shared with GBTGhoulies-Qilincomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
-| Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 27,939 instructions in 814 functions (with the 16 seeds), across the fixed ROM and all 12 code banks: 78% of the fixed ROM and 66% of the code banks are code |
-| Lifter (`qilin lift`): one C++ function per guest function, registers and flags in locals, MAME's bus order and cycle counts, native calls with checked returns | ✅ all 814 functions (30,542 instructions, shared code counted per function) |
-| Differential test against MAME's T-11 core: registers, flags, cycles and every bus access in order | ✅ game functions: 6,512 trials, 5,060 matching runs, 0 mismatches; every instruction form (in CI): 148,992 trials, 146,125 matching runs, 0 mismatches |
+| Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 27,938 instructions in 804 functions, found with no seeds, across the fixed ROM and all 12 code banks: 78% of the fixed ROM and 66% of the code banks are code |
+| Lifter (`qilin lift`): one C++ function per guest function, registers and flags in locals, MAME's bus order and cycle counts, native calls with checked returns | ✅ all 804 functions (30,254 instructions, shared code counted per function) |
+| Differential test against MAME's T-11 core: registers, flags, cycles and every bus access in order | ✅ game functions: 6,432 trials, 5,012 matching runs, 0 mismatches; every instruction form (in CI): 148,992 trials, 146,125 matching runs, 0 mismatches |
 | Sound CPU: MAME's 6502 as the reference, a 6502 decoder | ✅ agrees with MAME on all 256 opcodes: text, length, cycles, page penalties, flow |
 | Sound program control flow (`qilin cfg --cpu sound`): exact RTS jump tables, infeasible branches pruned | ✅ 4,742 instructions in 73 functions (the three vectors, then code nothing else reaches); every table exact |
 | Sound lifter (`qilin lift --cpu sound`): MAME's microcode as the instruction bodies; yields and resumes mid-function | ✅ all 73 functions; difftest 4,672 trials, 3,589 matching runs, 0 mismatches; every instruction form (in CI): 23,712 trials, 0 mismatches |
-| ROM coverage (`qilin coverage`): every byte code, table, data, fill or unknown | ✅ with the reference runs' 16 seeds: T-11 code areas and 6502 ROM 100% explained, no unknown byte; every executed location lifted |
-| The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode, a credited game, 16 random games of 60,000 frames and 16 self-test sessions, no unlifted code; a credited game at about 34× real time on a desktop core |
+| ROM coverage (`qilin coverage`): every byte code, table, data, fill or unknown | ✅ with no seeds: T-11 code areas and 6502 ROM 100% explained, no unknown byte; every location five reference runs execute is lifted |
+| The board scheduler, a reference run of both CPUs (`qilin_refrun`), the game run natively (`qilin_run`) | ✅ attract mode, a credited game, 16 random games of 60,000 frames and 16 self-test sessions, no unlifted code; a credited game at about 62× real time on a desktop core; the same frames on ARM64 (cross-built for the Pi 4, run under qemu) |
 | Video: the CPU reference renderer (playfield, motion objects, alphanumerics, MAME's priority rule and partial updates) | ✅ boot screens, high scores and gameplay render; `--frame-out FRAME:FILE` saves a frame as a PNG |
-| Video through Vulkan: CPU frames uploaded and shown in a window, scaled by whole numbers | ✅ tested on Mesa's software driver with validation, under a virtual X server |
+| Video through Vulkan: CPU frames uploaded and shown in a window: whole multiples, fit or fill, sharp or smooth; full screen on any display | ✅ tested on Mesa's software driver with validation, under a virtual X server |
 | The `apb` executable: window and input on SDL3, the EEPROM saved | ✅ built against SDL3 3.4.20 (fetched) and run on Linux in a virtual X display through Mesa's software Vulkan: attract mode, the settings menu (F1), the EEPROM and settings saved; not yet played with real controls |
-| Native and MAME's cores agree frame for frame (`--frame-hashes`) | ✅ attract mode, a credited game, self-test, eight random games of 60,000 frames: every frame identical |
+| Native and MAME's cores agree frame for frame (`--frame-hashes`) | ✅ attract mode, a credited game, self-test, and random games of 30,000 to 60,000 frames: every frame identical |
 | Sound: the YM2151 (ymfm, as MAME), both POKEYs (a port of MAME's), MAME's mixer; `qilin_run --wav`, and SDL3 audio in `apb` | ✅ music on coin-up and in the game |
 | Speech: the TMS5220C (MAME's, adapted) on the board, its READY line read by the 6502 | ✅ in a credited game the chip speaks (about 5 s in 66 s of play); not yet listened to |
 | Controls: any wheel (direct-drive or with a lock), pedals, gamepads, mice and spinners; a settings menu (Dear ImGui) | ✅ tested on SDL's virtual wheel and pedals (`qilin_input_tests`, in CI); not yet tried on real ones |
@@ -63,7 +63,7 @@ build/qilin verify "D:/APB Arcade Project"                       # all 36 files,
 build/qilin insns  "D:/APB Arcade Project" --from 8000 --to 8100 # T-11 listing (MAME syntax, cycles)
 build/qilin insns  "D:/APB Arcade Project" --banks 3,12 --from 4000 --to 4100
 build/qilin cfg    "D:/APB Arcade Project" [--all]               # control flow from reset, and all it can't follow yet
-build/qilin coverage "D:/APB Arcade Project" [--seeds S] [--reads R] [--list] [--check-seeds F]   # every ROM byte: code, table, data, fill or unknown (100% explained with the seeds)
+build/qilin coverage "D:/APB Arcade Project" [--seeds S] [--reads R] [--list] [--check-seeds F]   # every ROM byte: code, table, data, fill or unknown (100% explained)
 build/qilin lift   "D:/APB Arcade Project" --out gen             # lift to C++ (gen/ is gitignored: never commit it)
 build/qilin insns  "D:/APB Arcade Project" --cpu sound --from 4000 --to 4100   # 6502 listing
 build/qilin cfg    "D:/APB Arcade Project" --cpu sound [--all]   # the sound program's control flow
@@ -90,15 +90,10 @@ build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--on
 
 ### Playing it
 
-Seeds first: the few entries only a run of the game can find (see `docs/recompiler-core.md`). Five reference runs, each adding to the seeds of the one before, find all 16 that rev 7 needs (about three minutes): attract mode, a credited game, two games played by `--monkey` (a seeded random player) and the self-test menus (`--test-switch 1`). Then lift both CPUs and build with the lifted code; `apb` needs SDL3, which CMake uses if it's installed and otherwise fetches (release 3.4.20, linked statically; `-DQILIN_FETCH_SDL3=OFF` to never fetch).
+Lift both CPUs and build with the lifted code; `apb` needs SDL3, which CMake uses if it's installed and otherwise fetches (release 3.4.20, linked statically; `-DQILIN_FETCH_SDL3=OFF` to never fetch). Rev 7 needs no seeds: the analysis finds everything the game runs. (Seeds, `--seeds`, are still read: the entries only a run of the game can find, from `qilin_refrun --seeds-out`, for a ROM the analysis doesn't fully cover.)
 
 ```sh
-build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --seeds-out apb.seeds
-build/qilin_refrun "D:/APB Arcade Project" --frames 20000 --coin 1500 --coin 1560 --press 0008:1700 --pedal 63 --steer 1 --seeds apb.seeds --seeds-out apb.seeds
-build/qilin_refrun "D:/APB Arcade Project" --frames 60000 --monkey 1 --seeds apb.seeds --seeds-out apb.seeds
-build/qilin_refrun "D:/APB Arcade Project" --frames 60000 --monkey 3 --seeds apb.seeds --seeds-out apb.seeds
-build/qilin_refrun "D:/APB Arcade Project" --frames 15000 --test-switch 1 --monkey 9 --seeds apb.seeds --seeds-out apb.seeds
-build/qilin lift "D:/APB Arcade Project" --seeds apb.seeds --out gen
+build/qilin lift "D:/APB Arcade Project" --out gen
 build/qilin lift "D:/APB Arcade Project" --cpu sound --out gen-sound
 cmake -S . -B build -DQILIN_GEN_DIR="$PWD/gen" -DQILIN_SOUND_GEN_DIR="$PWD/gen-sound" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target apb qilin_run
@@ -113,6 +108,7 @@ build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N] [--mute]
 | Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
 | Self-test switch | F2 (toggles) | |
 | Settings menu (pauses the game) | F1 or Escape | Start or Guide |
+| Full screen (on/off) | Alt+Enter or F11 | |
 
 **Wheels, pedals, spinners.** The settings menu sets them up; nothing is needed for the keyboard or a gamepad. APB's cabinet wheel spins freely and the game counts how far it turns, so a PC wheel drives it by how far its angle moves each frame:
 
@@ -122,6 +118,8 @@ build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N] [--mute]
 - **Pedals** (often a separate USB device): *Set up a pedal*, press it to the floor and let it go, *Done*. Pedals that rest at either end of their axis both work.
 - **Buttons**: any button, key, hat or axis on any device can be added to each cabinet button and coin.
 - **Mouse or spinner**: steers by how far it moves.
+
+**Display.** The menu's Display page: full screen, which display, the picture's size (whole multiples, the sharpest; fit, keeping its shape; or filling the window), smooth or sharp scaling at sizes that aren't whole multiples, vsync, and which graphics device (used from the next start). `--no-vsync` and `--gpu N` override the saved choices for one run. The game always runs at the cabinet's 60.1 frames a second.
 
 Settings are saved to `apb.ini`, and the EEPROM (high scores, audits, the game's own settings) to `eeprom.bin`, both in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs, `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound.
 
