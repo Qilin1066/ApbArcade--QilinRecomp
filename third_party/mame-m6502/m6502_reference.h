@@ -12,6 +12,9 @@
 
     MAME models every bus cycle, the opcode prefetch at the end of each
     instruction included, so a Bus sees exactly the accesses the chip makes.
+    Beyond MAME's interface: step() (one instruction), set_state (to start
+    from a native run's state) and elapsed() (within step(), the bus cycles
+    so far: MAME's local time, which the board uses to time its chips).
 
 *******************************************************************************/
 

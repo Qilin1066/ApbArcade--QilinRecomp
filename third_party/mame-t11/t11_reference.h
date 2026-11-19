@@ -10,7 +10,10 @@
     loop). MAME revision: see README.md in this directory.
 
     Bus accesses go to a Bus object, so a test can map memory, trace every
-    cycle in order and count cycles exactly as MAME does.
+    cycle in order and count cycles exactly as MAME does. Beyond MAME's
+    interface: step() (one instruction), set_reg/set_psw (to start from a
+    native run's state) and icount() (within step(), the cycles charged so
+    far: MAME's local time, which the board uses to time its I/O).
 
 *******************************************************************************/
 
