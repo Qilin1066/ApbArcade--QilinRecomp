@@ -54,6 +54,7 @@ struct DisplaySettings {
     float scanlines = 0.75f;    // the CRT effect's
     float mask = 0.3f;
     bool vsync = true;
+    bool match_display = false; // with vsync: the game locked to a display near 60 Hz (or a multiple), not the cabinet's exact 60.1
     bool fullscreen = false;    // borderless, at the display's own mode
     std::string monitor;        // the display's name; empty: the primary display
     std::string gpu;            // the Vulkan device's name; empty: the best one (used at start-up)

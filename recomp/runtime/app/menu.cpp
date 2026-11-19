@@ -41,6 +41,20 @@ SDL_DisplayID display_named(const std::string& name) {
     return found;
 }
 
+int repeats_for(double refresh_hz) {
+    if (!(refresh_hz > 0)) return 0;
+    const auto k = static_cast<int>(std::lround(refresh_hz / game_hz));
+    if (k < 1 || k > 4) return 0;
+    return std::abs(refresh_hz / k - game_hz) / game_hz <= 0.01 ? k : 0;
+}
+
+int display_repeats(SDL_Window* window, const DisplaySettings& d, double* refresh) {
+    const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+    const double hz = mode ? static_cast<double>(mode->refresh_rate) : 0.0;
+    if (refresh) *refresh = hz;
+    return d.vsync && d.match_display ? repeats_for(hz) : 0;
+}
+
 Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::string settings_path)
     : window_(window), renderer_(renderer), input_(input), path_(std::move(settings_path)) {
     gfx::Overlay o;
@@ -478,7 +492,33 @@ void Menu::display_tab() {
     }
     changed |= ImGui::Checkbox("Vsync (wait for the display: no tearing)", &d.vsync);
     if (changed) apply();
-    ImGui::TextDisabled("The game itself always runs at the cabinet's 60.1 frames a second.");
+    if (d.vsync) {
+        int speed = d.match_display ? 1 : 0;
+        ImGui::TextUnformatted("Speed");
+        ImGui::SameLine();
+        bool speed_changed = ImGui::RadioButton("Exact (the cabinet's 60.1 Hz)", &speed, 0);
+        ImGui::SameLine();
+        speed_changed |= ImGui::RadioButton("Match the display (smoothest)", &speed, 1);
+        if (speed_changed) d.match_display = speed == 1;
+        double hz = 0;
+        const int repeats = display_repeats(window_, d, &hz);
+        if (d.match_display && !speed_note.empty()) {
+            ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%s", speed_note.c_str());
+        } else if (!d.match_display) {
+            ImGui::TextDisabled("The newest frame is shown at each refresh. On a 60 Hz display one frame in about 600 is skipped,\n"
+                                "as 60.1 doesn't divide into 60; a variable-refresh (FreeSync, G-Sync) display shows every one.");
+        } else if (repeats) {
+            const double game_rate = hz / repeats;
+            ImGui::TextDisabled("%s", strf("Locked to this display's %.2f Hz%s: the game runs %.2f%% %s, every frame shown in turn.",
+                                           hz, repeats > 1 ? strf(" (each frame shown %d times)", repeats).c_str() : "",
+                                           std::abs(game_rate / game_hz - 1) * 100, game_rate < game_hz ? "slow" : "fast").c_str());
+        } else {
+            ImGui::TextDisabled("%s", strf(hz > 0 ? "This display runs at %.2f Hz, not within 1%% of 60 or a multiple: the exact speed is used."
+                                                  : "This display's refresh rate isn't known: the exact speed is used.", hz).c_str());
+        }
+    } else {
+        ImGui::TextDisabled("The game always runs at the cabinet's 60.1 frames a second.");
+    }
 
     ImGui::SeparatorText("Graphics device");
     const auto& devices = renderer_.devices();

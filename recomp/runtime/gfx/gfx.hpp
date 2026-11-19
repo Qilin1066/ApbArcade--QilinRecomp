@@ -39,7 +39,14 @@ struct Config {
     std::vector<std::string> instance_extensions;
     std::function<uint64_t(void* instance)> create_surface;
     uint32_t window_width = 0, window_height = 0;  // the window's size in pixels
-    bool vsync = true;                             // FIFO; otherwise mailbox or immediate where offered
+    // vsync: no tearing. Then either the newest finished frame is shown at
+    // each refresh (mailbox, where offered, else FIFO): the caller paces
+    // itself and no queue builds up; or, locked to the display, every frame
+    // is shown in turn with the shortest queue (FIFO, 2 images), so presenting
+    // waits for the display and paces the caller. Without vsync: mailbox or
+    // immediate where offered.
+    bool vsync = true;
+    bool lock_to_display = false;
     Scaling scaling = Scaling::integer;
     bool smooth = true;                            // bilinear when the scale isn't whole; else nearest pixel
     Effect effect = Effect::none;
@@ -102,8 +109,11 @@ public:
     virtual void set_scaling(Scaling scaling, bool smooth) = 0;
     // The shader the picture is drawn through, from the next present (scanlines and mask: the CRT's, 0..1).
     virtual void set_effect(Effect effect, float scanlines, float mask) = 0;
-    // Waits for the display's refresh or not (the swapchain is rebuilt at the next present).
+    // Waits for the display's refresh or not, and locked to it or not (Config::vsync; the swapchain is rebuilt at the next present).
     virtual void set_vsync(bool vsync) = 0;
+    virtual void set_lock_to_display(bool lock) = 0;
+    // Shows the last presented frame again (for a display refreshing at a multiple of the frame rate).
+    virtual void present_again() = 0;
     // Whether the device can scale smoothly (a linear blit from the frame format); if not, frames are scaled sharp.
     virtual bool smooth_supported() const = 0;
     // The names of the Vulkan devices that can run the renderer, best first.

@@ -159,6 +159,7 @@ bool Settings::load(const std::string& path) {
     display.scanlines = static_cast<float>(std::clamp(num("crt_scanlines", display.scanlines), 0.0, 1.0));
     display.mask = static_cast<float>(std::clamp(num("crt_mask", display.mask), 0.0, 1.0));
     display.vsync = num("vsync", 1) != 0;
+    display.match_display = num("match_display", 0) != 0;
     display.fullscreen = num("fullscreen", 0) != 0;
     display.monitor = std::string(get("monitor"));
     display.gpu = std::string(get("gpu"));
@@ -182,8 +183,8 @@ bool Settings::save(const std::string& path) const {
     out << strf("pedal_released = %.9g\npedal_floored = %.9g\npedal_deadzone = %.9g\n", pedal.released, pedal.floored, pedal.deadzone);
     out << strf("mouse_counts = %.9g\nstick_counts = %.9g\nfriction = %d\n", mouse_counts, stick_counts, friction);
     const char* scaling = display.scaling == gfx::Scaling::fit ? "fit" : display.scaling == gfx::Scaling::stretch ? "stretch" : "integer";
-    out << strf("scaling = %s\nsmooth = %d\nvsync = %d\nfullscreen = %d\n", scaling, display.smooth ? 1 : 0, display.vsync ? 1 : 0,
-                display.fullscreen ? 1 : 0);
+    out << strf("scaling = %s\nsmooth = %d\nvsync = %d\nmatch_display = %d\nfullscreen = %d\n", scaling, display.smooth ? 1 : 0,
+                display.vsync ? 1 : 0, display.match_display ? 1 : 0, display.fullscreen ? 1 : 0);
     const char* effect = display.effect == gfx::Effect::pixel_art ? "pixel_art" : display.effect == gfx::Effect::crt ? "crt" : "none";
     out << strf("effect = %s\ncrt_scanlines = %.9g\ncrt_mask = %.9g\n", effect, display.scanlines, display.mask);
     out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';

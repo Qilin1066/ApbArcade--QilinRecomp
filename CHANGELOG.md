@@ -12,6 +12,11 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 ## [Unreleased]
 
 ### Added
+- **Speed, on the Display page (with vsync): exact or matched to the display.**
+  - *Exact* (the default) keeps the cabinet's 60.1 Hz, and the window now shows the newest finished frame at each refresh (Vulkan's mailbox mode, still tear-free, where the driver offers it).
+  - *Match the display* locks the game to a display within 1% of 60 Hz, or of 120, 180 or 240 Hz, where each frame is shown 2 to 4 times (`present_again`). Every frame is shown in turn, with a two-image swapchain so at most one waits; at 60.00 Hz the game runs 0.16% slow. On other rates (50, 75, 144 Hz) and variable-refresh displays the exact speed is kept, which a variable-refresh display shows perfectly anyway.
+  - Locked, `apb` checks that the display really paces it. Over two seconds (after the first half second) it must run within 2% of the display's rate; else locking ends and the page says why, so a display that doesn't wait (remote, virtual, a driver ignoring vsync) can't make the game race. Checked on an Xorg dummy display reporting 60.02 Hz with no real refresh: the lock was dropped after a second, and the run went on at 60.1 Hz.
+  - The page says what's happening ("Locked to this display's 60.00 Hz: the game runs 0.16% slow").
 - **Presets on the Display page**: *Original* (whole multiples, plain pixels: the arcade's picture, and the default), *Arcade monitor* (as big as fits, the CRT look) and *Smooth* (as big as fits, smoothed pixel art). One click sets the picture's size and look (the CRT's sliders back to their defaults); full screen, the display, vsync and the device are left alone. The preset the settings match is highlighted, else "(set by hand)". Checked in `qilin_input_tests`.
 - **Looks for the picture** (the settings menu's Display page): plain pixels (a blit, as before), smoothed pixel art, or a CRT. Saved in `apb.ini` (`effect`, `crt_scanlines`, `crt_mask`).
   - *Smoothed pixel art:* an edge-directed upscaler written for this project after the idea of Hyllian's xBR. Where the colours around a pixel's corner say an edge crosses it (at 45 degrees, or shallow or steep at 1:2), the part of the pixel beyond the edge's line takes the neighbour's colour, anti-aliased to one window pixel. Flat areas and straight edges stay exactly as drawn.
@@ -21,6 +26,8 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 - **In-between frames, a prototype** (`qilin_tween`, needs ffmpeg): records each band of each frame (scroll, tile banks, video RAM, the resolved motion objects), then draws frames between the game's at in-between scroll and sprite positions, at a raised resolution so fractions of a pixel show. Each sprite is matched to the next frame's (the same sprite within 32 pixels, or one of the same colour and size within 16, as when a car turns), and the text layer and palette come from the nearer frame. It checks itself first: each recorded frame drawn at t = 0 is the reference renderer's, pixel for pixel (601 of 601). In a random game, 1,797 of 1,800 in-between frames could be interpolated and 95% of sprites were matched. It writes a video with the game as it is beside the in-between version.
 
 ### Fixed
+- **With vsync, a queue of old frames could build up.** The game makes 60.1 frames a second and a 60 Hz display takes 60.0, so the swapchain filled until each frame shown was about two frames old: input lag. The newest frame is now shown at each refresh (mailbox), or, matched to the display, the queue holds one at most.
+- **The paused menu ran unpaced with a present mode that doesn't wait** (mailbox, or vsync off): it now waits a frame's time unless the display paces it.
 - **The black borders around the picture were cleared transparent** (alpha 0). They're opaque now, so a compositor that honours a window's alpha can't show through them.
 
 ## [0.16.0] - 2026-11-19

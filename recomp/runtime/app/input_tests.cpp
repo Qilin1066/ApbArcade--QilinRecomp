@@ -3,6 +3,7 @@
 // Needs SDL3 and no window or real device.
 
 #include "input.hpp"
+#include "menu.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -131,7 +132,7 @@ int main() {
 
     // The settings file keeps all of it.
     const auto path = (std::filesystem::temp_directory_path() / "apb_input_test.ini").string();
-    input.settings.display = {gfx::Scaling::stretch, false, gfx::Effect::crt, 0.25f, 0.75f, false, true, "Monitor = 2", "Some GPU"};
+    input.settings.display = {gfx::Scaling::stretch, false, gfx::Effect::crt, 0.25f, 0.75f, false, true, true, "Monitor = 2", "Some GPU"};
     CHECK(input.settings.save(path));
     app::Settings loaded;
     CHECK(loaded.load(path));
@@ -140,9 +141,18 @@ int main() {
     CHECK(loaded.pedal_axis.text() == input.settings.pedal_axis.text() && std::abs(loaded.pedal.floored - far) < 1e-6);
     CHECK(loaded.buttons[0].text() == input.settings.buttons[0].text());
     CHECK(loaded.display.scaling == gfx::Scaling::stretch && !loaded.display.smooth && !loaded.display.vsync && loaded.display.fullscreen);
+    CHECK(loaded.display.match_display);
     CHECK(loaded.display.monitor == "Monitor = 2" && loaded.display.gpu == "Some GPU");
     CHECK(loaded.display.effect == gfx::Effect::crt && loaded.display.scanlines == 0.25f && loaded.display.mask == 0.75f);
     CHECK(app::Settings{}.display.scaling == gfx::Scaling::integer && app::Settings{}.display.vsync);
+    // Matching the display: 60.00 Hz is 0.16% from the game's 60.1, so it locks
+    // once a refresh; 120 and 240 Hz twice and 4 times; 59.94 still locks;
+    // 50, 75, 144 and 165 Hz don't (the exact speed is kept); unknown neither.
+    CHECK(app::repeats_for(60.0) == 1 && app::repeats_for(59.94) == 1 && app::repeats_for(60.1) == 1);
+    CHECK(app::repeats_for(120.0) == 2 && app::repeats_for(180.0) == 3 && app::repeats_for(240.0) == 4);
+    CHECK(app::repeats_for(50.0) == 0 && app::repeats_for(75.0) == 0 && app::repeats_for(144.0) == 0 && app::repeats_for(165.0) == 0);
+    CHECK(app::repeats_for(0.0) == 0 && app::repeats_for(300.0) == 0);
+    CHECK(app::Settings{}.display.match_display == false);
     // Presets: the defaults are Original; each preset matches itself after it's applied, and
     // leaves full screen, vsync and the display alone; a slider moved by hand is no preset.
     {

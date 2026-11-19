@@ -19,6 +19,17 @@ namespace qilin::app {
 // The connected display with this name, or 0.
 [[nodiscard]] SDL_DisplayID display_named(const std::string& name);
 
+// The board's frame rate: 10 MHz / 166,400 cycles a frame.
+inline constexpr double game_hz = 10e6 / 166400.0;
+// With "match the display" (and vsync): how many times each game frame is
+// shown when the game is locked to the window's display (1 at about 60 Hz,
+// 2 at 120, up to 4 at 240), or 0 when it isn't (not asked for, or the
+// display's rate isn't within 1% of a whole multiple of the game's: the
+// game keeps its exact speed). *refresh gets the display's rate (0 unknown).
+[[nodiscard]] int display_repeats(SDL_Window* window, const DisplaySettings& d, double* refresh = nullptr);
+// The same arithmetic for a known refresh rate (tested).
+[[nodiscard]] int repeats_for(double refresh_hz);
+
 class Menu {
 public:
     // Fails loudly (returns with ok() false) if the renderer has no window.
@@ -37,6 +48,8 @@ public:
     // Before each present: builds the menu (or the start-up hint), if either is showing.
     void frame();
     [[nodiscard]] bool quit_requested() const noexcept { return quit_; }
+    // Set by apb when locking to the display didn't hold (shown on the Display page).
+    std::string speed_note;
 
     // The window to full screen (borderless, on its display) or back.
     void set_fullscreen(bool fullscreen);

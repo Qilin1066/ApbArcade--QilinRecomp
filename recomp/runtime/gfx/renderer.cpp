@@ -145,6 +145,16 @@ public:
         config_.vsync = vsync;
         swapchain_stale_ = true;
     }
+    void set_lock_to_display(bool lock) override {
+        if (config_.lock_to_display == lock) return;
+        config_.lock_to_display = lock;
+        swapchain_stale_ = config_.vsync;   // it only changes anything with vsync
+    }
+    void present_again() override {
+        end_pass();
+        if (surface_ && frames_) show(color_[front_]);
+        submit();
+    }
     bool smooth_supported() const override { return linear_blit_; }
     void set_effect(Effect effect, float scanlines, float mask) override {
         config_.effect = effect;
@@ -570,10 +580,14 @@ void VulkanRenderer::create_swapchain() {
     std::vector<VkPresentModeKHR> modes(n);
     vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_, surface_, &n, modes.data());
     modes.resize(n);
+    const auto offered = [&](VkPresentModeKHR m) { return std::ranges::find(modes, m) != modes.end(); };
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;  // always offered
+    const bool locked = config_.vsync && config_.lock_to_display;
     if (!config_.vsync) {
-        if (std::ranges::find(modes, VK_PRESENT_MODE_MAILBOX_KHR) != modes.end()) mode = VK_PRESENT_MODE_MAILBOX_KHR;
-        else if (std::ranges::find(modes, VK_PRESENT_MODE_IMMEDIATE_KHR) != modes.end()) mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        if (offered(VK_PRESENT_MODE_MAILBOX_KHR)) mode = VK_PRESENT_MODE_MAILBOX_KHR;
+        else if (offered(VK_PRESENT_MODE_IMMEDIATE_KHR)) mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    } else if (!locked && offered(VK_PRESENT_MODE_MAILBOX_KHR)) {
+        mode = VK_PRESENT_MODE_MAILBOX_KHR;   // the newest frame at each refresh: no queue of old ones
     }
 
     VkExtent2D extent = caps.currentExtent;
@@ -585,7 +599,8 @@ void VulkanRenderer::create_swapchain() {
     swapchain_stale_ = false;
     if (extent.width == 0 || extent.height == 0) return;  // minimised: nothing to show until it's back
 
-    uint32_t images = caps.minImageCount + 1;
+    // Locked to the display, the shortest queue: one frame waiting at most.
+    uint32_t images = locked ? std::max(caps.minImageCount, 2u) : caps.minImageCount + 1;
     if (caps.maxImageCount && images > caps.maxImageCount) images = caps.maxImageCount;
     VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     info.surface = surface_;

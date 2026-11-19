@@ -18,7 +18,10 @@
 // the cabinet's did, or one that stops at a lock), pedals and extra button
 // bindings, and the display: full screen, which display, the picture's size
 // (whole multiples, fit or fill; sharp or smooth), its look (plain, smoothed
-// pixel art, or a CRT), vsync and the graphics device. They're kept in apb.ini next to the EEPROM; --no-vsync and --gpu N
+// pixel art, or a CRT), presets, vsync, the speed (the cabinet's exact 60.1
+// Hz, the newest frame shown at each refresh; or locked to a display near
+// 60 Hz or a multiple, every frame shown in turn) and the graphics device.
+// They're kept in apb.ini next to the EEPROM; --no-vsync and --gpu N
 // override the saved ones for one run.
 //
 // The EEPROM (high scores, audits, settings) is kept in SDL's per-user
@@ -47,6 +50,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -150,6 +154,7 @@ int main(int argc, char** argv) {
     config.gpu = options.gpu;                     // --gpu N wins over the saved device
     if (options.gpu < 0) config.gpu_name = saved.display.gpu;
     config.vsync = options.vsync && saved.display.vsync;
+    config.lock_to_display = app::display_repeats(window, saved.display) > 0;
     config.scaling = saved.display.scaling;
     config.smooth = saved.display.smooth;
     config.effect = saved.display.effect;
@@ -212,6 +217,12 @@ int main(int argc, char** argv) {
     game::Scheduler scheduler(machine);
     const double frame_ns = 166400.0 / 10e6 * 1e9;
     std::uint64_t start = SDL_GetTicksNS(), paced_from = 0;
+    // Locked to the display ("match the display"): how many times each frame
+    // is shown, at what refresh, and a check that the display really paces it.
+    int lock_repeats = 0, lock_frames = 0;
+    double lock_refresh = 0;
+    std::uint64_t lock_since = 0;
+    bool lock_failed = false;
     bool quit = false;
     // The window's events, a frame at a time: the controls', the menu's, apb's own.
     auto events = [&] {
@@ -250,12 +261,27 @@ int main(int argc, char** argv) {
             made.clear();
         }
         sys2::to_bgra(video.frame(), machine.palette(), pixels.data());
+        // Locked to the display ("match the display"), presenting paces the
+        // game; otherwise the board's clock does.
+        double refresh = 0;
+        const int possible = app::display_repeats(window, input.settings.display, &refresh);
+        if (lock_failed && (!input.settings.display.match_display || refresh != lock_refresh)) {   // turned off, or another display: try again
+            lock_failed = false;
+            menu.speed_note.clear();
+        }
+        const int repeats = lock_failed ? 0 : possible;
+        if (repeats != lock_repeats || refresh != lock_refresh) {
+            lock_repeats = repeats;
+            lock_refresh = refresh;
+            lock_frames = -30;   // measuring starts half a second in, once the swapchain is rebuilt
+        }
+        renderer->set_lock_to_display(repeats > 0);
         // The menu pauses the game: the same frame, the menu over it, until it closes.
         while (menu.is_open() && !quit) {
             renderer->write_back_buffer(pixels.data());
             menu.frame();
             renderer->present();
-            if (!renderer->config().vsync) SDL_Delay(16);
+            if (!renderer->config().lock_to_display || !renderer->config().vsync) SDL_Delay(16);   // only a locked FIFO waits by itself
             events();
             input.apply(machine.inputs);   // keeps the meters live; the cabinet's controls rest
             paced_from = frame;
@@ -267,6 +293,30 @@ int main(int argc, char** argv) {
         // Pace to the board's clock: frame n is due n frame-times after the
         // start. Falling more than a few frames behind restarts the count,
         // rather than racing to catch up.
+        if (repeats > 0 && renderer->config().lock_to_display) {
+            renderer->present();
+            for (int i = 1; i < repeats; ++i) renderer->present_again();
+            const auto now = SDL_GetTicksNS();
+            start = now;   // so the clock takes over smoothly if the lock ends
+            paced_from = frame + 1;
+            // The display must be what paces the game: if presenting doesn't wait
+            // for it (a remote or virtual display, a driver ignoring vsync), the
+            // game would race. Two seconds more than 2% off its rate ends the lock.
+            if (++lock_frames == 0) lock_since = now;
+            if (lock_frames == 120) {
+                const double measured = 120.0 * 1e9 / static_cast<double>(now - lock_since);
+                const double expected = lock_refresh / repeats;
+                if (std::abs(measured / expected - 1) > 0.02) {
+                    lock_failed = true;
+                    menu.speed_note = app::strf("Locking didn't hold: this display took %.1f frames a second, not %.2f. The exact speed is used.",
+                                                measured, expected);
+                    std::fprintf(stderr, "apb: %s\n", menu.speed_note.c_str());
+                }
+                lock_frames = 0;
+                lock_since = now;
+            }
+            return;
+        }
         const auto due = start + static_cast<std::uint64_t>(static_cast<double>(frame - paced_from) * frame_ns);
         const auto now = SDL_GetTicksNS();
         if (now < due) SDL_DelayPrecise(due - now);
