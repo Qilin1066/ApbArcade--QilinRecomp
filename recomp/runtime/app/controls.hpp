@@ -62,15 +62,28 @@ private:
     double carry_ = 0;   // fractions of a count, kept so slow turns aren't lost
 };
 
-// A stick or keys: a rate, counts a frame at full deflection.
+// A stick or keys: a rate, counts a frame at full deflection. Past the
+// dead zone, a stick's deflection is raised to the power 'curve' (1:
+// straight; 2, the default: a quarter of the speed at half way), so small
+// pushes make fine corrections and a full push still turns fast. Keys,
+// which are only ever on or off, ask for a fraction of the speed directly.
 class Rate {
 public:
     double deadzone = 0.15;
-    double counts_at_full = 6;
+    double counts_at_full = 3;
+    double curve = 2;
+    // A stick's deflection, -1..1.
     int update(double x) {
         x = std::clamp(x, -1.0, 1.0);
         const double a = std::abs(x);
-        if (a > deadzone) carry_ += std::copysign((a - deadzone) / (1 - deadzone) * counts_at_full, x);
+        return add(a > deadzone ? std::copysign(std::pow((a - deadzone) / (1 - deadzone), curve), x) : 0.0);
+    }
+    // A fraction of the full speed, -1..1, as it is (keys).
+    int update_linear(double fraction) { return add(std::clamp(fraction, -1.0, 1.0)); }
+
+private:
+    int add(double fraction) {
+        carry_ += fraction * counts_at_full;
         const double whole = std::trunc(carry_);
         carry_ -= whole;
         return static_cast<int>(whole);

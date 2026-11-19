@@ -320,11 +320,19 @@ void Menu::steering_section() {
         if (ImGui::SliderFloat("Dial counts per mouse step", &m, 0.02f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) s.mouse_counts = m;
         ImGui::TextDisabled("While playing, the mouse is captured; the menu frees it.");
     }
-    float stick = static_cast<float>(s.stick_counts);
-    if (ImGui::SliderFloat("Stick and keys: turning speed (counts a frame at full)", &stick, 1, 16, "%.1f")) {
-        s.stick_counts = stick;
+    ImGui::SeparatorText("Gamepad stick and arrow keys");
+    float stick = static_cast<float>(s.stick_speed);
+    if (ImGui::SliderFloat("Turning speed (dial counts a frame, stick fully over)", &stick, 0.5f, 8, "%.1f")) {
+        s.stick_speed = stick;
         input_.configure();
     }
+    float curve = static_cast<float>(s.stick_curve);
+    if (ImGui::SliderFloat("Stick response (1 straight; higher: finer near the centre)", &curve, 1, 4, "%.1f")) {
+        s.stick_curve = curve;
+        input_.configure();
+    }
+    ImGui::TextDisabled("%s", strf("Half way over turns at %.0f%% of full speed. The cabinet's wheel is 160 counts a turn: full speed is %.1f turns a second.",
+                                   100 * std::pow((0.5 - 0.15) / 0.85, s.stick_curve), s.stick_speed * 60.1 / 160).c_str());
 
     // What listening for the wheel found (only when it was the wheel being looked for).
     if (finding_wheel_ && input_.listening() == Input::Listen::none) {

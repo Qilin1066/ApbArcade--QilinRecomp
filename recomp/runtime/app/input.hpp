@@ -87,7 +87,12 @@ struct Settings {
     Binding pedal_axis;
     controls::PedalSettings pedal;
     double mouse_counts = 0.25;        // dial counts per pixel the mouse (or spinner) moves
-    double stick_counts = 6;           // dial counts a frame, stick or keys at full
+    // A gamepad's stick and the arrow keys: dial counts a frame at full, and
+    // the stick's response curve (1 straight; higher, finer near the centre).
+    // Saved as stick_speed: the old stick_counts (6 at full, straight) was far too
+    // quick on a gamepad, so a saved one is left behind.
+    double stick_speed = 3;
+    double stick_curve = 2;
     int friction = 20;                 // force feedback on the bound wheel, percent; 0 off
     DisplaySettings display;
     std::string rom_dir;               // where the ROMs were last found (apb with no folder given uses it)

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 
 namespace {
@@ -144,6 +145,14 @@ int main() {
     CHECK(loaded.display.scaling == gfx::Scaling::stretch && !loaded.display.smooth && !loaded.display.vsync && loaded.display.fullscreen);
     CHECK(loaded.display.match_display);
     CHECK(loaded.rom_dir == "D:\\APB Arcade Project");
+    // The stick's settings; a file from before them, with the old stick_counts = 6, gets the new defaults.
+    CHECK(loaded.stick_speed == input.settings.stick_speed && loaded.stick_curve == input.settings.stick_curve);
+    {
+        std::ofstream old_file(path, std::ios::trunc);
+        old_file << "stick_counts = 6\n";
+    }
+    app::Settings from_old;
+    CHECK(from_old.load(path) && from_old.stick_speed == 3 && from_old.stick_curve == 2);
     CHECK(loaded.display.monitor == "Monitor = 2" && loaded.display.gpu == "Some GPU");
     CHECK(loaded.display.effect == gfx::Effect::crt && loaded.display.scanlines == 0.25f && loaded.display.mask == 0.75f);
     CHECK(app::Settings{}.display.scaling == gfx::Scaling::integer && app::Settings{}.display.vsync);
@@ -206,7 +215,20 @@ int main() {
     const std::uint8_t dial = in.leta[0];
     for (int i = 0; i < 10; ++i) frame(input, in);
     CHECK((in.in0 & 0x0080) != 0 && in.adc[1] == 0);   // the gas floored (APB's ADC reads 0 there)
-    CHECK(static_cast<std::uint8_t>(in.leta[0] - dial) > 20);   // turning right
+    CHECK(static_cast<std::uint8_t>(in.leta[0] - dial) == 30);   // turning right: 3 counts a frame, fully over
+    // Half way over: (0.5 - 0.15) / 0.85 squared, 17% of full speed: 5 counts in 10 frames, not 15.
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 16384);
+    frame(input, in);
+    const std::uint8_t half = in.leta[0];
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    CHECK(static_cast<std::uint8_t>(in.leta[0] - half) >= 4 && static_cast<std::uint8_t>(in.leta[0] - half) <= 6);
+    // Inside the dead zone: still.
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 4000);
+    frame(input, in);
+    const std::uint8_t still = in.leta[0];
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    CHECK(in.leta[0] == still);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 0);
     SDL_DetachVirtualJoystick(SDL_GetJoystickID(pad));
     SDL_CloseJoystick(pad);
     frame(input, in);

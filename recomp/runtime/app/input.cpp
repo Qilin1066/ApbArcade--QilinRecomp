@@ -151,7 +151,8 @@ bool Settings::load(const std::string& path) {
     pedal.floored = num("pedal_floored", pedal.floored);
     pedal.deadzone = std::clamp(num("pedal_deadzone", pedal.deadzone), 0.0, 0.3);
     mouse_counts = std::clamp(num("mouse_counts", mouse_counts), 0.01, 8.0);
-    stick_counts = std::clamp(num("stick_counts", stick_counts), 1.0, 32.0);
+    stick_speed = std::clamp(num("stick_speed", stick_speed), 0.5, 16.0);
+    stick_curve = std::clamp(num("stick_curve", stick_curve), 1.0, 4.0);
     friction = static_cast<int>(std::clamp(num("friction", friction), 0.0, 100.0));
     const auto scaling = get("scaling");
     display.scaling = scaling == "fit" ? gfx::Scaling::fit : scaling == "stretch" ? gfx::Scaling::stretch : gfx::Scaling::integer;
@@ -184,7 +185,7 @@ bool Settings::save(const std::string& path) const {
                 wheel.rotation, wheel.counts_per_turn, wheel.edge, wheel.edge_rate, wheel.invert ? 1 : 0);
     binding("pedal_axis", pedal_axis);
     out << strf("pedal_released = %.9g\npedal_floored = %.9g\npedal_deadzone = %.9g\n", pedal.released, pedal.floored, pedal.deadzone);
-    out << strf("mouse_counts = %.9g\nstick_counts = %.9g\nfriction = %d\n", mouse_counts, stick_counts, friction);
+    out << strf("mouse_counts = %.9g\nstick_speed = %.9g\nstick_curve = %.9g\nfriction = %d\n", mouse_counts, stick_speed, stick_curve, friction);
     const char* scaling = display.scaling == gfx::Scaling::fit ? "fit" : display.scaling == gfx::Scaling::stretch ? "stretch" : "integer";
     out << strf("scaling = %s\nsmooth = %d\nvsync = %d\nmatch_display = %d\nfullscreen = %d\n", scaling, display.smooth ? 1 : 0,
                 display.vsync ? 1 : 0, display.match_display ? 1 : 0, display.fullscreen ? 1 : 0);
@@ -319,7 +320,8 @@ void Input::configure() {
     controls::WheelSettings w = settings.wheel;
     wheel_.configure(w);
     wheel_.reset();
-    stick_.counts_at_full = settings.stick_counts;
+    stick_.counts_at_full = settings.stick_speed;
+    stick_.curve = settings.stick_curve;
     for (auto& d : devices_) start_force(d);
 }
 
@@ -497,13 +499,15 @@ void Input::apply(sys2::Inputs& in) {
     in.adc[1] = controls::pedal_adc(travel);
 
     // The steering wheel: a free-spinning dial on LETA0, counts a frame.
-    double rate = (key[SDL_SCANCODE_RIGHT] ? 0.5 : 0) - (key[SDL_SCANCODE_LEFT] ? 0.5 : 0);
+    // The arrow keys ask for 60% of the full speed; else the stick pushed furthest.
+    const double keys = (key[SDL_SCANCODE_RIGHT] ? 0.6 : 0) - (key[SDL_SCANCODE_LEFT] ? 0.6 : 0);
+    double stick = 0;
     for (const auto& d : devices_)
         if (defaults_from(d)) {
             const double x = SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0;
-            if (std::abs(x) > std::abs(rate)) rate = x;
+            if (std::abs(x) > std::abs(stick)) stick = x;
         }
-    int counts = stick_.update(rate);
+    int counts = keys != 0 ? stick_.update_linear(keys) : stick_.update(stick);
     if (settings.steering == Steering::wheel && !settings.wheel_axis.empty()) {
         if (const Device* d = find(settings.wheel_axis.device)) counts += wheel_.update(axis_of(d->joystick, settings.wheel_axis.index));
         else wheel_.reset();   // unplugged: when it's back, its first reading only says where it is
