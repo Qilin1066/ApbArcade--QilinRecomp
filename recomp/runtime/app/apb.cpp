@@ -3,16 +3,19 @@
 //
 //   apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]
 //
-// Controls (keyboard; a gamepad works too):
-//   Left / Right       steering wheel          (left stick)
-//   Up                 gas pedal               (right trigger)
+// Controls (keyboard; gamepads, wheels, pedals and mice too):
+//   Left / Right       steering wheel          (left stick; a wheel; a mouse or spinner)
+//   Up                 gas pedal               (right trigger; a pedal)
 //   Left Ctrl or Z     button 1                (A / south)
 //   Left Alt or X      button 2                (B / east)
 //   Space or C         button 3                (X / west)
 //   5, 6               coin slots 1 and 2      (Back)
 //   9                  service coin
 //   F2                 the self-test switch (on/off)
-//   Escape             quit
+//   F1 or Escape       the settings menu       (Back and Start together, or Guide)
+// The menu sets up wheels (any: a direct-drive wheel that spins freely, as
+// the cabinet's did, or one that stops at a lock), pedals and extra button
+// bindings; they're kept in apb.ini next to the EEPROM.
 //
 // The EEPROM (high scores, audits, settings) is kept in SDL's per-user
 // preferences folder for "Qilin/apb". Everything else follows the board:
@@ -27,6 +30,9 @@
 
 #include "game.hpp"
 #include "gfx.hpp"
+#include "input.hpp"
+#include "text.hpp"
+#include "menu.hpp"
 #include "romset.hpp"
 #include "system2_audio.hpp"
 #include "system2_machine.hpp"
@@ -40,10 +46,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <format>
 #include <fstream>
 #include <memory>
-#include <print>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -82,101 +86,31 @@ bool parse(int argc, char** argv, Options& o) {
 }
 
 [[noreturn]] void fail(const std::string& message) {
-    std::print(stderr, "apb: {}\n", message);
+    std::fprintf(stderr, "apb: %s\n", message.c_str());
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB", message.c_str(), nullptr);
     SDL_Quit();
     std::exit(1);
 }
 
-std::string eeprom_path() {
+// A file in SDL's per-user preferences folder for "Qilin/apb".
+std::string pref_path(const char* file) {
     char* folder = SDL_GetPrefPath("Qilin", "apb");
-    if (!folder) return {};
-    std::string path = std::string(folder) + "eeprom.bin";
+    if (!folder) return file;
+    std::string path = std::string(folder) + file;
     SDL_free(folder);
     return path;
 }
-
-// The cabinet's controls from the keyboard and the first gamepad, once a frame.
-class Controls {
-public:
-    // Applies the controls to the board's inputs; false once the player quits.
-    bool update(sys2::Machine& m, std::uint64_t frame) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            switch (e.type) {
-            case SDL_EVENT_QUIT: return false;
-            case SDL_EVENT_KEY_DOWN:
-                if (e.key.key == SDLK_ESCAPE) return false;
-                if (e.key.key == SDLK_F2 && !e.key.repeat) test_switch_ = !test_switch_;
-                break;
-            case SDL_EVENT_GAMEPAD_ADDED:
-                if (!pad_) pad_ = SDL_OpenGamepad(e.gdevice.which);
-                break;
-            case SDL_EVENT_GAMEPAD_REMOVED:
-                if (pad_ && SDL_GetGamepadID(pad_) == e.gdevice.which) {
-                    SDL_CloseGamepad(pad_);
-                    pad_ = nullptr;
-                }
-                break;
-            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-                if (renderer) renderer->resize_window(static_cast<std::uint32_t>(e.window.data1), static_cast<std::uint32_t>(e.window.data2));
-                break;
-            default: break;
-            }
-        }
-        const bool* key = SDL_GetKeyboardState(nullptr);
-        auto pad = [&](SDL_GamepadButton b) { return pad_ && SDL_GetGamepadButton(pad_, b); };
-
-        // IN0, active low: MAME's apb buttons 1-3, the self-test switch.
-        unsigned in0 = 0xffff;
-        if (key[SDL_SCANCODE_LCTRL] || key[SDL_SCANCODE_Z] || pad(SDL_GAMEPAD_BUTTON_SOUTH)) in0 &= ~0x0080u;
-        if (key[SDL_SCANCODE_LALT] || key[SDL_SCANCODE_X] || pad(SDL_GAMEPAD_BUTTON_EAST)) in0 &= ~0x0002u;
-        if (key[SDL_SCANCODE_SPACE] || key[SDL_SCANCODE_C] || pad(SDL_GAMEPAD_BUTTON_WEST)) in0 &= ~0x0008u;
-        if (test_switch_) in0 &= ~0x8000u;
-        m.inputs.in0 = static_cast<std::uint16_t>(in0);
-        // IN1, active low: coins and the service coin (the low bits are the board's own).
-        unsigned in1 = 0xf0;
-        if (key[SDL_SCANCODE_5] || pad(SDL_GAMEPAD_BUTTON_BACK)) in1 &= ~0x40u;
-        if (key[SDL_SCANCODE_6]) in1 &= ~0x80u;
-        if (key[SDL_SCANCODE_9]) in1 &= ~0x20u;
-        m.inputs.in1 = static_cast<std::uint8_t>(in1);
-
-        // The gas pedal, ADC1: 0x3F released, 0 floored (MAME's PORT_INVERT);
-        // keys move it 8 a frame, as a foot would, the trigger sets it.
-        int target = key[SDL_SCANCODE_UP] ? 0x3f : 0;
-        if (pad_) target = std::max(target, SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 0x3f / 32767);
-        pedal_ = target > pedal_ ? std::min(target, pedal_ + 8) : std::max(target, pedal_ - 8);
-        m.inputs.adc[1] = static_cast<std::uint8_t>(0x3f - pedal_);
-
-        // The steering wheel, a dial on LETA0: counts a frame.
-        int turn = (key[SDL_SCANCODE_RIGHT] ? 3 : 0) - (key[SDL_SCANCODE_LEFT] ? 3 : 0);
-        if (pad_) {
-            const int x = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFTX);
-            if (std::abs(x) > 6000) turn += x * 6 / 32767;
-        }
-        m.inputs.leta[0] = static_cast<std::uint8_t>(m.inputs.leta[0] + turn);
-        (void)frame;
-        return true;
-    }
-
-    gfx::Renderer* renderer = nullptr;
-
-private:
-    SDL_Gamepad* pad_ = nullptr;
-    bool test_switch_ = false;
-    int pedal_ = 0;
-};
 
 } // namespace
 
 int main(int argc, char** argv) {
     Options options;
     if (!parse(argc, argv, options)) {
-        std::print(stderr, "usage: apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n");
+        std::fprintf(stderr, "usage: apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n");
         return 2;
     }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
-        std::print(stderr, "apb: SDL: {}\n", SDL_GetError());
+        std::fprintf(stderr, "apb: SDL: %s\n", SDL_GetError());
         return 1;
     }
     const auto set = rom::RomSet::load(options.rom_dir);
@@ -214,11 +148,11 @@ int main(int argc, char** argv) {
     std::string error;
     auto renderer = gfx::Renderer::create(config, &error);
     if (!renderer) fail(error);
-    SDL_SetWindowTitle(window, std::format("APB  ({})", renderer->device_name()).c_str());
+    SDL_SetWindowTitle(window, app::strf("APB  (%s)", renderer->device_name().c_str()).c_str());
 
     // The board, its saved EEPROM, the video and the scheduler.
     sys2::Machine machine(set->region(rom::Region::main_cpu), set->region(rom::Region::sound_cpu));
-    const std::string nv = eeprom_path();
+    const std::string nv = pref_path("eeprom.bin");
     if (std::ifstream in{nv, std::ios::binary}; in) in.read(reinterpret_cast<char*>(machine.eeprom().data()), std::ssize(machine.eeprom()));
     const sys2::Graphics graphics(*set);
     sys2::Video video(graphics);
@@ -236,23 +170,50 @@ int main(int argc, char** argv) {
             machine.sound_sink = &audio;
             SDL_ResumeAudioStreamDevice(sound);
         } else {
-            std::print(stderr, "apb: no sound: {}\n", SDL_GetError());
+            std::fprintf(stderr, "apb: no sound: %s\n", SDL_GetError());
         }
     }
     constexpr int frame_bytes = 55930 / 60 * 4;   // one video frame of sound
-    Controls controls;
-    controls.renderer = renderer.get();
+
+    // The controls and the settings menu, with the player's saved settings.
+    // (Pointers, so they go before the renderer and SDL do.)
+    auto input_owner = std::make_unique<app::Input>();
+    app::Input& input = *input_owner;
+    const std::string settings_path = pref_path("apb.ini");
+    input.settings.load(settings_path);
+    input.configure();
+    auto menu_owner = std::make_unique<app::Menu>(window, *renderer, input, settings_path);
+    app::Menu& menu = *menu_owner;
+    if (!menu.ok()) fail("the settings menu couldn't start on this window's Vulkan device");
 
     game::Scheduler scheduler(machine);
     const double frame_ns = 166400.0 / 10e6 * 1e9;
     std::uint64_t start = SDL_GetTicksNS(), paced_from = 0;
     bool quit = false;
+    // The window's events, a frame at a time: the controls', the menu's, apb's own.
+    auto events = [&] {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            input.handle(e);
+            menu.handle(e);
+            switch (e.type) {
+            case SDL_EVENT_QUIT: quit = true; break;
+            case SDL_EVENT_KEY_DOWN:
+                if (e.key.key == SDLK_F2 && !e.key.repeat) input.test_switch = !input.test_switch;
+                break;
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                renderer->resize_window(static_cast<std::uint32_t>(e.window.data1), static_cast<std::uint32_t>(e.window.data2));
+                break;
+            default: break;
+            }
+        }
+        if (menu.quit_requested()) quit = true;
+    };
     // The controls change at the start of each vblank, on the cycle MAME's
     // inputs would (and qilin_run's scripted ones do).
-    machine.on_vblank = [&](std::uint64_t frame) {
-        if (!controls.update(machine, frame)) quit = true;
-    };
+    machine.on_vblank = [&](std::uint64_t) { input.apply(machine.inputs); };
     scheduler.on_frame = [&](std::uint64_t frame) {
+        events();
         if (quit) throw game::Stop{game::Stop::frames, "closed"};
         if (sound) {
             machine.advance_speech(machine.sound_time);
@@ -266,7 +227,20 @@ int main(int argc, char** argv) {
             made.clear();
         }
         sys2::to_bgra(video.frame(), machine.palette(), pixels.data());
+        // The menu pauses the game: the same frame, the menu over it, until it closes.
+        while (menu.is_open() && !quit) {
+            renderer->write_back_buffer(pixels.data());
+            menu.frame();
+            renderer->present();
+            if (!options.vsync) SDL_Delay(16);
+            events();
+            input.apply(machine.inputs);   // keeps the meters live; the cabinet's controls rest
+            paced_from = frame;
+            start = SDL_GetTicksNS();
+        }
+        if (quit) throw game::Stop{game::Stop::frames, "closed"};
         renderer->write_back_buffer(pixels.data());
+        menu.frame();
         // Pace to the board's clock: frame n is due n frame-times after the
         // start. Falling more than a few frames behind restarts the count,
         // rather than racing to catch up.
@@ -283,11 +257,15 @@ int main(int argc, char** argv) {
 
     if (std::ofstream out{nv, std::ios::binary}; out) out.write(reinterpret_cast<const char*>(machine.eeprom().data()), std::ssize(machine.eeprom()));
     if (sound) SDL_DestroyAudioStream(sound);
+    machine.on_vblank = nullptr;
+    menu_owner.reset();
+    if (!input.settings.save(settings_path)) std::fprintf(stderr, "apb: couldn't write the settings to %s\n", settings_path.c_str());
+    input_owner.reset();
     renderer.reset();
     SDL_DestroyWindow(window);
     if (!quit && stop.reason != game::Stop::frames) {
         const char* reasons[] = {"the frame count", "the watchdog", "unlifted main-CPU code", "unlifted sound-CPU code"};
-        fail(std::format("the game stopped at frame {}: {}{}{}", machine.frames(), reasons[stop.reason], stop.detail.empty() ? "" : ": ", stop.detail));
+        fail(app::strf("the game stopped at frame %llu: %s%s%s", static_cast<unsigned long long>(machine.frames()), reasons[stop.reason], stop.detail.empty() ? "" : ": ", stop.detail.c_str()));
     }
     SDL_Quit();
     return 0;

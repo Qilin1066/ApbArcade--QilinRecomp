@@ -1,6 +1,5 @@
 #include "game.hpp"
 
-#include <format>
 
 #include <algorithm>
 #include <cstdio>
@@ -171,7 +170,11 @@ void Scheduler::unlifted_main() {
     // Where it came from is on the stack, usually: the registers and the
     // top of the stack go in the report.
     std::string regs;
-    for (int i = 0; i < 7; ++i) regs += std::format(" R{}={:04X}", i, main.cpu.r[i]);
+    for (int i = 0; i < 7; ++i) {
+        char reg[16];
+        std::snprintf(reg, sizeof reg, " R%d=%04X", i, main.cpu.r[i]);
+        regs += reg;
+    }
     std::string stack;
     for (int i = 0; i < 4; ++i) stack += " " + hex4(m_.main_read16(static_cast<std::uint16_t>(main.cpu.r[6] + 2 * i)));
     throw Stop{Stop::unlifted_main, "no lifted T-11 code at " + hex4(main.cpu.r[7]) + " (banks " + std::to_string(main.bank[0]) +

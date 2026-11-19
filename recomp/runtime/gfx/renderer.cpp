@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 
 #include "gfx.hpp"
 #include "volk.h"
@@ -111,6 +112,19 @@ public:
     Image read_front_buffer() override { return read(color_[front_]); }
     Image read_back_buffer() override { return read(color_[back_]); }
     uint32_t validation_errors() const override { return validation_errors_; }
+    bool overlay(Overlay& out) const override {
+        if (!surface_ || !swapchain_) return false;
+        out.instance = instance_;
+        out.physical_device = gpu_;
+        out.device = device_;
+        out.queue_family = queue_family_;
+        out.queue = queue_;
+        out.format = uint32_t(swapchain_format_);
+        out.images = uint32_t(swapchain_images_.size());
+        out.min_images = std::max<uint32_t>(2, out.images - 1);
+        return true;
+    }
+    void set_overlay(std::function<void(void*)> draw) override { overlay_ = std::move(draw); }
 
 private:
     bool create_instance(std::string* error);
@@ -163,6 +177,8 @@ private:
     VkFormat swapchain_format_ = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchain_extent_{};
     std::vector<VkImage> swapchain_images_;
+    std::vector<VkImageView> swapchain_views_;   // for drawing the overlay
+    std::function<void(void*)> overlay_;
     std::vector<VkSemaphore> rendered_;   // one per swapchain image: the blit is done, present it
     VkSemaphore acquired_ = VK_NULL_HANDLE;
     bool swapchain_stale_ = false;
@@ -444,6 +460,7 @@ void VulkanRenderer::create_swapchain() {
     VkSurfaceCapabilitiesKHR caps{};
     check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_, surface_, &caps), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
     if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) fatal("a window that can be blitted to", VK_ERROR_FEATURE_NOT_PRESENT);
+    // Colour attachment is always supported by a swapchain (the Vulkan spec requires it).
     uint32_t n = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(gpu_, surface_, &n, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(n);
@@ -489,7 +506,7 @@ void VulkanRenderer::create_swapchain() {
     info.imageColorSpace = chosen.colorSpace;
     info.imageExtent = extent;
     info.imageArrayLayers = 1;
-    info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;   // a blit, then the overlay
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
                                                                                           : caps.currentTransform;
@@ -507,6 +524,16 @@ void VulkanRenderer::create_swapchain() {
     vkGetSwapchainImagesKHR(device_, swapchain_, &n, nullptr);
     swapchain_images_.resize(n);
     vkGetSwapchainImagesKHR(device_, swapchain_, &n, swapchain_images_.data());
+    for (VkImage image : swapchain_images_) {
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = swapchain_format_;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkImageView created_view = VK_NULL_HANDLE;
+        check(vkCreateImageView(device_, &view, nullptr, &created_view), "vkCreateImageView");
+        swapchain_views_.push_back(created_view);
+    }
     const VkSemaphoreCreateInfo sem{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     rendered_.resize(n);
     for (VkSemaphore& s : rendered_) check(vkCreateSemaphore(device_, &sem, nullptr, &s), "vkCreateSemaphore");
@@ -517,6 +544,8 @@ void VulkanRenderer::destroy_swapchain() {
     vkDeviceWaitIdle(device_);
     for (VkSemaphore s : rendered_) vkDestroySemaphore(device_, s, nullptr);
     rendered_.clear();
+    for (VkImageView v : swapchain_views_) vkDestroyImageView(device_, v, nullptr);
+    swapchain_views_.clear();
     swapchain_images_.clear();
     if (swapchain_) vkDestroySwapchainKHR(device_, swapchain_, nullptr);
     swapchain_ = VK_NULL_HANDLE;
@@ -580,8 +609,30 @@ void VulkanRenderer::show(Target& frame) {
     blit.dstOffsets[1] = {x + w, y + h, 1};
     vkCmdBlitImage(cmd_, frame.image, frame.layout, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                    whole ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
-    barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-            VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+    if (overlay_) {
+        // The overlay draws over the picture, in a pass of its own on the window's image.
+        barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = swapchain_views_[index];
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        info.renderArea = {{0, 0}, swapchain_extent_};
+        info.layerCount = 1;
+        info.colorAttachmentCount = 1;
+        info.pColorAttachments = &color;
+        vkCmdBeginRendering(cmd_, &info);
+        overlay_(cmd_);
+        vkCmdEndRendering(cmd_);
+        barrier(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+    } else {
+        barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+    }
     submit(acquired_, rendered_[index]);
 
     VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};

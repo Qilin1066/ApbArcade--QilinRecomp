@@ -251,6 +251,49 @@ add_test(NAME qilin_sound_lifter_check COMMAND qilin_sound_lifter_check "${QILIN
 #   build/apb <rom-dir>          the game, in a window
 #   build/qilin_run <rom-dir>    headless, with scripted inputs
 option(QILIN_FETCH_SDL3 "Fetch SDL3 (pinned release, linked statically) when no installed SDL3 is found" ON)
+
+# ---- The player's side: window, input, the settings menu (SDL3, Dear ImGui) ----
+# SDL3 (zlib licence): an installed one, else fetched at a pinned release and
+# linked statically, else no apb (with a message). The controls layer and the
+# menu are built without your ROMs too, so CI compiles them and tests the
+# controls on SDL's virtual joysticks.
+find_package(SDL3 CONFIG QUIET)
+if(NOT SDL3_FOUND AND QILIN_FETCH_SDL3)
+    include(FetchContent)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(SDL3 GIT_REPOSITORY https://github.com/libsdl-org/SDL.git GIT_TAG release-3.4.20 GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(SDL3)
+    set(SDL3_FOUND TRUE)
+endif()
+if(SDL3_FOUND)
+    # Dear ImGui (MIT) for the settings menu: its core and its SDL3 and
+    # Vulkan backends, the latter loading Vulkan through volk as the renderer does.
+    add_library(qilin_imgui STATIC
+        third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
+        third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_sdl3.cpp
+        third_party/imgui/backends/imgui_impl_vulkan.cpp)
+    target_include_directories(qilin_imgui PUBLIC third_party/imgui third_party/imgui/backends)
+    target_compile_definitions(qilin_imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+    target_link_libraries(qilin_imgui PUBLIC qilin_volk SDL3::SDL3)
+    if(MSVC)
+        target_compile_options(qilin_imgui PRIVATE /W0)
+    else()
+        target_compile_options(qilin_imgui PRIVATE -w)
+    endif()
+    # The controls (any wheel, pedals, gamepads, mice) and the settings menu.
+    add_library(qilin_app STATIC recomp/runtime/app/input.cpp recomp/runtime/app/menu.cpp)
+    target_include_directories(qilin_app PUBLIC recomp/runtime/app)
+    target_link_libraries(qilin_app PUBLIC qilin_board qilin_gfx qilin_imgui SDL3::SDL3 PRIVATE qilin_warnings)
+    # The controls on SDL's virtual joysticks: a wheel and pedals (no window or device needed).
+    add_executable(qilin_input_tests recomp/runtime/app/input_tests.cpp)
+    target_link_libraries(qilin_input_tests PRIVATE qilin_app qilin_warnings)
+    qilin_tool(qilin_input_tests)
+    add_test(NAME qilin_input_tests COMMAND qilin_input_tests)
+endif()
+
 if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     add_library(qilin_game STATIC recomp/runtime/game/game.cpp ${QILIN_GEN_SOURCES} ${QILIN_SOUND_GEN_SOURCES})
     target_include_directories(qilin_game PUBLIC recomp/runtime/game "${QILIN_GEN_DIR}" "${QILIN_SOUND_GEN_DIR}")
@@ -267,22 +310,9 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     target_link_libraries(qilin_handoff PRIVATE qilin_game qilin_core qilin_mame_t11 qilin_mame_m6502 qilin_warnings)
     qilin_tool(qilin_handoff)
 
-    # SDL3 for the window and input: an installed one, else fetched at a
-    # pinned release and linked statically, else no apb (with a message).
-    find_package(SDL3 CONFIG QUIET)
-    if(NOT SDL3_FOUND AND QILIN_FETCH_SDL3)
-        include(FetchContent)
-        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-        set(SDL_STATIC ON CACHE BOOL "" FORCE)
-        set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-        set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(SDL3 GIT_REPOSITORY https://github.com/libsdl-org/SDL.git GIT_TAG release-3.4.20 GIT_SHALLOW TRUE)
-        FetchContent_MakeAvailable(SDL3)
-        set(SDL3_FOUND TRUE)
-    endif()
-    if(SDL3_FOUND)
+    if(TARGET qilin_app)
         add_executable(apb recomp/runtime/app/apb.cpp)
-        target_link_libraries(apb PRIVATE qilin_game qilin_core qilin_video qilin_audio qilin_gfx SDL3::SDL3 qilin_warnings)
+        target_link_libraries(apb PRIVATE qilin_app qilin_game qilin_core qilin_video qilin_audio qilin_gfx SDL3::SDL3 qilin_warnings)
     else()
         message(STATUS "apb: not built (no SDL3 found and QILIN_FETCH_SDL3 is OFF)")
     endif()

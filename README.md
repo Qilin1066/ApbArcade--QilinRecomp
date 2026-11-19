@@ -111,9 +111,18 @@ build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N] [--mute]
 | Button 1 / 2 / 3 (MAME's numbering) | Left Ctrl or Z / Left Alt or X / Space or C | A / B / X |
 | Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
 | Self-test switch | F2 (toggles) | |
-| Quit | Escape | |
+| Settings menu (pauses the game) | F1 or Escape | Back + Start, or Guide |
 
-The EEPROM (high scores, audits, settings) is saved in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs, `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound.
+**Wheels, pedals, spinners.** The settings menu sets them up; nothing is needed for the keyboard or a gamepad. APB's cabinet wheel spins freely and the game counts how far it turns, so a PC wheel drives it by how far its angle moves each frame:
+
+- **Direct-drive wheels** (a Moza R5, say): pick *Wheel*, press *Find it* and turn the wheel. Set *Rotation* to what the wheel's own software uses (Moza Pit House, Logitech G HUB, ...), or press *Measure* and turn it one full turn. Open the wheel's range up as far as its software allows and it plays like the cabinet's.
+- **Wheels that stop at a lock** (a Logitech G920 at 900 degrees): the same, and *Keep turning while the wheel is held at its lock* lets you hold it against the lock to keep turning, faster the harder into it.
+- **Force feedback**: no centring spring (the cabinet's wheel has none) and an adjustable friction, so it doesn't spin on by itself.
+- **Pedals** (often a separate USB device): *Set up a pedal*, press it to the floor and let it go, *Done*. Pedals that rest at either end of their axis both work.
+- **Buttons**: any button, key, hat or axis on any device can be added to each cabinet button and coin.
+- **Mouse or spinner**: steers by how far it moves.
+
+Settings are saved to `apb.ini`, and the EEPROM (high scores, audits, the game's own settings) to `eeprom.bin`, both in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs, `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound.
 
 ## Layout
 

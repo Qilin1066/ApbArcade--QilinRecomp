@@ -31,6 +31,18 @@ struct Config {
     bool vsync = true;                             // FIFO; otherwise mailbox or immediate where offered
 };
 
+// What a UI drawn over the window (the settings menu) needs to draw with
+// Vulkan, as plain handles so this header stays free of Vulkan's.
+struct Overlay {
+    void* instance = nullptr;         // VkInstance
+    void* physical_device = nullptr;  // VkPhysicalDevice
+    void* device = nullptr;           // VkDevice
+    uint32_t queue_family = 0;
+    void* queue = nullptr;            // VkQueue
+    uint32_t format = 0;              // the window images' VkFormat
+    uint32_t min_images = 2, images = 2;
+};
+
 struct Rect {
     int32_t x = 0, y = 0;
     uint32_t w = 0, h = 0;
@@ -77,6 +89,13 @@ public:
     // or the back buffer as drawn so far.
     virtual Image read_front_buffer() = 0;
     virtual Image read_back_buffer() = 0;
+
+    // A UI over the window: the handles it draws with (false without a
+    // window), and the drawing, called with the VkCommandBuffer (as void*)
+    // inside a dynamic-rendering pass on the window's image after the frame
+    // is shown there, every present. An empty function stops it.
+    virtual bool overlay(Overlay& out) const = 0;
+    virtual void set_overlay(std::function<void(void* command_buffer)> draw) = 0;
 
     // Validation messages of error severity so far (0 without the layers).
     virtual uint32_t validation_errors() const = 0;
