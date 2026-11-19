@@ -181,6 +181,35 @@ int main() {
     frame(input, in);
     CHECK((in.in0 & 0x0080) != 0 && in.adc[1] == 0x3f);
 
+    // A gamepad plugged in while running (an Xbox controller, say), with the
+    // default settings: A is button 1, Back a coin, the right trigger the
+    // gas, the left stick the steering, with nothing set up.
+    input.settings = app::Settings{};
+    input.configure();
+    input.playing = true;
+    SDL_Joystick* pad = attach("Test gamepad", SDL_JOYSTICK_TYPE_GAMEPAD, SDL_GAMEPAD_AXIS_COUNT, SDL_GAMEPAD_BUTTON_COUNT);
+    CHECK(pad != nullptr);
+    frame(input, in);
+    CHECK(input.devices().size() == 3 && input.devices().back().gamepad != nullptr);
+    frame(input, in);
+    CHECK((in.in0 & 0x0080) != 0 && (in.in1 & 0x40) != 0);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, true);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, true);
+    frame(input, in);
+    CHECK((in.in0 & 0x0080) == 0 && (in.in1 & 0x40) == 0);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, false);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, false);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 32767);
+    const std::uint8_t dial = in.leta[0];
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    CHECK((in.in0 & 0x0080) != 0 && in.adc[1] == 0);   // the gas floored (APB's ADC reads 0 there)
+    CHECK(static_cast<std::uint8_t>(in.leta[0] - dial) > 20);   // turning right
+    SDL_DetachVirtualJoystick(SDL_GetJoystickID(pad));
+    SDL_CloseJoystick(pad);
+    frame(input, in);
+    CHECK(input.devices().size() == 2);
+
     owner.reset();
     SDL_CloseJoystick(wheel);
     SDL_CloseJoystick(pedals);

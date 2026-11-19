@@ -1,4 +1,6 @@
 #include "input.hpp"
+
+#include <cstdio>
 #include "text.hpp"
 
 #include <algorithm>
@@ -243,12 +245,19 @@ void Input::add(SDL_JoystickID id) {
     Device d;
     d.id = id;
     d.joystick = SDL_OpenJoystick(id);
-    if (!d.joystick) return;
+    if (!d.joystick) {
+        const char* name = SDL_GetJoystickNameForID(id);
+        std::fprintf(stderr, "apb: couldn't open the controller %s: %s\n", name ? name : "(no name)", SDL_GetError());
+        return;
+    }
     if (SDL_IsGamepad(id)) d.gamepad = SDL_OpenGamepad(id);
     d.guid = guid_of(id);
     const char* name = SDL_GetJoystickName(d.joystick);
     d.name = name ? name : "controller";
     d.type = SDL_GetJoystickType(d.joystick);
+    std::printf("apb: controller connected: %s (%s%s)\n", d.name.c_str(), type_name(d.type),
+                d.gamepad ? "; buttons and sticks as a gamepad" : "; raw axes and buttons only");
+    std::fflush(stdout);
     devices_.push_back(std::move(d));
     start_force(devices_.back());
 }
@@ -259,6 +268,8 @@ void Input::remove(SDL_JoystickID id) {
     if (it->haptic) SDL_CloseHaptic(it->haptic);
     if (it->gamepad) SDL_CloseGamepad(it->gamepad);
     SDL_CloseJoystick(it->joystick);
+    std::printf("apb: controller disconnected: %s\n", it->name.c_str());
+    std::fflush(stdout);
     devices_.erase(it);
 }
 

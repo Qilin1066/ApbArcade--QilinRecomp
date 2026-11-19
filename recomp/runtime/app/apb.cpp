@@ -117,6 +117,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: apb <rom-dir> [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n");
         return 2;
     }
+    // Controllers count when the window isn't the active one too: started
+    // from a terminal, the focus can stay there, and SDL would otherwise
+    // ignore every controller until the window is clicked.
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "apb: SDL: %s\n", SDL_GetError());
         return 1;
