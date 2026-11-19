@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -470,18 +471,40 @@ int lift(const std::vector<std::string_view>& args) {
     const std::filesystem::path out(out_dir);
     std::error_code error;
     std::filesystem::create_directories(out, error);
-    std::size_t bytes = 0;
+    // Files already as they'd be written are left alone, so a build doesn't
+    // recompile them; files an earlier lift wrote that this one doesn't
+    // (this lifter's prefix, .cpp or .hpp) are removed, as the build compiles
+    // every .cpp in the folder.
+    std::size_t bytes = 0, changed = 0, removed = 0;
+    std::set<std::string> written;
     for (const auto& [name, text] : files) {
+        written.insert(name);
+        bytes += text.size();
+        if (std::ifstream existing{out / name, std::ios::binary}) {
+            const std::string old((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
+            if (old == text) continue;
+        }
         std::ofstream stream(out / name, std::ios::binary | std::ios::trunc);
         stream << text;
         if (!stream) {
             std::print(stderr, "qilin: can't write {}\n", (out / name).string());
             return 1;
         }
-        bytes += text.size();
+        ++changed;
     }
-    std::print("Lifted {} {} functions ({} instructions with shared code counted per function) into {} files, {} KiB, in {}.\n",
-               functions, sound ? "6502" : "T-11", instructions, files.size(), bytes / 1024, out.string());
+    const std::string prefix = sound ? "sound" : "lifted";
+    for (const auto& entry : std::filesystem::directory_iterator(out, error)) {
+        const std::string name = entry.path().filename().string();
+        const std::string ext = entry.path().extension().string();
+        if (entry.is_regular_file() && name.starts_with(prefix) && (ext == ".cpp" || ext == ".hpp") && !written.contains(name)) {
+            std::filesystem::remove(entry.path(), error);
+            ++removed;
+        }
+    }
+    std::print("Lifted {} {} functions ({} instructions with shared code counted per function) into {} files, {} KiB, in {}: "
+               "{} written, {} unchanged{}.\n",
+               functions, sound ? "6502" : "T-11", instructions, files.size(), bytes / 1024, out.string(), changed,
+               files.size() - changed, removed ? std::format(", {} left over from an earlier lift removed", removed) : std::string());
     return 0;
 }
 

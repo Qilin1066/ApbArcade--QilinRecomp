@@ -90,14 +90,27 @@ build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--on
 
 ### Playing it
 
-Lift both CPUs and build with the lifted code; `apb` needs SDL3, which CMake uses if it's installed and otherwise fetches (release 3.4.20, linked statically; `-DQILIN_FETCH_SDL3=OFF` to never fetch). Rev 7 needs no seeds: the analysis finds everything the game runs. (Seeds, `--seeds`, are still read: the entries only a run of the game can find, from `qilin_refrun --seeds-out`, for a ROM the analysis doesn't fully cover.)
+**The quick way:** one script builds the recompiler, lifts both CPUs from your ROMs and builds the game. Run it again after `git pull`; only what changed is rebuilt.
+
+```
+# Windows, in "Developer PowerShell for VS 2022" (Visual Studio 2022 17.10 or newer):
+cd D:\ApbArcade-QilinComp
+powershell -ExecutionPolicy Bypass -File tools\build-apb.ps1 -RomDir "D:\APB Arcade Project" -Run
+
+# Linux or macOS:
+tools/build-apb.sh "/path/to/APB ROMs" --run
+```
+
+`apb` remembers the ROM folder: after the first run it starts with no arguments (on Windows, double-click `build-apb\Release\apb.exe`). With no folder saved, or one that no longer holds a verified set, it asks with a folder picker. Controllers it finds, connects or loses are shown for a few seconds in the window's corner, and printed to the console.
+
+**By hand:** lift both CPUs and build with the lifted code; `apb` needs SDL3, which CMake uses if it's installed and otherwise fetches (release 3.4.20, linked statically; `-DQILIN_FETCH_SDL3=OFF` to never fetch). Rev 7 needs no seeds: the analysis finds everything the game runs. (Seeds, `--seeds`, are still read: the entries only a run of the game can find, from `qilin_refrun --seeds-out`, for a ROM the analysis doesn't fully cover.)
 
 ```sh
 build/qilin lift "D:/APB Arcade Project" --out gen
 build/qilin lift "D:/APB Arcade Project" --cpu sound --out gen-sound
 cmake -S . -B build -DQILIN_GEN_DIR="$PWD/gen" -DQILIN_SOUND_GEN_DIR="$PWD/gen-sound" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target apb qilin_run
-build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N] [--mute]
+build/apb ["D:/APB Arcade Project"] [--scale N] [--no-vsync] [--gpu N] [--mute]
 ```
 
 | Cabinet | Keyboard | Gamepad |
