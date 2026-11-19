@@ -2,18 +2,27 @@
 # ROMs, then the game. Run it again after a `git pull`: only what changed is
 # rebuilt (the lift leaves unchanged files alone).
 #
-#   powershell -ExecutionPolicy Bypass -File tools\build-apb.ps1 [-RomDir <folder>] [-Run]
+#   powershell -ExecutionPolicy Bypass -File tools\build-apb.ps1 [-RomDir <folder>] [-Run] [-Pull]
 #
-# On Windows, run it from "Developer PowerShell for VS 2022" (it needs
-# Visual Studio 2022 17.10 or newer and its CMake). With no -RomDir it uses
-# the folder apb last used (apb.ini), else asks. -Run starts the game after.
+# On Windows, "Play APB.bat" and "Update APB.bat" in the project's folder run
+# it for you: double-click them. It needs Visual Studio 2022 17.10 or newer
+# (with "Desktop development with C++") and finds its CMake and Git itself,
+# from any window. With no -RomDir it uses the folder apb last used
+# (apb.ini), else asks with a folder picker. -Run starts the game after;
+# -Pull fetches the latest code first.
 # The lifted code goes to gen\ and gen-sound\, which git ignores: it's made
 # from your ROMs and never leaves your computer.
 param(
     [string]$RomDir = "",
-    [switch]$Run
+    [switch]$Run,
+    [switch]$Pull      # git pull first (Update APB.bat)
 )
 $ErrorActionPreference = "Stop"
+trap {   # any failure: say what in one red line, and end with an error code
+    Write-Host ""
+    Write-Host "Stopped: $_" -ForegroundColor Red
+    exit 1
+}
 $root = Split-Path -Parent $PSScriptRoot
 $onWindows = ($PSVersionTable.PSEdition -eq "Desktop") -or $IsWindows   # Windows PowerShell 5.1 has no $IsWindows
 
@@ -29,9 +38,35 @@ function Find-Built([string[]]$candidates) {
     throw "built, but none of these exists: $($candidates -join ', ')"
 }
 
-if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-    Write-Host "CMake isn't on the PATH. Open 'Developer PowerShell for VS 2022' from the Start menu and run this again." -ForegroundColor Red
-    exit 1
+# CMake and Git: on the PATH, else the ones Visual Studio installs, else the usual places.
+function Add-Tool([string]$name, [string[]]$folders) {
+    if (Get-Command $name -ErrorAction SilentlyContinue) { return $true }
+    foreach ($f in $folders) {
+        if ($f -and (Test-Path (Join-Path $f "$name.exe"))) {
+            $env:PATH = "$f;$env:PATH"
+            return $true
+        }
+    }
+    return $false
+}
+if ($onWindows) {
+    $vs = ""
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) { $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1 }
+    $ide = if ($vs) { Join-Path $vs "Common7\IDE\CommonExtensions\Microsoft" } else { "" }
+    $haveCmake = Add-Tool "cmake" @($(if ($ide) { Join-Path $ide "CMake\CMake\bin" }), (Join-Path $env:ProgramFiles "CMake\bin"))
+    $haveGit = Add-Tool "git" @((Join-Path $env:ProgramFiles "Git\cmd"), $(if ($ide) { Join-Path $ide "TeamFoundation\Team Explorer\Git\cmd" }))
+    if (-not $vs) { throw "Visual Studio 2022 wasn't found. Install it (the free Community edition) with 'Desktop development with C++'." }
+    if (-not $haveCmake) { throw "CMake wasn't found. In the Visual Studio Installer, add 'C++ CMake tools for Windows'." }
+    if (-not $haveGit) { throw "Git wasn't found. Install Git for Windows (git-scm.com), or add 'Git for Windows' in the Visual Studio Installer." }
+} elseif (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+    throw "CMake isn't installed."
+}
+
+if ($Pull) {
+    Write-Host "== Getting the latest code" -ForegroundColor Cyan
+    & git -C $root pull --ff-only
+    if ($LASTEXITCODE -ne 0) { throw "git pull failed (exit code $LASTEXITCODE). If you changed files in the project folder, that's why." }
 }
 
 if (-not $RomDir) {
@@ -46,6 +81,14 @@ if (-not $RomDir) {
         $line = Select-String -Path $ini -Pattern '^rom_dir = (.+)$' | Select-Object -First 1
         if ($line) { $RomDir = $line.Matches[0].Groups[1].Value.Trim() }
     }
+}
+if (-not $RomDir -and $onWindows) {
+    Add-Type -AssemblyName System.Windows.Forms
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = "Choose the folder that holds your APB ROMs (the rev 7 set, 36 files)"
+    $dialog.ShowNewFolderButton = $false
+    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $RomDir = $dialog.SelectedPath }
+    else { throw "no ROM folder chosen" }
 }
 if (-not $RomDir) { $RomDir = Read-Host "The folder with your APB ROMs" }
 if (-not (Test-Path $RomDir -PathType Container)) { throw "no such folder: $RomDir" }
@@ -69,5 +112,9 @@ Invoke-Step "Building apb (the first time takes a while)" "cmake" @("--build", $
 $apb = Find-Built @((Join-Path $build "Release/apb$exe"), (Join-Path $build "apb$exe"))
 
 Write-Host "Built: $apb" -ForegroundColor Green
-Write-Host "Run it with:  & `"$apb`"   (it remembers the ROM folder)"
-if ($Run) { & $apb $RomDir }
+if ($Run) {
+    Write-Host "Starting APB..."
+    Start-Process -FilePath $apb -ArgumentList "`"$RomDir`"" -WorkingDirectory (Split-Path -Parent $apb)
+} else {
+    Write-Host "Run it with:  & `"$apb`"   (it remembers the ROM folder)"
+}

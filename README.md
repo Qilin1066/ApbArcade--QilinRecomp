@@ -90,16 +90,16 @@ build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--on
 
 ### Playing it
 
-**The quick way:** one script builds the recompiler, lifts both CPUs from your ROMs and builds the game. Run it again after `git pull`; only what changed is rebuilt.
+**On Windows, double-click.** With Visual Studio 2022 (17.10 or newer, the free Community edition, with "Desktop development with C++") and Git installed, in the project's folder:
 
-```
-# Windows, in "Developer PowerShell for VS 2022" (Visual Studio 2022 17.10 or newer):
-cd D:\ApbArcade-QilinComp
-powershell -ExecutionPolicy Bypass -File tools\build-apb.ps1 -RomDir "D:\APB Arcade Project" -Run
+- **`Play APB.bat`** starts the game. The first time it builds it (15 to 40 minutes), asking for your ROM folder with a folder picker.
+- **`Update APB.bat`** gets the latest code, rebuilds only what changed, and starts the game.
 
-# Linux or macOS:
-tools/build-apb.sh "/path/to/APB ROMs" --run
-```
+Both find Visual Studio's CMake and Git themselves; nothing needs typing. If something stops, the window stays open with the reason in red.
+
+**On Linux or macOS:** `tools/build-apb.sh "/path/to/APB ROMs" --run`. (The same script as the .bat files run is `tools/build-apb.ps1 [-RomDir <folder>] [-Run] [-Pull]`.)
+
+Why no ready-made `apb.exe` to download: the game's code in it is made from the ROMs, so it's built on your computer from your own copy and never distributed.
 
 `apb` remembers the ROM folder: after the first run it starts with no arguments (on Windows, double-click `build-apb\Release\apb.exe`). With no folder saved, or one that no longer holds a verified set, it asks with a folder picker. Controllers it finds, connects or loses are shown for a few seconds in the window's corner, and printed to the console.
 
