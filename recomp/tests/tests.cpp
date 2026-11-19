@@ -809,11 +809,25 @@ void test_controls() {
     Wheel inverted({900, 160, 1.0, 0, true});
     inverted.update(0);
     CHECK(inverted.update(0.1) < 0);
-    // A stick: nothing inside the dead zone, the full rate at full deflection.
+    // A stick: nothing inside the dead zone, the full rate (3) at full
+    // deflection, and the curve: half way over is (0.35 / 0.85)^2 = 17% of it,
+    // 5 counts in 10 frames. Straight (curve 1), 41%: 12. Keys: as asked.
     Rate stick;
     CHECK(stick.update(0.1) == 0);
-    CHECK(stick.update(1.0) == 6);
-    CHECK(stick.update(-1.0) == -6);
+    CHECK(stick.update(1.0) == 3);
+    CHECK(stick.update(-1.0) == -3);
+    int half = 0;
+    for (int i = 0; i < 10; ++i) half += stick.update(0.5);
+    CHECK(half == 5);
+    Rate straight;
+    straight.curve = 1;
+    int straight_half = 0;
+    for (int i = 0; i < 10; ++i) straight_half += straight.update(0.5);
+    CHECK(straight_half == 12);
+    Rate keys;
+    int key_counts = 0;
+    for (int i = 0; i < 10; ++i) key_counts += keys.update_linear(-0.6);
+    CHECK(key_counts == -18);
     // Pedals: a reversed one (1 released, -1 floored), the dead zones, APB's inverted ADC.
     const PedalSettings reversed{1, -1, 0.04};
     CHECK(pedal_travel(1, reversed) == 0);

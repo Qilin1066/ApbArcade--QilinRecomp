@@ -84,7 +84,8 @@ public:
 private:
     int add(double fraction) {
         carry_ += fraction * counts_at_full;
-        const double whole = std::trunc(carry_);
+        // A whole count less a rounding error (0.6 x 3 is 1.7999...) counts as whole.
+        const double whole = std::trunc(carry_ + std::copysign(1e-9, carry_));
         carry_ -= whole;
         return static_cast<int>(whole);
     }
