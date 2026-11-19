@@ -119,9 +119,9 @@ build/apb "D:/APB Arcade Project" [--scale N] [--no-vsync] [--gpu N] [--mute]
 - **Buttons**: any button, key, hat or axis on any device can be added to each cabinet button and coin.
 - **Mouse or spinner**: steers by how far it moves.
 
-**Display.** The menu's Display page: full screen, which display, the picture's size (whole multiples, the sharpest; fit, keeping its shape; or filling the window), smooth or sharp scaling at sizes that aren't whole multiples, vsync, and which graphics device (used from the next start). `--no-vsync` and `--gpu N` override the saved choices for one run. The game always runs at the cabinet's 60.1 frames a second.
+**Display.** The menu's Display page: full screen, which display, the picture's size (whole multiples, the sharpest; fit, keeping its shape; or filling the window), its look (plain pixels, smooth or sharp; smoothed pixel art; or a CRT, with scanlines running down the screen as on the cabinet's upright monitor), vsync, and which graphics device (used from the next start). `--no-vsync` and `--gpu N` override the saved choices for one run. The game always runs at the cabinet's 60.1 frames a second.
 
-Settings are saved to `apb.ini`, and the EEPROM (high scores, audits, the game's own settings) to `eeprom.bin`, both in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs, `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound.
+Settings are saved to `apb.ini`, and the EEPROM (high scores, audits, the game's own settings) to `eeprom.bin`, both in your user preferences folder (SDL's for `Qilin/apb`). `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs (`--look crt:1152x1536` as a window that size would show them, through a look), `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound. `qilin_tween` (a prototype, needs ffmpeg) renders a stretch of a run with frames drawn between the game's, beside the game as it is, to a video.
 
 ## Layout
 

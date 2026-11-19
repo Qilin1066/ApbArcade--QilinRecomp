@@ -11,6 +11,17 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Added
+- **Looks for the picture** (the settings menu's Display page): plain pixels (a blit, as before), smoothed pixel art, or a CRT. Saved in `apb.ini` (`effect`, `crt_scanlines`, `crt_mask`).
+  - *Smoothed pixel art:* an edge-directed upscaler written for this project after the idea of Hyllian's xBR. Where the colours around a pixel's corner say an edge crosses it (at 45 degrees, or shallow or steep at 1:2), the part of the pixel beyond the edge's line takes the neighbour's colour, anti-aliased to one window pixel. Flat areas and straight edges stay exactly as drawn.
+  - *CRT:* each raster line is a beam whose height grows with its brightness, with darker gaps between lines, and an aperture grille's phosphor stripes, added up in linear light. APB's monitor stood upright, so the scanlines run down the screen (`Config::upright_tube`). The gaps fade out below about two window pixels a line, where they'd only make moiré. Scanline and stripe strength are sliders.
+  - The renderer draws an effect with a fragment shader over the picture's rectangle, in a dynamic-rendering pass the menu shares. The shaders are GLSL in `recomp/runtime/gfx/shaders/`, compiled by `compile.sh` (glslc, checked by spirv-val) to SPIR-V kept beside them, so a build needs no shader compiler. No effect is still a blit.
+- **The window's picture without a window** (`Config::output_width`/`output_height`, `read_output()`): `present` also draws what a window that size would show, scaled and through the effect. `qilin_run --look EFFECT:WxH` saves `--frame-out` frames that way. The renderer tests check it plain, smoothed and CRT on llvmpipe with validation.
+- **In-between frames, a prototype** (`qilin_tween`, needs ffmpeg): records each band of each frame (scroll, tile banks, video RAM, the resolved motion objects), then draws frames between the game's at in-between scroll and sprite positions, at a raised resolution so fractions of a pixel show. Each sprite is matched to the next frame's (the same sprite within 32 pixels, or one of the same colour and size within 16, as when a car turns), and the text layer and palette come from the nearer frame. It checks itself first: each recorded frame drawn at t = 0 is the reference renderer's, pixel for pixel (601 of 601). In a random game, 1,797 of 1,800 in-between frames could be interpolated and 95% of sprites were matched. It writes a video with the game as it is beside the in-between version.
+
+### Fixed
+- **The black borders around the picture were cleared transparent** (alpha 0). They're opaque now, so a compositor that honours a window's alpha can't show through them.
+
 ## [0.16.0] - 2026-11-19
 The whole game, natively, the same as MAME's cores frame for frame: both CPUs' lifted code on the board model, the video, the sound and the speech, and `apb`, the game in a window with a settings menu for any wheel, pedal, gamepad or spinner and for the display. Attract mode, a credited game, self-test and random games of up to 60,000 frames give the same picture on every frame as MAME's own T-11 and 6502 cores (`--frame-hashes`), on x86-64 and on ARM64. Rev 7 now needs no seeds: the analysis alone finds everything the game runs. Checked against MAME 0.264 itself: the same pictures, and the same sound (correlation 0.9985, every band that carries it within 0.4 dB).
 
