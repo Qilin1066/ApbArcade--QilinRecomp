@@ -27,6 +27,7 @@ struct Board {
     void write8(std::uint16_t a, std::uint8_t v) { machine->main_write8(a, v); }
     void service();
     void wait();
+    bool interrupt_due();
     void reset_output() {}   // nothing on System 2 listens to the T-11's RESET output
     void unlifted();
 };

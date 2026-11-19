@@ -177,6 +177,7 @@ Program Program::analyze_once(const rom::RomSet& rom, const std::vector<Loc>& se
         grew = p.seed_prologues() || grew;
         grew = p.seed_bank_tables() || grew;
         if (!grew) grew = p.seed_data_pointers();   // last: only once nothing better is left
+        if (!grew) grew = p.seed_gaps();            // and last of all, what nothing reaches
         for (const auto& [vector, handlers] : std::map(p.vectors_)) {
             for (const auto handler : handlers) {
                 const Loc entry{handler, 0};
@@ -762,6 +763,91 @@ bool Program::seed_bank_tables() {
 // decodes like real code (strictly: no traps, RTT or repeated branches,
 // joining known code or ending a path) is taken as an entry. Data whose
 // values happen to land on code only adds lifted entries nobody calls.
+// Whether exploring from entry adds only clean code: everything it reaches
+// that wasn't known code decodes without traps, halts, odd PC modes, leaving
+// ROM, or computed jumps other than the table forms resolve_tables sizes
+// (ADD X(Rn),PC and JMP @X(Rn) with X in ROM). Data that decodes well for a
+// few instructions rarely survives that. Landing inside another instruction
+// is allowed: real code does it (a skip over an operand), and APB's does it
+// in code only data pointers reach.
+bool Program::explores_cleanly(Loc entry, Banks banks) const {
+    Program trial = *this;
+    const std::size_t before = trial.findings_.size();
+    trial.functions_.insert(entry);
+    trial.explore(entry, banks);
+    const auto table_form = [&](const Finding& f) {
+        const auto n = trial.nodes_.find(f.at);
+        if (n == trial.nodes_.end()) return false;
+        const auto& insn = n->second.insn;
+        const bool add_pc = insn.op == Op::add && insn.dst.mode == 0 && insn.dst.reg == 7 && insn.src.mode == t11::index &&
+                            insn.src.reg <= 5 && insn.src.word >= 0x4000;
+        const bool jmp_indexed = insn.op == Op::jmp && insn.dst.mode == t11::index_deferred && insn.dst.reg <= 5 &&
+                                 insn.dst.word >= 0x4000;
+        return add_pc || jmp_indexed;
+    };
+    return std::none_of(trial.findings_.begin() + static_cast<std::ptrdiff_t>(before), trial.findings_.end(),
+                        [&](const Finding& f) {
+                            switch (f.issue) {
+                            case Issue::computed_call: case Issue::unknown_bank: case Issue::byte_bank_write:
+                            case Issue::overlap:
+                                return false;
+                            case Issue::computed_jump:
+                                return !table_form(f);
+                            default:
+                                return true;
+                            }
+                        }) &&
+           std::all_of(trial.nodes_.begin(), trial.nodes_.end(), [&](const auto& n) {
+               return nodes_.contains(n.first) || (n.second.insn.legal && n.second.flow != Flow::trap &&
+                                                   n.second.flow != Flow::halt && n.second.flow != Flow::rti);
+           });
+}
+
+// Gaps: stretches of the fixed ROM and the code banks that are neither code
+// nor tables after everything else, whose first word decodes strictly like
+// code and explores cleanly, are lifted too, as speculative entries. Code
+// nothing found a way into (unused, or reached in ways no analysis or run
+// has seen) is then there if control ever arrives at its start; data that
+// passes only adds lifted code nobody runs.
+bool Program::seed_gaps() {
+    std::set<std::uint32_t> taken = table_words();
+    for (const auto& [loc, node] : nodes_) {
+        const unsigned n = node.insn.legal ? node.insn.words : 1u;
+        for (unsigned i = 0; i < n; ++i) taken.insert(Loc{static_cast<std::uint16_t>(loc.pc + 2 * i), loc.bank}.physical());
+    }
+    std::vector<std::pair<Loc, int>> starts;
+    const auto scan = [&](std::uint32_t physical, std::uint32_t size, std::uint16_t cpu_base, int window, std::uint8_t bank) {
+        bool previous_taken = true;
+        for (std::uint32_t offset = 0; offset < size; offset += 2) {
+            const bool now_taken = taken.contains(physical + offset);
+            if (!now_taken && previous_taken && rom_->word(rom::Region::main_cpu, physical + offset)) {
+                starts.emplace_back(Loc{static_cast<std::uint16_t>(cpu_base + offset), bank}, window);
+            }
+            previous_taken = now_taken;
+        }
+    };
+    scan(0x8000, 0x8000, 0x8000, -1, 0);
+    for (const auto& [bank, window] : bank_windows_) {
+        scan(0x10000 + bank * 0x2000, 0x2000, static_cast<std::uint16_t>(window == 1 ? 0x6000 : 0x4000), window,
+             static_cast<std::uint8_t>(bank));
+    }
+    bool grew = false;
+    for (const auto& [entry, window] : starts) {
+        if (nodes_.contains(entry) || operand_words_.contains(entry) || rejected_gaps_.contains(entry)) continue;
+        Banks banks;
+        if (window >= 0) banks.b[window] = entry.bank;
+        if (!plausible_code(entry, true) || !explores_cleanly(entry, banks)) {
+            rejected_gaps_.insert(entry);
+            continue;
+        }
+        functions_.insert(entry);
+        gap_entries_.insert(entry);
+        explore(entry, banks);
+        grew = true;
+    }
+    return grew;
+}
+
 bool Program::seed_data_pointers() {
     std::set<std::uint32_t> code_words;
     for (const auto& [loc, node] : nodes_) {
@@ -816,44 +902,7 @@ bool Program::seed_data_pointers() {
         if (window >= 0) {
             banks.b[window] = entry.bank;
         }
-        // It must explore cleanly too: everything it reaches that wasn't
-        // known code decodes without traps, halts, odd PC modes, leaving ROM,
-        // or computed jumps other than the table forms resolve_tables sizes
-        // (ADD X(Rn),PC and JMP @X(Rn)). Data that decodes well for a few
-        // instructions rarely survives that. Landing inside another
-        // instruction is allowed: real code does it (a skip over an
-        // operand), and APB's does it in code only data pointers reach.
-        Program trial = *this;
-        const std::size_t before = trial.findings_.size();
-        trial.functions_.insert(entry);
-        trial.explore(entry, banks);
-        const auto table_form = [&](const Finding& f) {
-            const auto n = trial.nodes_.find(f.at);
-            if (n == trial.nodes_.end()) return false;
-            const auto& insn = n->second.insn;
-            // A table in ROM: an index base in RAM is a computed jump, not a table.
-            const bool add_pc = insn.op == Op::add && insn.dst.mode == 0 && insn.dst.reg == 7 && insn.src.mode == t11::index &&
-                                insn.src.reg <= 5 && insn.src.word >= 0x4000;
-            const bool jmp_indexed = insn.op == Op::jmp && insn.dst.mode == t11::index_deferred && insn.dst.reg <= 5 &&
-                                     insn.dst.word >= 0x4000;
-            return add_pc || jmp_indexed;
-        };
-        const bool clean = std::none_of(trial.findings_.begin() + static_cast<std::ptrdiff_t>(before), trial.findings_.end(),
-                                        [&](const Finding& f) {
-                                            switch (f.issue) {
-                                            case Issue::computed_call: case Issue::unknown_bank: case Issue::byte_bank_write:
-                                            case Issue::overlap:
-                                                return false;
-                                            case Issue::computed_jump:
-                                                return !table_form(f);
-                                            default:
-                                                return true;
-                                            }
-                                        }) &&
-                           std::all_of(trial.nodes_.begin(), trial.nodes_.end(), [&](const auto& n) {
-                               return nodes_.contains(n.first) || (n.second.insn.legal && n.second.flow != Flow::trap &&
-                                                                   n.second.flow != Flow::halt && n.second.flow != Flow::rti);
-                           });
+        const bool clean = explores_cleanly(entry, banks);
         if (!clean) {
             rejected_data_pointers_.insert(entry);
             continue;

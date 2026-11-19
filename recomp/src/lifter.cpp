@@ -111,7 +111,7 @@ private:
     void transfer(Loc target);                 // goto within the function, or leave
     void leave(const std::string& pc);          // write state back and return, PC = pc
     void call(const std::string& target, std::optional<Loc> static_target, std::uint16_t return_pc);
-    void service_point(std::uint16_t resume_pc);
+    void service_point(std::uint16_t resume_pc, bool when_due = false);
     void table_switch(const cfg::Node& node, const std::string& pc);   // goto a table's targets, else fall through
 
     const cfg::Program& program_;
@@ -256,10 +256,12 @@ void FunctionWriter::leave(const std::string& pc) {
     line(std::format("QL_SYNC(); c.r[7] = {}; return;", pc));
 }
 
-void FunctionWriter::service_point(std::uint16_t resume_pc) {
+// when_due: also when an interrupt would be taken now (after MTPS, where
+// MAME checks the lines at once, not at the end of the timeslice).
+void FunctionWriter::service_point(std::uint16_t resume_pc, bool when_due) {
     const auto index = resumes_.size();
     resumes_.emplace_back(resume_pc, at_);
-    line(std::format("if (ic <= 0) [[unlikely]] {{ resume = {}; goto service; }}", index));
+    line(std::format("if (ic <= 0{}) [[unlikely]] {{ resume = {}; goto service; }}", when_due ? " || b.interrupt_due()" : "", index));
     body_ += std::format("S{}:\n", index);
     straight_cycles_ = 0;
 }
@@ -381,7 +383,8 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
     case Op::rtt:
         line("t = b.read16(static_cast<std::uint16_t>(r6 & 0xFFFE)); r6 = static_cast<std::uint16_t>(r6 + 2);");
         line("res = b.read16(static_cast<std::uint16_t>(r6 & 0xFFFE)); r6 = static_cast<std::uint16_t>(r6 + 2);");
-        line("QL_SYNC(); c.r[7] = t; c.psw = static_cast<std::uint8_t>(res); return;");
+        // MAME checks the interrupt lines at once after RTI and RTT.
+        line("QL_SYNC(); c.r[7] = t; c.psw = static_cast<std::uint8_t>(res); if (b.interrupt_due()) [[unlikely]] b.service(); return;");
         return ok_;
     case Op::rts: {
         const unsigned r = i.reg;
@@ -569,7 +572,7 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
         // PSW = (PSW & ~0xEF) | (dst & 0xEF): T is kept.
         line("c.psw = static_cast<std::uint8_t>((c.psw & 0x10) | (dst & 0xE0)); n = (dst >> 3) & 1; z = (dst >> 2) & 1; v = (dst >> 1) & 1; cf = dst & 1;");
         if (fall) {
-            service_point(next_pc);   // MAME checks interrupts after MTPS
+            service_point(next_pc, true);   // MAME checks interrupts at once after MTPS
         }
         break;
     default: {

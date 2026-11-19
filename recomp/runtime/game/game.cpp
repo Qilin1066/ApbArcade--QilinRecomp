@@ -8,6 +8,7 @@
 namespace qilin::rt {
 void Board::service() { scheduler->main_service(); }
 void Board::wait() { scheduler->main_wait(); }
+bool Board::interrupt_due() { return scheduler->main_interrupt_due(); }
 void Board::unlifted() { scheduler->unlifted_main(); }
 } // namespace qilin::rt
 
@@ -123,6 +124,10 @@ void Scheduler::main_wait() {
 
 // MAME's t11_check_irqs and take_interrupt: the vector's PC and PSW are read
 // before PSW and PC are pushed; 114 cycles.
+bool Scheduler::main_interrupt_due() const {
+    return irq_table[m_.main_cp_lines() & 15].priority > (main.cpu.psw & 0340);
+}
+
 bool Scheduler::take_main_interrupt() {
     const auto& irq = irq_table[m_.main_cp_lines() & 15];
     if (irq.priority <= (main.cpu.psw & 0340)) return false;

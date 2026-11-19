@@ -121,6 +121,8 @@ public:
     [[nodiscard]] const std::set<Loc>& bank_table_entries() const noexcept { return bank_table_entries_; }
     // Entries found as code pointers in ROM data (records, call tables).
     [[nodiscard]] const std::set<Loc>& data_pointer_entries() const noexcept { return data_pointer_entries_; }
+    // Speculative entries: starts of gaps no analysis reached that decode like code.
+    [[nodiscard]] const std::set<Loc>& gap_entries() const noexcept { return gap_entries_; }
     // The window each bank runs in, from its absolute references to itself.
     [[nodiscard]] const std::map<unsigned, int>& bank_windows() const noexcept { return bank_windows_; }
     // Window addresses stored as pointers: code whose bank is set elsewhere.
@@ -142,6 +144,8 @@ private:
     bool seed_prologues();
     bool seed_bank_tables();
     bool seed_data_pointers();
+    bool seed_gaps();
+    [[nodiscard]] bool explores_cleanly(Loc entry, Banks banks) const;
     void find_bank_windows();
 
     void add(Loc loc, Banks banks, Work& work);
@@ -174,6 +178,8 @@ private:
     std::set<Loc> data_pointer_entries_;
     std::set<std::uint32_t> bank_table_words_;   // the code banks' entry tables (physical offsets)
     std::set<Loc> rejected_data_pointers_;
+    std::set<Loc> gap_entries_;
+    std::set<Loc> rejected_gaps_;
     std::map<unsigned, int> bank_windows_;
 };
 

@@ -260,6 +260,12 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     target_link_libraries(qilin_run PRIVATE qilin_game qilin_core qilin_video qilin_audio qilin_gfx qilin_warnings)
     qilin_tool(qilin_run)
 
+    # The native run handed over to MAME's cores at a frame, to tell native faults from the game's own.
+    add_executable(qilin_handoff tools/handoff/handoff.cpp)
+    target_include_directories(qilin_handoff PRIVATE tools/common)
+    target_link_libraries(qilin_handoff PRIVATE qilin_game qilin_core qilin_mame_t11 qilin_mame_m6502 qilin_warnings)
+    qilin_tool(qilin_handoff)
+
     # SDL3 for the window and input: an installed one, else fetched at a
     # pinned release and linked statically, else no apb (with a message).
     find_package(SDL3 CONFIG QUIET)

@@ -54,6 +54,7 @@ public:
     // Called by the boards.
     void main_service();
     void main_wait();
+    [[nodiscard]] bool main_interrupt_due() const;
     void sound_service();
     [[noreturn]] void unlifted_main();
     [[noreturn]] void unlifted_sound();

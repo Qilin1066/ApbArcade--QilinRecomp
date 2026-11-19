@@ -956,7 +956,50 @@ struct Interpreter {
     }
 };
 
-Program Program::analyze(std::span<const std::uint8_t> memory, const std::vector<std::uint16_t>& seeds) {
+namespace {
+
+// Code nothing reaches: a stretch of ROM outside every instruction found
+// whose first byte starts straight-line code of documented opcodes, within
+// ROM and clear of known code, ending in RTS, RTI or JMP within 64
+// instructions (no BRK, KIL or branch out of ROM). APB's sound program has
+// a few routines like that (unused handlers, or ones only a command no run
+// has sent reaches); they are lifted as entries, so control arriving at one
+// finds lifted code.
+std::vector<std::uint16_t> gap_starts(const Program& program, std::span<const std::uint8_t> memory) {
+    std::vector<bool> taken(0x10000, false);
+    for (const auto& [pc, node] : program.nodes())
+        for (unsigned i = 0; i < node.insn.length; ++i) taken[(pc + i) & 0xffff] = true;
+    for (unsigned v = 0xfffa; v < 0x10000; ++v) taken[v] = true;
+    const auto byte = [&](std::uint32_t a) -> std::uint8_t { return a < memory.size() ? memory[a] : 0; };
+    std::vector<std::uint16_t> starts;
+    for (std::uint32_t a = Program::rom_start; a < 0xfffa; ++a) {
+        if (taken[a] || !taken[a - 1]) continue;
+        std::uint32_t at = a;
+        bool good = false;
+        for (int n = 0; n < 64 && at < 0xfffa; ++n) {
+            const auto insn = decode(byte(at), byte(at + 1), byte(at + 2));
+            if (!insn.documented || insn.flow == Flow::brk || insn.flow == Flow::halt) break;
+            bool clear = true;
+            for (unsigned i = 0; i < insn.length; ++i) clear = clear && !taken[at + i] && at + i < 0xfffa;
+            if (!clear) break;
+            if (insn.flow == Flow::ret || insn.flow == Flow::rti || insn.flow == Flow::jump || insn.flow == Flow::jump_indirect) {
+                good = true;
+                break;
+            }
+            if (insn.flow == Flow::branch) {
+                const auto target = insn.next(static_cast<std::uint16_t>(at)) + static_cast<std::int8_t>(insn.operand & 0xff);
+                if (target < Program::rom_start) break;
+            }
+            at = insn.next(static_cast<std::uint16_t>(at));
+        }
+        if (good) starts.push_back(static_cast<std::uint16_t>(a));
+    }
+    return starts;
+}
+
+} // namespace
+
+Program Program::analyze_once(std::span<const std::uint8_t> memory, const std::vector<std::uint16_t>& seeds) {
     Program program;
     program.memory_ = memory;
     Interpreter interpreter(program);
@@ -968,6 +1011,19 @@ Program Program::analyze(std::span<const std::uint8_t> memory, const std::vector
     }
     interpreter.run();
     interpreter.finish();
+    return program;
+}
+
+Program Program::analyze(std::span<const std::uint8_t> memory, const std::vector<std::uint16_t>& seeds) {
+    std::vector<std::uint16_t> all = seeds;
+    Program program = analyze_once(memory, all);
+    for (int round = 0; round < 8; ++round) {
+        const auto gaps = gap_starts(program, memory);
+        if (gaps.empty()) break;
+        all.insert(all.end(), gaps.begin(), gaps.end());
+        program = analyze_once(memory, all);
+        program.gap_entries_.insert(gaps.begin(), gaps.end());
+    }
     return program;
 }
 

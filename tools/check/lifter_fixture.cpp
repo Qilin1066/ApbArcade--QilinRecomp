@@ -242,7 +242,8 @@ int main(int argc, char** argv) {
     const auto program = cfg::Program::analyze(set, seeds);
     // Exactly eight source files, so the build knows their names in advance.
     lift::Options options;
-    options.functions_per_file = (seeds.size() + 7) / 8;
+    // (functions found beyond the seeds, as gaps or data pointers, are counted too)
+    options.functions_per_file = (program.functions().size() + 7) / 8;
     const auto result = lift::lift(program, options);
     if (!result.failures.empty()) {
         for (const auto& f : result.failures) std::fprintf(stderr, "qilin_lifter_fixture: can't lift %s\n", f.c_str());

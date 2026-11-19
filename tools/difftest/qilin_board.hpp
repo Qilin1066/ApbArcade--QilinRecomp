@@ -93,6 +93,7 @@ struct Board : Memory {
         if (icount <= 0) throw Stop{Stop::budget};
     }
     void wait() { throw Stop{Stop::wait}; }
+    bool interrupt_due() { return false; }   // no interrupt lines in a trial
     void reset_output() { trace.push_back({Access::reset, 0, 0}); }
     [[noreturn]] void unlifted() { throw Stop{Stop::unlifted}; }
 };

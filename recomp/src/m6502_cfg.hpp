@@ -90,12 +90,15 @@ public:
     [[nodiscard]] const std::set<std::uint16_t>& functions() const noexcept { return functions_; }
     [[nodiscard]] const std::set<std::uint16_t>& return_sites() const noexcept { return return_sites_; }
     [[nodiscard]] const std::vector<Finding>& findings() const noexcept { return findings_; }
+    // Starts of code no other entry reaches, lifted as entries anyway.
+    [[nodiscard]] const std::set<std::uint16_t>& gap_entries() const noexcept { return gap_entries_; }
     [[nodiscard]] std::uint16_t reset_entry() const noexcept { return vector(reset_vector); }
     [[nodiscard]] std::uint16_t nmi_entry() const noexcept { return vector(nmi_vector); }
     [[nodiscard]] std::uint16_t irq_entry() const noexcept { return vector(irq_vector); }
 
 private:
     friend struct Interpreter;
+    static Program analyze_once(std::span<const std::uint8_t> memory, const std::vector<std::uint16_t>& seeds);
     [[nodiscard]] std::uint8_t byte(std::uint32_t address) const noexcept {
         return address < memory_.size() ? memory_[address] : 0;
     }
@@ -105,6 +108,7 @@ private:
 
     std::span<const std::uint8_t> memory_;
     std::map<std::uint16_t, Node> nodes_;
+    std::set<std::uint16_t> gap_entries_;
     std::set<std::uint16_t> functions_;
     std::set<std::uint16_t> return_sites_;
     std::vector<Finding> findings_;
