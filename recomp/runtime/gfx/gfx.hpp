@@ -21,6 +21,11 @@ namespace qilin::gfx {
 // shape kept, or the whole window.
 enum class Scaling : uint8_t { integer, fit, stretch };
 
+// A shader the window's picture is drawn through, or none (a plain blit, the
+// cheapest): pixel-art smoothing (edges between colours drawn as lines, not
+// steps) or a CRT (scanlines and phosphor stripes).
+enum class Effect : uint8_t { none, pixel_art, crt };
+
 struct Config {
     uint32_t width = 512, height = 384;  // the frame buffers' size in pixels: System 2's visible area
     uint32_t back_buffers = 1;           // with the front buffer, one more image
@@ -37,6 +42,13 @@ struct Config {
     bool vsync = true;                             // FIFO; otherwise mailbox or immediate where offered
     Scaling scaling = Scaling::integer;
     bool smooth = true;                            // bilinear when the scale isn't whole; else nearest pixel
+    Effect effect = Effect::none;
+    float scanlines = 0.75f;                       // CRT: how dark the gaps between scanlines are, 0..1
+    float mask = 0.3f;                             // CRT: the phosphor stripes' strength, 0..1
+    bool upright_tube = false;                     // CRT: the frame was shown on a monitor turned upright (scanlines run down it)
+    // With no window: present also draws the picture a window this size
+    // would show (scaling, effect), for read_output. 0: not drawn.
+    uint32_t output_width = 0, output_height = 0;
 };
 
 // What a UI drawn over the window (the settings menu) needs to draw with
@@ -88,6 +100,8 @@ public:
     virtual void resize_window(uint32_t width, uint32_t height) = 0;
     // How frames fill the window, from the next present.
     virtual void set_scaling(Scaling scaling, bool smooth) = 0;
+    // The shader the picture is drawn through, from the next present (scanlines and mask: the CRT's, 0..1).
+    virtual void set_effect(Effect effect, float scanlines, float mask) = 0;
     // Waits for the display's refresh or not (the swapchain is rebuilt at the next present).
     virtual void set_vsync(bool vsync) = 0;
     // Whether the device can scale smoothly (a linear blit from the frame format); if not, frames are scaled sharp.
@@ -105,6 +119,9 @@ public:
     // or the back buffer as drawn so far.
     virtual Image read_front_buffer() = 0;
     virtual Image read_back_buffer() = 0;
+    // With no window and Config::output_width/height: the picture the last
+    // present drew, as a window would show it. Empty otherwise.
+    virtual Image read_output() = 0;
 
     // A UI over the window: the handles it draws with (false without a
     // window), and the drawing, called with the VkCommandBuffer (as void*)

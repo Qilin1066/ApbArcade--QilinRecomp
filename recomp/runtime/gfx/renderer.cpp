@@ -14,7 +14,11 @@
 // A window, when there is one, gets each presented frame by a blit from the
 // frame buffer into the acquired swapchain image: no shaders, and the blit
 // converts to whatever format the window has. The blit scales by a whole
-// number, to fit, or to fill (Config::scaling), sharp or smooth.
+// number, to fit, or to fill (Config::scaling), sharp or smooth. With an
+// effect (Config::effect) the picture is drawn instead by a fragment shader
+// sampling the frame, in a dynamic-rendering pass on the window's image
+// (shaders/, compiled to SPIR-V kept beside them).
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -33,6 +37,24 @@
 
 namespace qilin::gfx {
 namespace {
+
+// The effects' shaders (shaders/*.glsl, compiled by shaders/compile.sh).
+const uint32_t present_vert[] = {
+#include "shaders/present.vert.spv.inc"
+};
+const uint32_t pixel_art_frag[] = {
+#include "shaders/pixel_art.frag.spv.inc"
+};
+const uint32_t crt_frag[] = {
+#include "shaders/crt.frag.spv.inc"
+};
+
+// The push constants of shaders/common.glsl.
+struct PresentPush {
+    float source_w, source_h, output_w, output_h;
+    float scanlines, mask;
+    uint32_t flags;
+};
 
 [[noreturn]] void fatal(const char* what, VkResult r) {
     std::fflush(stdout);
@@ -61,6 +83,10 @@ void layout_use(VkImageLayout layout, VkPipelineStageFlags2& stage, VkAccessFlag
         case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
             stage = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
             access = VK_ACCESS_2_TRANSFER_READ_BIT;
+            break;
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+            stage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            access = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
             break;
         case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
             stage = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
@@ -120,9 +146,15 @@ public:
         swapchain_stale_ = true;
     }
     bool smooth_supported() const override { return linear_blit_; }
+    void set_effect(Effect effect, float scanlines, float mask) override {
+        config_.effect = effect;
+        config_.scanlines = std::clamp(scanlines, 0.0f, 1.0f);
+        config_.mask = std::clamp(mask, 0.0f, 1.0f);
+    }
     const std::vector<std::string>& devices() const override { return devices_; }
     Image read_front_buffer() override { return read(color_[front_]); }
     Image read_back_buffer() override { return read(color_[back_]); }
+    Image read_output() override { return output_.image ? read(output_, config_.output_width, config_.output_height) : Image{}; }
     uint32_t validation_errors() const override { return validation_errors_; }
     bool overlay(Overlay& out) const override {
         if (!surface_ || !swapchain_) return false;
@@ -142,7 +174,7 @@ private:
     bool create_instance(std::string* error);
     bool pick_device(std::string* error);
     void create_device();
-    Target create_target(VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect);
+    Target create_target(VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t width = 0, uint32_t height = 0);
     uint32_t memory_type(uint32_t allowed, VkMemoryPropertyFlags wanted) const;
     void destroy();
 
@@ -153,11 +185,17 @@ private:
     // Ends the command buffer, submits it and waits for it; optionally waiting
     // on one semaphore at the transfer stage and signalling another.
     void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE);
-    Image read(Target& t);
+    Image read(Target& t, uint32_t width = 0, uint32_t height = 0);
     VkBuffer host_buffer(VkBufferUsageFlags usage, VkDeviceSize bytes, VkDeviceMemory* memory);
     void create_swapchain();
     void destroy_swapchain();
-    void show(Target& frame);                        // blits a frame to the window and presents it
+    void show(Target& frame);                        // draws a frame into the window and presents it
+    // Draws a frame as the window's picture into an image of that size
+    // (scaled, through the effect if any), leaving it in final_layout.
+    void draw_picture(Target& frame, VkImage image, VkImageView view, VkExtent2D extent, VkImageLayout final_layout);
+    void create_effects();                           // the sampler and descriptors the effects' shaders read the frames with
+    void create_pipelines();                         // the effects' pipelines, for the window's format
+    void destroy_pipelines();
 
     Config config_;
     std::string device_name_;
@@ -181,6 +219,7 @@ private:
     uint32_t back_ = 0, front_ = 0;
     VkBuffer readback_ = VK_NULL_HANDLE;
     VkDeviceMemory readback_memory_ = VK_NULL_HANDLE;
+    VkDeviceSize readback_bytes_ = 0;
     VkBuffer upload_ = VK_NULL_HANDLE;
     VkDeviceMemory upload_memory_ = VK_NULL_HANDLE;
     void* upload_mapped_ = nullptr;
@@ -196,6 +235,17 @@ private:
     std::vector<VkSemaphore> rendered_;   // one per swapchain image: the blit is done, present it
     VkSemaphore acquired_ = VK_NULL_HANDLE;
     bool swapchain_stale_ = false;
+
+    // The effects (Config::effect): one pipeline each, drawing a triangle over the picture's rectangle.
+    VkSampler sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> frame_sets_;   // one per frame buffer, reading it
+    VkPipeline pixel_art_ = VK_NULL_HANDLE, crt_ = VK_NULL_HANDLE;
+    VkFormat pipeline_format_ = VK_FORMAT_UNDEFINED;
+    VkFormat output_format_ = VK_FORMAT_UNDEFINED;   // what the picture is drawn into: the window's format, or output_'s
+    Target output_;                                  // no window: the picture a window would show (Config::output_width)
 
     bool recording_ = false, pass_open_ = false;
     struct PendingClear {  // a whole-buffer clear waiting to become the pass's load operation
@@ -416,13 +466,13 @@ uint32_t VulkanRenderer::memory_type(uint32_t allowed, VkMemoryPropertyFlags wan
     fatal("finding a memory type", VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
-Target VulkanRenderer::create_target(VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect) {
+Target VulkanRenderer::create_target(VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t width, uint32_t height) {
     Target t;
     t.aspect = aspect;
     VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     info.imageType = VK_IMAGE_TYPE_2D;
     info.format = format;
-    info.extent = {config_.width, config_.height, 1};
+    info.extent = {width ? width : config_.width, height ? height : config_.height, 1};
     info.mipLevels = 1;
     info.arrayLayers = 1;
     info.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -477,7 +527,19 @@ bool VulkanRenderer::init(const Config& config, std::string* error) {
     if (surface_) {
         const VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         check(vkCreateSemaphore(device_, &info, nullptr, &acquired_), "vkCreateSemaphore");
+        create_effects();
         create_swapchain();
+    } else if (config_.output_width && config_.output_height) {
+        if (config_.output_width > 16384 || config_.output_height > 16384) {
+            *error = "bad output size";
+            return false;
+        }
+        output_ = create_target(VK_FORMAT_B8G8R8A8_UNORM,
+                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                VK_IMAGE_ASPECT_COLOR_BIT, config_.output_width, config_.output_height);
+        output_format_ = VK_FORMAT_B8G8R8A8_UNORM;
+        create_effects();
+        create_pipelines();
     }
     return true;
 }
@@ -547,6 +609,8 @@ void VulkanRenderer::create_swapchain() {
     swapchain_ = created;
     swapchain_format_ = chosen.format;
     swapchain_extent_ = extent;
+    output_format_ = swapchain_format_;
+    if (pipeline_format_ != output_format_) create_pipelines();
     vkGetSwapchainImagesKHR(device_, swapchain_, &n, nullptr);
     swapchain_images_.resize(n);
     vkGetSwapchainImagesKHR(device_, swapchain_, &n, swapchain_images_.data());
@@ -577,22 +641,11 @@ void VulkanRenderer::destroy_swapchain() {
     swapchain_ = VK_NULL_HANDLE;
 }
 
-void VulkanRenderer::show(Target& frame) {
-    if (swapchain_stale_) create_swapchain();
-    if (!swapchain_) return;
-    uint32_t index = 0;
-    VkResult r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, acquired_, VK_NULL_HANDLE, &index);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR) {
-        create_swapchain();
-        if (!swapchain_) return;
-        r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, acquired_, VK_NULL_HANDLE, &index);
-    }
-    if (r == VK_ERROR_OUT_OF_DATE_KHR) return;   // still changing: try again next frame
-    if (r != VK_SUBOPTIMAL_KHR) check(r, "vkAcquireNextImageKHR");
-
-    record();
-    transition(frame, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    const VkImage image = swapchain_images_[index];
+void VulkanRenderer::draw_picture(Target& frame, VkImage image, VkImageView view, VkExtent2D extent, VkImageLayout final_layout) {
+    // What uses the image after: the presentation engine (it waits on a semaphore), or a copy.
+    VkPipelineStageFlags2 after_stage{};
+    VkAccessFlags2 after_access{};
+    layout_use(final_layout, after_stage, after_access);
     auto barrier = [&](VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                        VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
         VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
@@ -610,12 +663,8 @@ void VulkanRenderer::show(Target& frame) {
         dep.pImageMemoryBarriers = &b;
         vkCmdPipelineBarrier2(cmd_, &dep);
     };
-    // The acquire semaphore is waited on at the transfer stage, so the
-    // layout change chains after it.
-    barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_NONE,
-            VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
     // Where the frame goes (Scaling in gfx.hpp), centred.
-    const int32_t window_w = int32_t(swapchain_extent_.width), window_h = int32_t(swapchain_extent_.height);
+    const int32_t window_w = int32_t(extent.width), window_h = int32_t(extent.height);
     const double sx = double(window_w) / config_.width, sy = double(window_h) / config_.height;
     double scale_x = std::min(sx, sy), scale_y = scale_x;
     if (config_.scaling == Scaling::integer && scale_x >= 1.0) scale_x = scale_y = std::floor(scale_x);
@@ -626,47 +675,107 @@ void VulkanRenderer::show(Target& frame) {
     const auto w = std::clamp<int32_t>(int32_t(std::lround(config_.width * scale_x)), 1, window_w);
     const auto h = std::clamp<int32_t>(int32_t(std::lround(config_.height * scale_y)), 1, window_h);
     const int32_t x = (window_w - w) / 2, y = (window_h - h) / 2;
-    // Whole multiples are pixel-exact; other scales are smooth if asked and the device can.
-    const bool exact = w % int32_t(config_.width) == 0 && h % int32_t(config_.height) == 0;
-    const VkFilter filter = !exact && config_.smooth && linear_blit_ ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-    if (w < window_w || h < window_h) {   // black borders
-        const VkClearColorValue black{};
-        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCmdClearColorImage(cmd_, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
-        barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    }
-    VkImageBlit blit{};
-    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    blit.srcOffsets[1] = {int32_t(config_.width), int32_t(config_.height), 1};
-    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    blit.dstOffsets[0] = {x, y, 0};
-    blit.dstOffsets[1] = {x + w, y + h, 1};
-    vkCmdBlitImage(cmd_, frame.image, frame.layout, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, filter);
-    if (overlay_) {
-        // The overlay draws over the picture, in a pass of its own on the window's image.
-        barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+    const VkPipeline effect = config_.effect == Effect::pixel_art ? pixel_art_ : config_.effect == Effect::crt ? crt_ : VK_NULL_HANDLE;
+    if (effect) {
+        // The effect's shader draws the picture into its rectangle, black
+        // around it, in a pass the overlay shares. The acquire semaphore is
+        // waited on at the colour-output stage, so the layout change chains after it.
+        transition(frame, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-        color.imageView = swapchain_views_[index];
+        color.imageView = view;
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};   // opaque black borders
         VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
-        info.renderArea = {{0, 0}, swapchain_extent_};
+        info.renderArea = {{0, 0}, extent};
         info.layerCount = 1;
         info.colorAttachmentCount = 1;
         info.pColorAttachments = &color;
         vkCmdBeginRendering(cmd_, &info);
-        overlay_(cmd_);
+        const VkViewport viewport{float(x), float(y), float(w), float(h), 0.0f, 1.0f};
+        const VkRect2D scissor{{x, y}, {uint32_t(w), uint32_t(h)}};
+        vkCmdSetViewport(cmd_, 0, 1, &viewport);
+        vkCmdSetScissor(cmd_, 0, 1, &scissor);
+        vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, effect);
+        const auto which = uint32_t(&frame - color_.data());
+        vkCmdBindDescriptorSets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1, &frame_sets_[which], 0, nullptr);
+        const PresentPush push{float(config_.width), float(config_.height), float(w), float(h), config_.scanlines, config_.mask,
+                               config_.upright_tube ? 1u : 0u};
+        vkCmdPushConstants(cmd_, pipeline_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
+        vkCmdDraw(cmd_, 3, 1, 0, 0);
+        if (overlay_) overlay_(cmd_);   // sets its own viewport and scissor
         vkCmdEndRendering(cmd_);
-        barrier(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+        barrier(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, final_layout, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, after_stage, after_access);
     } else {
-        barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
-                VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+        transition(frame, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        // The acquire semaphore is waited on at the transfer stage, so the
+        // layout change chains after it.
+        barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_NONE,
+                VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        // Whole multiples are pixel-exact; other scales are smooth if asked and the device can.
+        const bool exact = w % int32_t(config_.width) == 0 && h % int32_t(config_.height) == 0;
+        const VkFilter filter = !exact && config_.smooth && linear_blit_ ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+        if (w < window_w || h < window_h) {   // black borders
+            const VkClearColorValue black{{0.0f, 0.0f, 0.0f, 1.0f}};   // opaque
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cmd_, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
+            barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        }
+        VkImageBlit blit{};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        blit.srcOffsets[1] = {int32_t(config_.width), int32_t(config_.height), 1};
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        blit.dstOffsets[0] = {x, y, 0};
+        blit.dstOffsets[1] = {x + w, y + h, 1};
+        vkCmdBlitImage(cmd_, frame.image, frame.layout, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, filter);
+        if (overlay_) {
+            // The overlay draws over the picture, in a pass of its own on the window's image.
+            barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            color.imageView = view;
+            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
+            info.renderArea = {{0, 0}, extent};
+            info.layerCount = 1;
+            info.colorAttachmentCount = 1;
+            info.pColorAttachments = &color;
+            vkCmdBeginRendering(cmd_, &info);
+            overlay_(cmd_);
+            vkCmdEndRendering(cmd_);
+            barrier(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, final_layout, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, after_stage, after_access);
+        } else {
+            barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, final_layout, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT, after_stage, after_access);
+        }
     }
+}
+
+void VulkanRenderer::show(Target& frame) {
+    if (swapchain_stale_) create_swapchain();
+    if (!swapchain_) return;
+    uint32_t index = 0;
+    VkResult r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, acquired_, VK_NULL_HANDLE, &index);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) {
+        create_swapchain();
+        if (!swapchain_) return;
+        r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, acquired_, VK_NULL_HANDLE, &index);
+    }
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) return;   // still changing: try again next frame
+    if (r != VK_SUBOPTIMAL_KHR) check(r, "vkAcquireNextImageKHR");
+
+    record();
+    draw_picture(frame, swapchain_images_[index], swapchain_views_[index], swapchain_extent_, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     submit(acquired_, rendered_[index]);
 
     VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
@@ -716,6 +825,129 @@ void VulkanRenderer::write_back_buffer(const uint32_t* bgra) {
     vkCmdCopyBufferToImage(cmd_, upload_, back.image, back.layout, 1, &region);
 }
 
+void VulkanRenderer::create_effects() {
+    VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler.magFilter = sampler.minFilter = VK_FILTER_NEAREST;   // the shaders fetch whole pixels
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    check(vkCreateSampler(device_, &sampler, nullptr, &sampler_), "vkCreateSampler");
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo set_layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    set_layout.bindingCount = 1;
+    set_layout.pBindings = &binding;
+    check(vkCreateDescriptorSetLayout(device_, &set_layout, nullptr, &set_layout_), "vkCreateDescriptorSetLayout");
+    const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PresentPush)};
+    VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout.setLayoutCount = 1;
+    layout.pSetLayouts = &set_layout_;
+    layout.pushConstantRangeCount = 1;
+    layout.pPushConstantRanges = &range;
+    check(vkCreatePipelineLayout(device_, &layout, nullptr, &pipeline_layout_), "vkCreatePipelineLayout");
+
+    const auto count = uint32_t(color_.size());
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count};
+    VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool.maxSets = count;
+    pool.poolSizeCount = 1;
+    pool.pPoolSizes = &size;
+    check(vkCreateDescriptorPool(device_, &pool, nullptr, &descriptor_pool_), "vkCreateDescriptorPool");
+    const std::vector<VkDescriptorSetLayout> layouts(count, set_layout_);
+    VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    alloc.descriptorPool = descriptor_pool_;
+    alloc.descriptorSetCount = count;
+    alloc.pSetLayouts = layouts.data();
+    frame_sets_.resize(count);
+    check(vkAllocateDescriptorSets(device_, &alloc, frame_sets_.data()), "vkAllocateDescriptorSets");
+    for (uint32_t i = 0; i < count; ++i) {
+        const VkDescriptorImageInfo image{sampler_, color_[i].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = frame_sets_[i];
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &image;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
+}
+
+void VulkanRenderer::create_pipelines() {
+    destroy_pipelines();
+    auto module = [&](const uint32_t* code, size_t bytes) {
+        VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        info.codeSize = bytes;
+        info.pCode = code;
+        VkShaderModule m = VK_NULL_HANDLE;
+        check(vkCreateShaderModule(device_, &info, nullptr, &m), "vkCreateShaderModule");
+        return m;
+    };
+    const VkShaderModule vert = module(present_vert, sizeof present_vert);
+    auto build = [&](const uint32_t* code, size_t bytes) {
+        const VkShaderModule frag = module(code, bytes);
+        VkPipelineShaderStageCreateInfo stages[2]{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO},
+                                                  {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vert;
+        stages[0].pName = "main";
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = frag;
+        stages[1].pName = "main";
+        const VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        viewport.viewportCount = 1;
+        viewport.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        raster.polygonMode = VK_POLYGON_MODE_FILL;
+        raster.cullMode = VK_CULL_MODE_NONE;
+        raster.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState attachment{};
+        attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        blend.attachmentCount = 1;
+        blend.pAttachments = &attachment;
+        const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dynamic.dynamicStateCount = 2;
+        dynamic.pDynamicStates = dynamic_states;
+        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachmentFormats = &output_format_;
+        VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        info.pNext = &rendering;
+        info.stageCount = 2;
+        info.pStages = stages;
+        info.pVertexInputState = &input;
+        info.pInputAssemblyState = &assembly;
+        info.pViewportState = &viewport;
+        info.pRasterizationState = &raster;
+        info.pMultisampleState = &multisample;
+        info.pColorBlendState = &blend;
+        info.pDynamicState = &dynamic;
+        info.layout = pipeline_layout_;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        check(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline), "vkCreateGraphicsPipelines");
+        vkDestroyShaderModule(device_, frag, nullptr);
+        return pipeline;
+    };
+    pixel_art_ = build(pixel_art_frag, sizeof pixel_art_frag);
+    crt_ = build(crt_frag, sizeof crt_frag);
+    vkDestroyShaderModule(device_, vert, nullptr);
+    pipeline_format_ = output_format_;
+}
+
+void VulkanRenderer::destroy_pipelines() {
+    if (pixel_art_) vkDestroyPipeline(device_, pixel_art_, nullptr);
+    if (crt_) vkDestroyPipeline(device_, crt_, nullptr);
+    pixel_art_ = crt_ = VK_NULL_HANDLE;
+    pipeline_format_ = VK_FORMAT_UNDEFINED;
+}
+
 void VulkanRenderer::destroy() {
     if (device_) {
         vkDeviceWaitIdle(device_);
@@ -725,8 +957,14 @@ void VulkanRenderer::destroy() {
             if (t.memory) vkFreeMemory(device_, t.memory, nullptr);
         };
         destroy_swapchain();
+        destroy_pipelines();
+        if (descriptor_pool_) vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
+        if (pipeline_layout_) vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
+        if (set_layout_) vkDestroyDescriptorSetLayout(device_, set_layout_, nullptr);
+        if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
         if (acquired_) vkDestroySemaphore(device_, acquired_, nullptr);
         for (Target& t : color_) drop(t);
+        drop(output_);
         if (upload_) vkDestroyBuffer(device_, upload_, nullptr);
         if (upload_memory_) vkFreeMemory(device_, upload_memory_, nullptr);
         if (readback_) vkDestroyBuffer(device_, readback_, nullptr);
@@ -834,7 +1072,7 @@ void VulkanRenderer::submit(VkSemaphore wait, VkSemaphore signal) {
     cb.commandBuffer = cmd_;
     VkSemaphoreSubmitInfo waits{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO}, signals{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     waits.semaphore = wait;
-    waits.stageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    waits.stageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;   // a blit or an effect's pass
     signals.semaphore = signal;
     signals.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     VkSubmitInfo2 info{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
@@ -851,28 +1089,42 @@ void VulkanRenderer::submit(VkSemaphore wait, VkSemaphore signal) {
 
 void VulkanRenderer::present() {
     end_pass();
-    if (surface_) show(color_[back_]);
+    if (surface_) {
+        show(color_[back_]);
+    } else if (output_.image) {
+        record();
+        draw_picture(color_[back_], output_.image, output_.view, {config_.output_width, config_.output_height},
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        output_.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    }
     submit();
     front_ = back_;
     back_ = (back_ + 1) % uint32_t(color_.size());
     ++frames_;
 }
 
-Image VulkanRenderer::read(Target& t) {
-    const VkDeviceSize bytes = VkDeviceSize(config_.width) * config_.height * 4;
-    if (!readback_) readback_ = host_buffer(VK_BUFFER_USAGE_TRANSFER_DST_BIT, bytes, &readback_memory_);
+Image VulkanRenderer::read(Target& t, uint32_t width, uint32_t height) {
+    if (!width) width = config_.width;
+    if (!height) height = config_.height;
+    const VkDeviceSize bytes = VkDeviceSize(width) * height * 4;
+    if (bytes > readback_bytes_) {   // the frame's size, or the output's if that's bigger
+        if (readback_) vkDestroyBuffer(device_, readback_, nullptr);
+        if (readback_memory_) vkFreeMemory(device_, readback_memory_, nullptr);
+        readback_ = host_buffer(VK_BUFFER_USAGE_TRANSFER_DST_BIT, bytes, &readback_memory_);
+        readback_bytes_ = bytes;
+    }
     end_pass();
     record();
     transition(t, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {config_.width, config_.height, 1};
+    region.imageExtent = {width, height, 1};
     vkCmdCopyImageToBuffer(cmd_, t.image, t.layout, readback_, 1, &region);
     submit();
 
     Image out;
-    out.width = config_.width;
-    out.height = config_.height;
+    out.width = width;
+    out.height = height;
     out.rgba.resize(size_t(bytes));
     void* mapped = nullptr;
     check(vkMapMemory(device_, readback_memory_, 0, bytes, 0, &mapped), "vkMapMemory");

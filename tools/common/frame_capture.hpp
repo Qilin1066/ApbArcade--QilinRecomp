@@ -4,6 +4,9 @@
 // from 0 at power-on, completed at the start of its vblank) as a PNG.
 // --frame-hashes FILE writes a hash of every frame's colours, one line a
 // frame, so a native run and a reference run can be compared frame by frame.
+// --look EFFECT:WxH saves those frames as a W x H window would show them
+// instead, through the Vulkan renderer: none, pixel_art or crt (scaled by
+// whole multiples where they fit, else to fit; the monitor upright, as APB's).
 
 #include "gfx.hpp"
 #include "system2_video.hpp"
@@ -32,6 +35,27 @@ public:
         return true;
     }
     [[nodiscard]] bool empty() const noexcept { return wanted_.empty(); }
+    // Parses "EFFECT:WxH" for --look and starts the renderer; false (with a message) if it can't.
+    bool look(std::string_view value) {
+        const auto colon = value.find(':'), x = value.find('x', colon == std::string_view::npos ? 0 : colon);
+        gfx::Config config;
+        config.width = sys2::Frame::height;
+        config.height = sys2::Frame::width;
+        config.upright_tube = true;
+        const auto effect = value.substr(0, colon);
+        if (colon == std::string_view::npos || x == std::string_view::npos ||
+            std::from_chars(value.data() + colon + 1, value.data() + x, config.output_width).ec != std::errc{} ||
+            std::from_chars(value.data() + x + 1, value.data() + value.size(), config.output_height).ec != std::errc{} ||
+            (effect != "none" && effect != "pixel_art" && effect != "crt")) {
+            std::print(stderr, "--look wants EFFECT:WxH (EFFECT none, pixel_art or crt)\n");
+            return false;
+        }
+        config.effect = effect == "crt" ? gfx::Effect::crt : effect == "pixel_art" ? gfx::Effect::pixel_art : gfx::Effect::none;
+        std::string error;
+        look_ = gfx::Renderer::create(config, &error);
+        if (!look_) std::print(stderr, "--look: {}\n", error);
+        return look_ != nullptr;
+    }
     // Hashes every frame to this file (opened by attach).
     std::string hashes_path;
     // Draws every frame, as the game does (--draw: to measure what video costs).
@@ -64,6 +88,13 @@ public:
         for (const auto& w : wanted_) {
             if (w.frame != frame) continue;
             gfx::Image image{sys2::Frame::height, sys2::Frame::width, sys2::to_rgba(video_->frame(), machine.palette())};
+            if (look_) {
+                std::vector<std::uint32_t> bgra(std::size_t{sys2::Frame::width} * sys2::Frame::height);
+                sys2::to_bgra(video_->frame(), machine.palette(), bgra.data());
+                look_->write_back_buffer(bgra.data());
+                look_->present();
+                image = look_->read_output();
+            }
             if (gfx::write_png(w.path, image)) {
                 std::print("Frame {} saved to {}.\n", frame, w.path);
             } else {
@@ -107,6 +138,7 @@ private:
     std::vector<Wanted> wanted_;
     std::unique_ptr<sys2::Graphics> graphics_;
     std::unique_ptr<sys2::Video> video_;
+    std::unique_ptr<gfx::Renderer> look_;
     std::uint64_t seen_ = 0;
 };
 

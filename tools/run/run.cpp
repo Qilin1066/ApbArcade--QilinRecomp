@@ -2,7 +2,7 @@
 // scheduled by recomp/runtime/game, from power-on for a number of frames.
 //
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
-//             [--frame-out FRAME:FILE]... [--frame-hashes FILE] [--io-trace FILE] [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
+//             [--frame-out FRAME:FILE]... [--look EFFECT:WxH] [--frame-hashes FILE] [--io-trace FILE] [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
 //
 // --wav FILE records the board's sound (the YM2151, both POKEYs
 // and the TMS5220's speech, mixed as MAME mixes them) as a 16-bit stereo WAV
@@ -62,6 +62,9 @@ int main(int argc, char** argv) {
         else if (flag == "--frame-hashes") capture.hashes_path = value;
         else if (flag == "--io-trace") io_trace_path = value;
         else if (flag == "--draw") capture.draw_all = number != 0;
+        else if (flag == "--look") {
+            if (!capture.look(value)) return 2;
+        }
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
                 std::print(stderr, "qilin_run: --frame-out wants FRAME:FILE\n");

@@ -131,7 +131,7 @@ int main() {
 
     // The settings file keeps all of it.
     const auto path = (std::filesystem::temp_directory_path() / "apb_input_test.ini").string();
-    input.settings.display = {gfx::Scaling::stretch, false, false, true, "Monitor = 2", "Some GPU"};
+    input.settings.display = {gfx::Scaling::stretch, false, gfx::Effect::crt, 0.25f, 0.75f, false, true, "Monitor = 2", "Some GPU"};
     CHECK(input.settings.save(path));
     app::Settings loaded;
     CHECK(loaded.load(path));
@@ -141,6 +141,7 @@ int main() {
     CHECK(loaded.buttons[0].text() == input.settings.buttons[0].text());
     CHECK(loaded.display.scaling == gfx::Scaling::stretch && !loaded.display.smooth && !loaded.display.vsync && loaded.display.fullscreen);
     CHECK(loaded.display.monitor == "Monitor = 2" && loaded.display.gpu == "Some GPU");
+    CHECK(loaded.display.effect == gfx::Effect::crt && loaded.display.scanlines == 0.25f && loaded.display.mask == 0.75f);
     CHECK(app::Settings{}.display.scaling == gfx::Scaling::integer && app::Settings{}.display.vsync);
     std::filesystem::remove(path);
 

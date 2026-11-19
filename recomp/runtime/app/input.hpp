@@ -49,7 +49,10 @@ enum class Steering { keys_and_pad, wheel, mouse };
 // How the game is shown (the menu's Display tab).
 struct DisplaySettings {
     gfx::Scaling scaling = gfx::Scaling::integer;
-    bool smooth = true;         // bilinear at scales that aren't whole
+    bool smooth = true;         // bilinear at scales that aren't whole (with no effect)
+    gfx::Effect effect = gfx::Effect::none;
+    float scanlines = 0.75f;    // the CRT effect's
+    float mask = 0.3f;
     bool vsync = true;
     bool fullscreen = false;    // borderless, at the display's own mode
     std::string monitor;        // the display's name; empty: the primary display

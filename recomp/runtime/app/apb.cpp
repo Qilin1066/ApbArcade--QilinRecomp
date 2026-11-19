@@ -17,8 +17,8 @@
 // The menu sets up wheels (any: a direct-drive wheel that spins freely, as
 // the cabinet's did, or one that stops at a lock), pedals and extra button
 // bindings, and the display: full screen, which display, the picture's size
-// (whole multiples, fit or fill; sharp or smooth), vsync and the graphics
-// device. They're kept in apb.ini next to the EEPROM; --no-vsync and --gpu N
+// (whole multiples, fit or fill; sharp or smooth), its look (plain, smoothed
+// pixel art, or a CRT), vsync and the graphics device. They're kept in apb.ini next to the EEPROM; --no-vsync and --gpu N
 // override the saved ones for one run.
 //
 // The EEPROM (high scores, audits, settings) is kept in SDL's per-user
@@ -152,6 +152,10 @@ int main(int argc, char** argv) {
     config.vsync = options.vsync && saved.display.vsync;
     config.scaling = saved.display.scaling;
     config.smooth = saved.display.smooth;
+    config.effect = saved.display.effect;
+    config.scanlines = saved.display.scanlines;
+    config.mask = saved.display.mask;
+    config.upright_tube = true;   // the cabinet's monitor is turned upright (ROT270)
     Uint32 count = 0;
     const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&count);
     if (!extensions) fail(std::string("SDL has no Vulkan: ") + SDL_GetError());

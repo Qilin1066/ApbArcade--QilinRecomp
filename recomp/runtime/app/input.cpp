@@ -131,6 +131,10 @@ bool Settings::load(const std::string& path) {
     const auto scaling = get("scaling");
     display.scaling = scaling == "fit" ? gfx::Scaling::fit : scaling == "stretch" ? gfx::Scaling::stretch : gfx::Scaling::integer;
     display.smooth = num("smooth", 1) != 0;
+    const auto effect = get("effect");
+    display.effect = effect == "pixel_art" ? gfx::Effect::pixel_art : effect == "crt" ? gfx::Effect::crt : gfx::Effect::none;
+    display.scanlines = static_cast<float>(std::clamp(num("crt_scanlines", display.scanlines), 0.0, 1.0));
+    display.mask = static_cast<float>(std::clamp(num("crt_mask", display.mask), 0.0, 1.0));
     display.vsync = num("vsync", 1) != 0;
     display.fullscreen = num("fullscreen", 0) != 0;
     display.monitor = std::string(get("monitor"));
@@ -157,6 +161,8 @@ bool Settings::save(const std::string& path) const {
     const char* scaling = display.scaling == gfx::Scaling::fit ? "fit" : display.scaling == gfx::Scaling::stretch ? "stretch" : "integer";
     out << strf("scaling = %s\nsmooth = %d\nvsync = %d\nfullscreen = %d\n", scaling, display.smooth ? 1 : 0, display.vsync ? 1 : 0,
                 display.fullscreen ? 1 : 0);
+    const char* effect = display.effect == gfx::Effect::pixel_art ? "pixel_art" : display.effect == gfx::Effect::crt ? "crt" : "none";
+    out << strf("effect = %s\ncrt_scanlines = %.9g\ncrt_mask = %.9g\n", effect, display.scanlines, display.mask);
     out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';
     return static_cast<bool>(out);
 }

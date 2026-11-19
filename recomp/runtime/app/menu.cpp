@@ -406,6 +406,7 @@ void Menu::display_tab() {
     DisplaySettings& d = input_.settings.display;
     const auto apply = [&] {
         renderer_.set_scaling(d.scaling, d.smooth);
+        renderer_.set_effect(d.effect, d.scanlines, d.mask);
         renderer_.set_vsync(d.vsync);
     };
     bool fullscreen = d.fullscreen;
@@ -435,10 +436,29 @@ void Menu::display_tab() {
     ImGui::SameLine();
     changed |= ImGui::RadioButton("Fill the window", &scaling, static_cast<int>(gfx::Scaling::stretch));
     if (changed) d.scaling = static_cast<gfx::Scaling>(scaling);
-    if (renderer_.smooth_supported()) {
-        changed |= ImGui::Checkbox("Smooth (at sizes that aren't whole multiples)", &d.smooth);
+    int effect = static_cast<int>(d.effect);
+    ImGui::TextUnformatted("Look");
+    ImGui::SameLine();
+    bool effect_changed = ImGui::RadioButton("Plain pixels", &effect, static_cast<int>(gfx::Effect::none));
+    ImGui::SameLine();
+    effect_changed |= ImGui::RadioButton("Smoothed pixel art", &effect, static_cast<int>(gfx::Effect::pixel_art));
+    ImGui::SameLine();
+    effect_changed |= ImGui::RadioButton("CRT", &effect, static_cast<int>(gfx::Effect::crt));
+    if (effect_changed) d.effect = static_cast<gfx::Effect>(effect);
+    changed |= effect_changed;
+    if (d.effect == gfx::Effect::none) {
+        if (renderer_.smooth_supported()) {
+            changed |= ImGui::Checkbox("Smooth (at sizes that aren't whole multiples)", &d.smooth);
+        } else {
+            ImGui::TextDisabled("Smooth scaling: this graphics device can't (the picture is scaled sharp).");
+        }
+    } else if (d.effect == gfx::Effect::pixel_art) {
+        ImGui::TextDisabled("Edges between colours are drawn as lines instead of steps. Sharpest at whole multiples.");
     } else {
-        ImGui::TextDisabled("Smooth scaling: this graphics device can't (the picture is scaled sharp).");
+        changed |= ImGui::SliderFloat("Scanlines", &d.scanlines, 0.0f, 1.0f, "%.2f");
+        changed |= ImGui::SliderFloat("Phosphor stripes", &d.mask, 0.0f, 1.0f, "%.2f");
+        ImGui::TextDisabled("APB's monitor stood upright, so its scanlines run down the screen. They need about two screen\n"
+                            "pixels per line to show: they fade out on smaller pictures.");
     }
     changed |= ImGui::Checkbox("Vsync (wait for the display: no tearing)", &d.vsync);
     if (changed) apply();
