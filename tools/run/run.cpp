@@ -2,7 +2,7 @@
 // scheduled by recomp/runtime/game, from power-on for a number of frames.
 //
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
-//             [--frame-out FRAME:FILE]... [--frame-hashes FILE] [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
+//             [--frame-out FRAME:FILE]... [--frame-hashes FILE] [--io-trace FILE] [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
 //
 // --wav FILE records the board's sound (the YM2151, both POKEYs
 // and the TMS5220's speech, mixed as MAME mixes them) as a 16-bit stereo WAV
@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <format>
 #include <fstream>
 #include <string>
@@ -47,7 +48,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::uint64_t frames = 600;
-    std::string_view log_path, wav_path;
+    std::string_view log_path, wav_path, io_trace_path;
     tools::Script script;
     tools::FrameCapture capture;
     for (int i = 2; i + 1 < argc; i += 2) {
@@ -59,6 +60,7 @@ int main(int argc, char** argv) {
         else if (flag == "--wav") wav_path = value;
         else if (script.option(flag, value)) {}
         else if (flag == "--frame-hashes") capture.hashes_path = value;
+        else if (flag == "--io-trace") io_trace_path = value;
         else if (flag == "--draw") capture.draw_all = number != 0;
         else if (flag == "--frame-out") {
             if (!capture.add(value)) {
@@ -80,6 +82,18 @@ int main(int argc, char** argv) {
     std::vector<sys2::Machine::LogEntry> log;
     if (!log_path.empty()) machine.log = &log;
     if (!capture.attach(*set, machine)) return 1;
+    // --io-trace FILE: the sound CPU's chip and latch accesses, time in main-CPU cycles, as MAME's Lua tap logs them.
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> io_trace(nullptr, std::fclose);
+    if (!io_trace_path.empty()) {
+        io_trace.reset(std::fopen(std::string(io_trace_path).c_str(), "w"));
+        if (!io_trace) {
+            std::print(stderr, "qilin_run: can't write {}\n", io_trace_path);
+            return 1;
+        }
+        machine.io_trace = [&](char kind, std::uint16_t address, std::uint8_t value, std::int64_t sound_time) {
+            std::print(io_trace.get(), "{} {:04X} {:02X} {}\n", kind, address, value, sys2::main_cycles_at(sound_time));
+        };
+    }
     script.attach(machine);
     std::unique_ptr<sys2::Audio> audio;
     std::vector<std::int16_t> sound;

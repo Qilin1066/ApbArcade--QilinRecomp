@@ -54,13 +54,7 @@ void Machine::reset() {
 
 // ---- Main CPU -------------------------------------------------------------
 
-std::uint16_t Machine::main_fetch(std::uint16_t address) {
-    return main_read16(address);
-}
-
-std::uint16_t Machine::main_read16(std::uint16_t address) {
-    video_.observe(address);
-    address = static_cast<std::uint16_t>(address & 0xfffe);
+std::uint16_t Machine::main_read_io(std::uint16_t address) {
     switch (area(address)) {
     case Area::ram:
         return static_cast<std::uint16_t>(main_ram_[address] | (main_ram_[address + 1u] << 8));
@@ -90,11 +84,6 @@ std::uint16_t Machine::main_read16(std::uint16_t address) {
     default:
         return 0xffff;   // write-only registers and unmapped space read high
     }
-}
-
-std::uint8_t Machine::main_read8(std::uint16_t address) {
-    const auto word = main_read16(address);
-    return static_cast<std::uint8_t>((address & 1) ? word >> 8 : word);
 }
 
 void Machine::main_write16(std::uint16_t address, std::uint16_t value) {
@@ -215,10 +204,14 @@ std::uint8_t Machine::main_cp_lines() const noexcept {
 
 // ---- Sound CPU ------------------------------------------------------------
 
-std::uint8_t Machine::sound_read(std::uint16_t address) {
-    if (address >= 0x4000) return sound_rom_[address];
+std::uint8_t Machine::sound_read_io(std::uint16_t address) {
+    const std::uint8_t value = sound_read_chips(address);
+    if (io_trace && (address & 0x1fffu) >= 0x1800) io_trace('r', address, value, sound_time);
+    return value;
+}
+
+std::uint8_t Machine::sound_read_chips(std::uint16_t address) {
     const unsigned m = address & 0x1fffu;   // 0x2000-0x3FFF mirrors everything below
-    if (m < 0x1000) return sound_ram_[m];
     if (m < 0x1800) return eeprom_[m & 0x1ffu];
     const unsigned r = m & 0x7fu;
     switch (r >> 4) {
@@ -244,6 +237,7 @@ std::uint8_t Machine::sound_read(std::uint16_t address) {
 void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
     if (address >= 0x4000) return;
     const unsigned m = address & 0x1fffu;
+    if (io_trace && m >= 0x1800) io_trace('w', address, value, sound_time);
     if (m < 0x1000) {
         sound_ram_[m] = value;
         return;

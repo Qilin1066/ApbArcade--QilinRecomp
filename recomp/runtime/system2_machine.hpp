@@ -79,17 +79,36 @@ public:
     Inputs inputs;
 
     // ---- Main CPU bus. Every access, fetches included, passes the Slapstic. ----
-    std::uint16_t main_fetch(std::uint16_t address);
-    std::uint16_t main_read16(std::uint16_t address);
+    // Reads of RAM and ROM, nearly all of them, are inline; the rest of the
+    // map goes to main_read_io.
+    std::uint16_t main_fetch(std::uint16_t address) { return main_read16(address); }
+    QILIN_ALWAYS_INLINE std::uint16_t main_read16(std::uint16_t address) {
+        video_.observe(address);
+        const auto a = static_cast<std::uint16_t>(address & 0xfffe);
+        if (a < 0x1000) return static_cast<std::uint16_t>(main_ram_[a] | (main_ram_[a + 1u] << 8));
+        if (a >= 0x4000) {
+            const auto offset = rom_offset(a, bank_[0], bank_[1]);
+            return static_cast<std::uint16_t>(main_rom_[offset] | (main_rom_[offset + 1] << 8));
+        }
+        return main_read_io(a);
+    }
     void main_write16(std::uint16_t address, std::uint16_t value);
-    std::uint8_t main_read8(std::uint16_t address);
+    QILIN_ALWAYS_INLINE std::uint8_t main_read8(std::uint16_t address) {
+        const auto word = main_read16(address);
+        return static_cast<std::uint8_t>((address & 1) ? word >> 8 : word);
+    }
     void main_write8(std::uint16_t address, std::uint8_t value);
     [[nodiscard]] std::uint8_t bank(int window) const noexcept { return bank_[window]; }
     // The two bank registers, for lifted code to compare against its own bank.
     [[nodiscard]] std::uint8_t* bank_registers() noexcept { return bank_; }
 
-    // ---- Sound CPU bus. ----
-    std::uint8_t sound_read(std::uint16_t address);
+    // ---- Sound CPU bus. ROM and RAM reads inline, the rest sound_read_io. ----
+    QILIN_ALWAYS_INLINE std::uint8_t sound_read(std::uint16_t address) {
+        if (address >= 0x4000) return sound_rom_[address];
+        const unsigned m = address & 0x1fffu;   // 0x2000-0x3FFF mirrors everything below
+        if (m < 0x1000) return sound_ram_[m];
+        return sound_read_io(address);
+    }
     void sound_write(std::uint16_t address, std::uint8_t value);
 
     // ---- Lines to the CPUs. ----
@@ -123,6 +142,10 @@ public:
         std::int64_t time;
     };
     std::vector<LogEntry>* log = nullptr;
+    // Optional: every sound-CPU access to its chips and latches (0x1800-0x1FFF
+    // and the mirror), 'r' or 'w', with the sound cycle. For comparing a run
+    // with MAME's, access by access (qilin_run --io-trace).
+    std::function<void(char kind, std::uint16_t address, std::uint8_t value, std::int64_t sound_time)> io_trace;
 
     // Optional: told when the picture must be drawn up to a scanline, where
     // MAME forces a partial update (before a changed scroll register or a
@@ -184,6 +207,9 @@ public:
     [[nodiscard]] const std::array<std::uint8_t, 0x1000>& main_ram() const noexcept { return main_ram_; }
 
 private:
+    std::uint16_t main_read_io(std::uint16_t address);   // 0x1000-0x3FFF, word-aligned, after the Slapstic
+    std::uint8_t sound_read_io(std::uint16_t address);   // the EEPROM and the chips
+    std::uint8_t sound_read_chips(std::uint16_t address);
     void main_write(std::uint16_t address, std::uint16_t data, std::uint16_t mask);
     void sound_reset_w(std::uint8_t data);
     void apply_pending_enable();

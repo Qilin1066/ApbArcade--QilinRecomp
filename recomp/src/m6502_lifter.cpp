@@ -446,12 +446,25 @@ Result lift(const m6502::Program& program, const Options& options) {
     }
     dispatch += std::format("}};\nconst unsigned lifted_entry_count = {};\n\n", entries.size());
     dispatch +=
+        "// Every address of the ROM to its entry, one lookup: the sound CPU yields\n"
+        "// at the end of each slice (every few instructions) and resumes through here.\n"
+        "namespace {\n"
+        "struct Table {\n"
+        "    std::uint16_t at[0xc000] = {};   // 0x4000-0xFFFF: 1 + the entry's index, or 0\n"
+        "    Table() {\n"
+        "        for (unsigned i = 0; i < lifted_entry_count; ++i)\n"
+        "            if (lifted_entries[i].pc >= 0x4000) at[lifted_entries[i].pc - 0x4000] = static_cast<std::uint16_t>(i + 1);\n"
+        "    }\n"
+        "};\n"
+        "const Table table;\n"
+        "} // namespace\n\n"
         "bool dispatch(Board& b) {\n"
         "    const std::uint16_t pc = b.cpu.pc;\n"
-        "    const auto* end = lifted_entries + lifted_entry_count;\n"
-        "    const auto* e = std::lower_bound(lifted_entries, end, pc, [](const Entry& x, std::uint16_t key) { return x.pc < key; });\n"
-        "    if (e == end || e->pc != pc) return false;\n"
-        "    e->fn(b, e->index);\n"
+        "    if (pc < 0x4000) return false;\n"
+        "    const unsigned i = table.at[pc - 0x4000];\n"
+        "    if (i == 0) return false;\n"
+        "    const Entry& e = lifted_entries[i - 1];\n"
+        "    e.fn(b, e.index);\n"
         "    return true;\n"
         "}\n\n} // namespace qilin::rt6502\n";
     result.files.push_back({"sound_dispatch.cpp", dispatch});

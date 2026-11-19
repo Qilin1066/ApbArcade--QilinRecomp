@@ -1,4 +1,12 @@
 #pragma once
+
+// For the few accessors every lifted memory access goes through: inlined even
+// into the lifted code's very large functions, where compilers stop inlining.
+#if defined(_MSC_VER)
+#define QILIN_ALWAYS_INLINE __forceinline
+#else
+#define QILIN_ALWAYS_INLINE [[gnu::always_inline]] inline
+#endif
 // Atari System 2 board devices the T-11 sees, as MAME models them
 // (src/mame/atari/atarisy2.cpp, atarisy2_v.cpp, slapstic.cpp). Each has been
 // checked against MAME's source; see docs/system2.md.
@@ -129,7 +137,14 @@ private:
 // across the full CPU address space, including instruction fetches.
 class VideoMemory {
 public:
-    constexpr void observe(std::uint16_t address) noexcept {
+    // The common case (idle, and not the arming address) is a compare; the state machine runs only when armed.
+    QILIN_ALWAYS_INLINE constexpr void observe(std::uint16_t address) noexcept {
+        if (phase_ == Phase::idle && (address & 0xfffeu) != 0x8000) return;
+        step(address);
+    }
+
+private:
+    constexpr void step(std::uint16_t address) noexcept {
         address = static_cast<std::uint16_t>(address & 0xfffeu);
         if (address == 0x8000) {
             phase_ = Phase::armed;
@@ -185,6 +200,7 @@ public:
         }
     }
 
+public:
     [[nodiscard]] constexpr unsigned bank() const noexcept { return bank_; }
     // The RAM behind the view: page 0 is bank 0 (alphanumerics, then motion
     // objects at word 0xC00), pages 1 and 2 banks 2 and 3 (the playfield).
