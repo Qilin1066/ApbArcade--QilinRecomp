@@ -54,6 +54,9 @@ int main(int argc, char** argv) {
         std::print(stderr, "usage: qilin_handoff <rom-dir> --at FRAME [--frames N] [--monkey SEED] [--test-switch 1]\n");
         return 2;
     }
+    if (argc % 2 != 0) {
+        std::fprintf(stderr, "Each option needs a value\n"); return 2;
+    }
     std::uint64_t at = 0, frames = 300;
     std::int64_t quantum = 64;
     tools::Script script;
@@ -69,6 +72,9 @@ int main(int argc, char** argv) {
             std::print(stderr, "qilin_handoff: unknown option {}\n", flag);
             return 2;
         }
+    }
+    if (!script.error().empty()) {
+        std::fprintf(stderr, "%s\n", script.error().c_str()); return 2;
     }
     const auto set = rom::RomSet::load(argv[1]);
     if (!set) {

@@ -7,6 +7,7 @@
 
 #include "cfg.hpp"
 #include "controls.hpp"
+#include "script.hpp"
 #include "persistence.hpp"
 #include "m6502_cfg.hpp"
 #include "romset.hpp"
@@ -920,6 +921,63 @@ void test_controls() {
     CHECK(pedal_travel(0.7, flat) == 0);              // uncalibrated: no throttle, not a stuck one
 }
 
+void test_script() {
+    qilin::tools::Script script;
+    sys2::Inputs input;
+    CHECK(script.option("--steer", "-1") && script.error().empty());
+    script.apply(1, input);
+    CHECK(input.leta[0] == 255);
+    CHECK(script.option("--pedal", "63"));
+    script.apply(2, input);
+    CHECK(input.adc[1] == 63 && input.leta[0] == 254);
+    for (const auto& bad : {"-129", "128", "1junk", "1.5", "99999999999999999999999", ""}) {
+        qilin::tools::Script rejected;
+        CHECK(rejected.option("--steer", bad) && !rejected.error().empty());
+    }
+    for (const auto& option : {"--coin", "--pedal", "--monkey", "--test-switch", "--press"}) {
+        qilin::tools::Script rejected;
+        CHECK(rejected.option(option, "junk") && !rejected.error().empty());
+    }
+    qilin::tools::Script invalid_pedal;
+    CHECK(invalid_pedal.option("--pedal", "64") && !invalid_pedal.error().empty());
+    qilin::tools::Script press;
+    CHECK(press.option("--press", "8:12") && press.error().empty());
+    press.apply(11, input); CHECK((input.in0 & 8) != 0);
+    press.apply(12, input); CHECK((input.in0 & 8) == 0);
+    press.apply(22, input); CHECK((input.in0 & 8) != 0);
+}
+
+void test_pokey_random() {
+    sys2::Pokey chip;
+    CHECK(chip.read(10, 0, 1000) == 255);   // reset holds index zero
+    chip.write(15, 3, 1000);
+    // Independent bit-by-bit polynomial oracle (MAME 0.264 poly_init_9_17),
+    // one complete period; the production model jumps directly by time.
+    std::uint32_t state = 0x1ffff;
+    for (int cycle = 0; cycle <= 131071; ++cycle) {
+        const unsigned old_bit0 = state & 1;
+        const unsigned bit7 = ((state >> 8) ^ (state >> 13)) & 1;
+        state >>= 1;
+        state = (state & ~(1u << 7)) | (bit7 << 7) | (old_bit0 << 16);
+        CHECK(chip.read(10, 0, 1000 + cycle) == static_cast<std::uint8_t>(state >> 8));
+    }
+    chip.write(15, 0, 140000);
+    CHECK(chip.read(10, 0, 900000) == 255);
+    chip.write(8, 0x80, 900000);   // nine-bit mode, still held in reset
+    CHECK(chip.read(10, 0, 900001) == 255);
+    chip.write(15, 3, 900001);
+    state = 511;
+    for (int cycle = 0; cycle <= 511; ++cycle) {
+        state = (state >> 1) | (((state ^ (state >> 5)) & 1) << 8);
+        CHECK(chip.read(10, 0, 900001 + cycle) == static_cast<std::uint8_t>(state));
+    }
+    const auto copied = chip;
+    CHECK(copied.read(10, 0, 10000000000LL) == chip.read(10, 0, 10000000000LL));
+    sys2::Pokey fresh;
+    CHECK(fresh.read(10, 0, 10000000000LL) == 255);   // separate chips don't share phase
+    CHECK(chip.read(8, 0x37, 10000000000LL) == 0x37);
+}
+
 void test_audio_worker() {
     using namespace qilin::sys2;
     std::vector<std::int16_t> expected, actual;
@@ -1008,6 +1066,8 @@ void test_persistence() {
 int main() {
     test_sha1();
     test_persistence();
+    test_script();
+    test_pokey_random();
     test_audio_worker();
     test_controls();
     test_rom_set();

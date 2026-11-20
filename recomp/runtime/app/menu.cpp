@@ -260,6 +260,20 @@ void Menu::steering_section() {
     }
 
     if (s.steering == Steering::wheel) {
+        if (!s.profiles.empty() && ImGui::BeginCombo("Saved wheel setup", s.wheel_axis.name.empty() ? "Choose wheel" : s.wheel_axis.name.c_str())) {
+            std::string chosen;
+            for (const auto& [guid, profile] : s.profiles) {
+                const std::string label = (profile.wheel_axis.name.empty() ? "Wheel " + guid.substr(0, 8) : profile.wheel_axis.name) + "##" + guid;
+                if (ImGui::Selectable(label.c_str(), guid == s.wheel_axis.device)) chosen = guid;
+            }
+            ImGui::EndCombo();
+            if (!chosen.empty()) {
+                s.remember_controls();
+                s.select_profile(chosen);
+                input_.configure();
+            }
+        }
+        ImGui::TextWrapped("Each bound wheel remembers its calibration, pedals, buttons and friction. Display settings stay shared.");
         int behaviour = (s.moza_angle || s.wheel.wrap) ? 0 : 1;
         if (ImGui::Combo("Wheel behaviour", &behaviour, "Free rotation / direct drive\0Limited rotation / belt or gear driven\0")) {
             measuring_ = false;

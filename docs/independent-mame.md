@@ -38,3 +38,14 @@ The 14.5–20 second coin window has stereo correlation approximately **0.746**,
 These results do not reproduce the older changelog's broad claim of matching pictures and 0.9985 audio correlation. Do not loosen thresholds to turn this into a pass. Next investigate actual input/coin read cycles, scheduling after startup, and device state with read/write traces. The board's POKEY `RANDOM` register currently uses a cycle-count hash instead of the hardware polynomial: that is another fidelity gap, but has not been proven to cause these particular differences.
 
 Separately, the audio worker preserves the synchronous model's WAV **byte for byte** over a 6,000-frame credited game with steering, throttle and speech. This establishes that moving mixing off the game thread does not introduce the independent differences above; it does not establish that the underlying mix is identical to MAME. Physical playback and MOZA R5 / Logitech G920 behaviour still need testing on the actual hardware.
+
+
+## Version 0.18 follow-up traces
+
+The POKEY RANDOM placeholder has been replaced with the hardware polynomial sequence. Repeating the same scenario leaves the five sampled pixel counts and coin correlation above unchanged. Bus traces explain why that fix alone cannot resolve this baseline: each run reads RANDOM only once, around 51.7–51.8 seconds, after the earlier attract-driving difference.
+
+The comparison now saves `native-io.trace` / `mame-io.trace` (sound-CPU chip and latch reads/writes) and `native-input.trace` / `mame-input.trace` (main-CPU controls and ADC reads), with timestamps in 10 MHz main-CPU cycles. `report.json` includes initial sound commands, coin edges, initial RANDOM reads and YM writes, and the first sound-command value difference. The captures use ordinary Lua memory taps in original MAME; they do not modify MAME or substitute this project's device models. Raw traces can occupy hundreds of MB per run and remain local.
+
+The first different sound-command value is index **7** (zero-based): native reads `0x0B` at main cycle **92,872,949**; MAME reads `0x16` at **93,635,513**. The sequences therefore differ during startup, before scripted coins. The first YM write occurs at cycles **87,517,045** / **87,517,131**, only 86 cycles apart, but later command scheduling diverges. First coin detection is **149,747,229** / **150,425,607**, a 678,378-cycle (67.84 ms) separation after applying the explicit four-frame input shift. Native RANDOM later returns `0x61`, MAME `0xEF`, at different chip times.
+
+These traces establish where to investigate scheduling and phase; they do not establish that the CPU recompilation is faulty or that all residual differences have one cause. The shared-model CPU parity tests and byte-identical audio-worker comparison remain separate checks.

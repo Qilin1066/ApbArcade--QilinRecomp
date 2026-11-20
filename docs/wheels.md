@@ -55,3 +55,12 @@ The game initialises SDL haptics explicitly, requests no driver autocentre where
 - **Real R5/G920 hardware and force feel remain unverified.** The official SDK's exports and structure prefix have been inspected, but the mocked DLL is not a firmware compatibility test. In particular, R5 continuous tracking must be confirmed with the physical-angle meter on the user's actual Pit House/firmware combination. Native/reference gameplay parity checks do not test wheel hardware.
 
 Vendor references: [MOZA Pit House manual](https://support.mozaracing.com/en/support/solutions/articles/70000625635-moza-pit-house-user-manual), [MOZA SDK](https://mozaracing.com/pages/sdk), [G920 specifications](https://support.logi.com/hc/en-nz/articles/360023304114-G920-Driving-Force-Racing-Wheel-Technical-Specifications).
+
+
+## Saved wheel setups and focus
+
+Version 0.18 remembers each bound wheel's entire control setup in `apb.ini`, keyed by SDL GUID: angle, calibration, rotation mode, SDK preference, pedal/button bindings and friction. Bind each wheel once, then use **Saved wheel setup** to switch explicitly. If the selected wheel is absent, a connected wheel with an existing profile is restored automatically. When several saved wheels are connected, the selected connected wheel takes priority; otherwise the first connected known wheel is used. Reconnecting another wheel does not interrupt the one already selected and connected. Display and ROM-folder settings remain shared.
+
+Old flat settings remain supported. Device GUIDs distinguish R5 and G920 setups; identical units sharing a GUID share a profile. The MOZA physical-angle setup still requires the user-supplied SDK and hardware prerequisites above. Profiles do not install drivers or change Pit House rotation limits.
+
+Losing window focus or minimising pauses game time, releases game controls, clears queued sound and suspends game haptic effects. Returning rebases the wheel instead of replaying background turns. A menu already open stays open. This is tested with virtual controls; physical R5/G920 verification remains outstanding.

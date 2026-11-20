@@ -45,7 +45,13 @@ jobs:
           echo "NINJA_WINDOWS=$PWD/ninja" >> "$GITHUB_ENV"
       - name: Package
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then version="${GITHUB_REF_NAME#v}"; else version="$(git describe --tags --always)"; fi
+          version="$(sed -nE 's/^project\(ApbArcadeQilinRecomp VERSION ([0-9]+\.[0-9]+\.[0-9]+) .*/\1/p' CMakeLists.txt)"
+          [[ -n "$version" ]] || exit 1
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "${GITHUB_REF_NAME#v}" == "$version" ]] || { echo "Tag and CMake version disagree"; exit 1; }
+          else
+            version="$version-dev.$GITHUB_RUN_NUMBER"
+          fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
           tools/player-kit/package.sh "$version" "$PWD/APB-QilinRecomp-$version-windows-x64.zip"
       - uses: actions/upload-artifact@v4

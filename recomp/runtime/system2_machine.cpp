@@ -15,17 +15,52 @@ std::uint16_t combine(std::uint16_t old_value, std::uint16_t data, std::uint16_t
 
 } // namespace
 
+void Pokey::advance(std::int64_t time) const noexcept {
+    if (time > random_time_) {
+        if (written[15] & 3) {
+            const auto elapsed = static_cast<std::uint64_t>(time - random_time_);
+            p9_ = static_cast<unsigned>((p9_ + elapsed) % 511);
+            p17_ = static_cast<unsigned>((p17_ + elapsed) % 131071);
+        }
+        random_time_ = time;
+    }
+}
+void Pokey::write(unsigned offset, std::uint8_t value, std::int64_t time) noexcept {
+    advance(time);
+    offset &= 15;
+    if (offset == 15 && written[offset] != value && !(value & 3)) p9_ = p17_ = 0;
+    written[offset] = value;
+}
+
 std::uint8_t Pokey::read(unsigned offset, std::uint8_t allpot, std::int64_t sound_time) const noexcept {
     switch (offset & 15) {
     case 0x08:   // ALLPOT: System 2 wires the DIP switches here
         return allpot;
     case 0x0a: {
-        // RANDOM: MAME's comes from the 17-bit polynomial counter, clocked
-        // with the CPU. A hash of the cycle count stands in: the program
-        // only needs bytes that vary.
-        auto x = static_cast<std::uint64_t>(sound_time) * 0x9e3779b97f4a7c15ull;
-        x ^= x >> 29;
-        return static_cast<std::uint8_t>(x >> 32);
+        // MAME 0.264 pokey.cpp: RANDOM reads the low byte of poly9 or
+        // bits 8..15 of poly17. Counters advance at the chip clock only
+        // while SKCTL's low two bits are nonzero.
+        struct RandomTables {
+            std::array<std::uint8_t, 511> p9{};
+            std::array<std::uint8_t, 131071> p17{};
+            RandomTables() {
+                std::uint32_t state = 511;
+                for (auto& value : p9) {
+                    state = (state >> 1) | (((state ^ (state >> 5)) & 1) << 8);
+                    value = static_cast<std::uint8_t>(state);
+                }
+                state = 131071;
+                for (auto& value : p17) {
+                    const auto bit7 = ((state >> 8) ^ (state >> 13)) & 1;
+                    const auto bit16 = state & 1;
+                    state = ((state >> 1) & 0xff7f) | (bit7 << 7) | (bit16 << 16);
+                    value = static_cast<std::uint8_t>(state >> 8);
+                }
+            }
+        };
+        static const RandomTables tables;
+        advance(sound_time);
+        return written[8] & 0x80 ? tables.p9[p9_] : tables.p17[p17_];
     }
     case 0x0e:   // IRQST: no POKEY interrupt is pending (active low)
     case 0x0f:   // SKSTAT: no serial or key activity
@@ -55,6 +90,10 @@ void Machine::reset() {
 // ---- Main CPU -------------------------------------------------------------
 
 std::uint16_t Machine::main_read_io(std::uint16_t address) {
+    auto input = [&](std::uint16_t value) {
+        if (input_trace) input_trace(address, value, main_time);
+        return value;
+    };
     switch (area(address)) {
     case Area::ram:
         return static_cast<std::uint16_t>(main_ram_[address] | (main_ram_[address + 1u] << 8));
@@ -62,10 +101,10 @@ std::uint16_t Machine::main_read_io(std::uint16_t address) {
         return palette_.read_word(address);
     case Area::adc:
         // The ADC0809's result, on the low lane; nothing drives the high one.
-        return static_cast<std::uint16_t>(0xff00 | inputs.adc[adc_channel_ & 3]);
+        return input(static_cast<std::uint16_t>(0xff00 | inputs.adc[adc_channel_ & 3]));
     case Area::in0_watchdog:
-        return static_cast<std::uint16_t>((inputs.in0 & ~0x0030) | (mainlatch_.pending ? 0x0010 : 0) |
-                                          (soundlatch_.pending ? 0x0020 : 0));
+        return input(static_cast<std::uint16_t>((inputs.in0 & ~0x0030) | (mainlatch_.pending ? 0x0010 : 0) |
+                                          (soundlatch_.pending ? 0x0020 : 0)));
     case Area::sound_reply:
         // sound_r: reading the sound CPU's reply clears CP1 and the latch.
         p2portwr_ = false;
@@ -251,7 +290,7 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
     switch (r >> 4) {
     case 0:
     case 3:
-        pokey_[r >> 5].written[r & 15] = value;
+        pokey_[r >> 5].write(r & 15, value, sound_time);
         if (sound_sink) sound_sink->pokey_write(static_cast<int>(r >> 5), r & 15, value, sound_time);
         return;
     case 5:

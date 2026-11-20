@@ -66,6 +66,11 @@ class Pokey {
 public:
     std::array<std::uint8_t, 16> written{};
     std::uint8_t read(unsigned offset, std::uint8_t allpot, std::int64_t sound_time) const noexcept;
+    void write(unsigned offset, std::uint8_t value, std::int64_t sound_time) noexcept;
+private:
+    void advance(std::int64_t sound_time) const noexcept;
+    mutable std::int64_t random_time_ = 0;
+    mutable unsigned p9_ = 0, p17_ = 0;
 };
 
 class Machine {
@@ -146,6 +151,7 @@ public:
     // and the mirror), 'r' or 'w', with the sound cycle. For comparing a run
     // with MAME's, access by access (qilin_run --io-trace).
     std::function<void(char kind, std::uint16_t address, std::uint8_t value, std::int64_t sound_time)> io_trace;
+    std::function<void(std::uint16_t address, std::uint16_t value, std::int64_t main_time)> input_trace;
 
     // Optional: told when the picture must be drawn up to a scanline, where
     // MAME forces a partial update (before a changed scroll register or a

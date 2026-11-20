@@ -75,6 +75,42 @@ def compare_audio(native, reference, start, end):
             'sample_rate': rate, 'channels': results, 'passed': passed}
 
 
+def compare_traces(out):
+    result = {}
+    commands = {}
+    for engine in ('native', 'mame'):
+        commands[engine] = []
+        coins, random_reads, first_ym = [], [], []
+        last_coin, ym_count = 0x40, 0
+        with (out / f'{engine}-io.trace').open() as trace:
+            for line in trace:
+                kind, address, value, time = line.split()
+                address, value, time = int(address, 16) & 0x7f, int(value, 16), int(time)
+                if kind == 'r' and address == 0x60:
+                    commands[engine].append({'value': value, 'main_cycle': time})
+                if kind == 'r' and address == 0x40 and (value & 0x40) != last_coin:
+                    last_coin = value & 0x40
+                    if len(coins) < 8:
+                        coins.append({'active': not bool(last_coin), 'main_cycle': time})
+                if kind == 'r' and address in (0x0a, 0x3a) and len(random_reads) < 8:
+                    random_reads.append({'chip': address // 0x30, 'value': value, 'main_cycle': time})
+                if kind == 'w' and address in (0x50, 0x51):
+                    ym_count += 1
+                    if len(first_ym) < 8:
+                        first_ym.append({'data': bool(address & 1), 'value': value, 'main_cycle': time})
+        if not commands[engine] or not (out / f'{engine}-input.trace').stat().st_size:
+            raise ValueError(f'{engine}: bus trace missing or empty')
+        result[engine] = {'sound_command_reads': len(commands[engine]), 'first_commands': commands[engine][:8],
+                          'coin_edges': coins, 'first_random_reads': random_reads,
+                          'ym_writes': ym_count, 'first_ym_writes': first_ym}
+    result['first_command_value_difference'] = None
+    for i, (a, b) in enumerate(zip(commands['native'], commands['mame'])):
+        if a['value'] != b['value']:
+            result['first_command_value_difference'] = {'index': i, 'native': a, 'mame': b}
+            break
+    return result
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--mame', type=Path, required=True)
@@ -115,6 +151,24 @@ local coin=m.ioport.ports[':1840'].fields['Coin 1']
 local siren=m.ioport.ports[':1800'].fields['P1 Button 3']
 local pedal=m.ioport.ports[':ADC1'].fields['P1 Pedal 1']
 assert(coin and siren and pedal)
+-- Keep taps alive until exit; no debugger or modified MAME required.
+local trace=assert(io.open({lua_string(out / 'mame-io.trace')},'w'))
+local inputs=assert(io.open({lua_string(out / 'mame-input.trace')},'w'))
+apb_taps={{}}
+local function at() return math.floor(m.time:as_double()*10000000+0.5) end
+local sound=m.devices[':audiocpu'].spaces['program']
+apb_taps[1]=sound:install_read_tap(0x1800,0x187f,'apb-sound-read',function(a,d,mask)
+ trace:write(string.format('r %04X %02X %d\\n',a,d,at()))
+end)
+apb_taps[2]=sound:install_write_tap(0x1800,0x187f,'apb-sound-write',function(a,d,mask)
+ trace:write(string.format('w %04X %02X %d\\n',a,d,at()))
+end)
+local main=m.devices[':maincpu'].spaces['program']
+local function mainread(a,d,mask)
+ inputs:write(string.format('r %04X %04X %d\\n',a,d,at()))
+end
+apb_taps[3]=main:install_read_tap(0x1400,0x147f,'apb-adc',mainread)
+apb_taps[4]=main:install_read_tap(0x1800,0x1bff,'apb-controls',mainread)
 local function controls(frame)
  local n=frame-{offset}
  coin:set_value(((n>=900 and n<903) or (n>=930 and n<933)) and 1 or 0)
@@ -131,7 +185,7 @@ emu.register_frame_done(function()
   f:write(pixels);f:close()
  end
  controls(n+1)
- if n>={max(frames)+5} then m:exit() end
+ if n>={max(frames)+5} then trace:close(); inputs:close(); m:exit() end
 end,'frame')
 '''
     script = out / 'capture.lua'
@@ -146,7 +200,8 @@ end,'frame')
     run(command, out / 'mame.log', env)
     command = [native, roms, '--frames', str(max(frames)+2), '--pedal', '63',
                '--coin', '900', '--coin', '930', '--press', '8:3100', '--press', '8:4000',
-               '--wav', out / 'native.wav', '--audio-threaded', '1']
+               '--wav', out / 'native.wav', '--audio-threaded', '1',
+               '--io-trace', out / 'native-io.trace', '--input-trace', out / 'native-input.trace']
     for frame in frames:
         command += ['--frame-out', f'{frame-offset}:{out}/native-{frame}.png']
     run(command, out / 'native.log')
@@ -167,6 +222,7 @@ end,'frame')
         result['images'].append({'mame_frame': frame, 'native_frame': frame-offset,
                                  'different_pixels': count, 'total_pixels': int(mismatch.size)})
     start, end = map(float, args.audio_window.split(':'))
+    result['traces'] = compare_traces(out)
     result['audio'] = compare_audio(out / 'native.wav', out / 'mame.wav', start, end)
     result['passed'] = not any(f['different_pixels'] for f in result['images']) and result['audio']['passed']
     (out / 'report.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')

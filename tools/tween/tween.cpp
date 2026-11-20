@@ -306,6 +306,9 @@ int main(int argc, char** argv) {
         std::print(stderr, "usage: qilin_tween <rom-dir> --from F --to G [--factor N] [--scale S] [--out FILE.mp4] [script options]\n");
         return 2;
     }
+    if (argc % 2 != 0) {
+        std::fprintf(stderr, "Each option needs a value\n"); return 2;
+    }
     std::uint64_t from = 0, to = 0;
     int factor = 4, scale = 2;
     std::string out_path;
@@ -327,6 +330,9 @@ int main(int argc, char** argv) {
     if (to <= from || factor < 1 || factor > 8 || scale < 1 || scale > 8) {
         std::print(stderr, "qilin_tween: --to must be after --from; --factor and --scale 1..8\n");
         return 2;
+    }
+    if (!script.error().empty()) {
+        std::fprintf(stderr, "%s\n", script.error().c_str()); return 2;
     }
     const auto set = rom::RomSet::load(argv[1]);
     if (!set) {

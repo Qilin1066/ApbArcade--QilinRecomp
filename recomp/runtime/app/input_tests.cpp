@@ -410,6 +410,69 @@ int main(int argc, char** argv) {
     CHECK(input.devices().size() == 2);
     CHECK(input.last_counts == 0);
 
+    // Keep independent setups for two wheel GUIDs, including separate
+    // pedals/buttons; loading a wheel never changes display or ROM settings.
+    input.settings = app::Settings{};
+    input.settings.steering = app::Steering::wheel;
+    input.settings.wheel_axis = *heard;
+    input.settings.wheel.rotation = 900;
+    input.settings.wheel.wrap = false;
+    input.settings.friction = 17;
+    input.configure();
+    const std::string first_guid = input.settings.wheel_axis.device;
+    SDL_Joystick* other = attach("Another wheel", SDL_JOYSTICK_TYPE_WHEEL, 2, 8);
+    CHECK(other != nullptr);
+    pump(input);
+    std::string other_guid;
+    for (const auto& d : input.devices()) if (d.id == SDL_GetJoystickID(other)) other_guid = d.guid;
+    CHECK(first_guid != other_guid && other_guid.size() == 32);
+    input.settings.wheel_axis.device = other_guid;
+    input.settings.wheel.rotation = 360;
+    input.settings.wheel.wrap = true;
+    input.settings.friction = 31;
+    input.settings.pedal_axis.device = other_guid;
+    input.settings.pedal_axis.kind = app::Binding::Kind::axis;
+    input.settings.pedal_axis.index = 1;
+    input.configure();
+    CHECK(input.settings.profiles.size() == 2);
+    input.settings.display.mask = 0.42f;
+    input.settings.rom_dir = "shared-ROM-folder";
+    CHECK(input.settings.save(path));
+    app::Settings restored;
+    CHECK(restored.load(path) && restored.profiles.size() == 2);
+    CHECK(restored.select_profile(first_guid));
+    CHECK(restored.wheel.rotation == 900 && !restored.wheel.wrap && restored.friction == 17);
+    CHECK(restored.display.mask == 0.42f && restored.rom_dir == "shared-ROM-folder");
+    CHECK(restored.select_profile(other_guid));
+    CHECK(restored.wheel.wrap && restored.friction == 31 && restored.pedal_axis.device == other_guid);
+    input.settings.wheel_axis.device = first_guid;
+    input.configure();
+    CHECK(input.settings.wheel.rotation == 900 && input.settings.friction == 17);
+    // Losing focus releases controls; returning rebases motion. Opening a
+    // menu while unfocused must not accidentally reactivate the controls.
+    SDL_Event focus{};
+    focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+    input.handle(focus);
+    CHECK(!input.playing && !input.focused());
+    SDL_SetJoystickVirtualAxis(wheel, 0, 30000);
+    frame(input, in);
+    CHECK(input.last_counts == 0 && in.adc[1] == 63);
+    input.set_playing(false);
+    focus.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+    input.handle(focus);
+    CHECK(!input.playing && input.focused());
+    input.set_playing(true);
+    frame(input, in);
+    CHECK(input.last_counts == 0);
+    // Disconnecting the selected wheel restores the other connected setup.
+    SDL_DetachVirtualJoystick(SDL_GetJoystickID(wheel));
+    pump(input);
+    CHECK(input.settings.wheel_axis.device == other_guid && input.settings.friction == 31);
+    SDL_DetachVirtualJoystick(SDL_GetJoystickID(other));
+    SDL_CloseJoystick(other);
+    pump(input);
+    std::filesystem::remove(path);
+
     owner.reset();
     CHECK((SDL_WasInit(SDL_INIT_HAPTIC) & SDL_INIT_HAPTIC) == 0);
     SDL_CloseJoystick(wheel);
@@ -417,14 +480,19 @@ int main(int argc, char** argv) {
     // Exercise stream setup, prebuffering, pause and restart without a
     // physical playback device on all platforms.
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
-    CHECK(SDL_InitSubSystem(SDL_INIT_AUDIO));
     {
-        app::AudioOutput output;
-        CHECK(output.ok());
+        app::AudioOutput output;   // no audio subsystem yet: an initial outage
+        CHECK(!output.ok());
+        CHECK(SDL_InitSubSystem(SDL_INIT_AUDIO));
+        output.request_reopen();
         const std::array<std::int16_t, 1864> pcm{};
         for (int i = 0; i < 20; ++i) CHECK(output.push(pcm));
+        CHECK(output.state() == app::AudioOutput::State::playing);
         CHECK(output.pause());
+        CHECK(output.state() == app::AudioOutput::State::buffering);
+        output.request_reopen();   // the same path as a device reconnect event
         for (int i = 0; i < 3; ++i) CHECK(output.push(pcm));
+        CHECK(output.ok() && output.state() == app::AudioOutput::State::playing);
         CHECK(output.pause());
     }
     SDL_QuitSubSystem(SDL_INIT_AUDIO);

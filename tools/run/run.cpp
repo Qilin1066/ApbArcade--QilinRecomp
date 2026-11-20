@@ -49,9 +49,12 @@ int main(int argc, char** argv) {
         std::print(stderr, "usage: qilin_run <rom-dir> [--frames N]\n");
         return 2;
     }
+    if (argc % 2 != 0) {
+        std::fprintf(stderr, "Each option needs a value\n"); return 2;
+    }
     std::uint64_t frames = 600;
     bool threaded = false;
-    std::string_view log_path, wav_path, io_trace_path;
+    std::string_view log_path, wav_path, io_trace_path, input_trace_path;
     tools::Script script;
     tools::FrameCapture capture;
     for (int i = 2; i + 1 < argc; i += 2) {
@@ -65,6 +68,7 @@ int main(int argc, char** argv) {
         else if (script.option(flag, value)) {}
         else if (flag == "--frame-hashes") capture.hashes_path = value;
         else if (flag == "--io-trace") io_trace_path = value;
+        else if (flag == "--input-trace") input_trace_path = value;
         else if (flag == "--draw") capture.draw_all = number != 0;
         else if (flag == "--look") {
             if (!capture.look(value)) return 2;
@@ -79,6 +83,9 @@ int main(int argc, char** argv) {
             std::print(stderr, "qilin_run: unknown option {}\n", flag);
             return 2;
         }
+    }
+    if (!script.error().empty()) {
+        std::fprintf(stderr, "%s\n", script.error().c_str()); return 2;
     }
     const auto set = rom::RomSet::load(argv[1]);
     if (!set) {
@@ -99,6 +106,14 @@ int main(int argc, char** argv) {
         }
         machine.io_trace = [&](char kind, std::uint16_t address, std::uint8_t value, std::int64_t sound_time) {
             std::print(io_trace.get(), "{} {:04X} {:02X} {}\n", kind, address, value, sys2::main_cycles_at(sound_time));
+        };
+    }
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> input_trace(nullptr, std::fclose);
+    if (!input_trace_path.empty()) {
+        input_trace.reset(std::fopen(std::string(input_trace_path).c_str(), "w"));
+        if (!input_trace) { std::print(stderr, "qilin_run: can't write {}\n", input_trace_path); return 1; }
+        machine.input_trace = [&](std::uint16_t address, std::uint16_t value, std::int64_t time) {
+            std::print(input_trace.get(), "r {:04X} {:04X} {}\n", address, value, time);
         };
     }
     script.attach(machine);

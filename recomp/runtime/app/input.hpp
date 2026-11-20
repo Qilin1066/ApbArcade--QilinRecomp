@@ -17,6 +17,7 @@
 
 #include <array>
 #include <optional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -81,7 +82,7 @@ void apply_preset(DisplaySettings& d, std::size_t preset);
 // The preset the picture is set to now, or -1 (set by hand).
 [[nodiscard]] int matching_preset(const DisplaySettings& d);
 
-struct Settings {
+struct ControlSettings {
     std::array<Binding, 6> buttons;    // each besides the built-in keys and gamepad buttons
     Steering steering = Steering::keys_and_pad;
     Binding wheel_axis;
@@ -98,6 +99,12 @@ struct Settings {
     double stick_speed = 3;
     double stick_curve = 2;
     int friction = 20;                 // force feedback on the bound wheel, percent; 0 off
+};
+
+struct Settings : ControlSettings {
+    std::map<std::string, ControlSettings, std::less<>> profiles;
+    void remember_controls();
+    bool select_profile(const std::string& guid);
     DisplaySettings display;
     std::string rom_dir;               // where the ROMs were last found (apb with no folder given uses it)
 
@@ -123,6 +130,8 @@ public:
     bool test_switch = false;
     bool playing = true;    // false while the menu is open: the mouse is the menu's then
     void set_playing(bool playing);
+    void set_focused(bool focused);
+    [[nodiscard]] bool focused() const { return focused_; }
 
     struct Device {
         SDL_JoystickID id = 0;
@@ -170,6 +179,7 @@ private:
     void reset_motion();
     void baseline();
 
+    std::string active_profile_;
     std::vector<Device> devices_;
     controls::Wheel wheel_;
     controls::Rate stick_;
@@ -179,6 +189,7 @@ private:
     controls::AxisTravel measurement_;
     bool measuring_wheel_ = false;
     bool haptics_ready_ = false;
+    bool focused_ = true, requested_playing_ = true;
     bool was_playing_ = true;
     bool resuming_ = false;
     double mouse_dx_ = 0, mouse_carry_ = 0;

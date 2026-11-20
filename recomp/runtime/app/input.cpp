@@ -152,8 +152,9 @@ bool Settings::load(const std::string& path) {
         };
         kv[trim(line.substr(0, eq))] = trim(line.substr(eq + 1));
     }
+    std::string prefix;
     auto get = [&](std::string_view key) -> std::string_view {
-        const auto it = kv.find(key);
+        const auto it = kv.find(prefix + std::string(key));
         return it == kv.end() ? std::string_view() : std::string_view(it->second);
     };
     auto num = [&](std::string_view key, double fallback) { return get(key).empty() ? fallback : number(get(key), fallback); };
@@ -162,26 +163,29 @@ bool Settings::load(const std::string& path) {
         b.name = std::string(get(std::string(key) + "_name"));
         return b;
     };
-    for (std::size_t i = 0; i < buttons.size(); ++i) buttons[i] = binding(button_keys[i]);
-    const auto steer = get("steering");
-    steering = steer == "wheel" ? Steering::wheel : steer == "mouse" ? Steering::mouse : Steering::keys_and_pad;
-    wheel_axis = binding("wheel_axis");
-    wheel.rotation = std::clamp(num("wheel_rotation", wheel.rotation), 90.0, 10000.0);
-    wheel.counts_per_turn = std::clamp(num("wheel_counts_per_turn", wheel.counts_per_turn), 8.0, 2048.0);
-    wheel.edge = std::clamp(num("wheel_edge", wheel.edge), 0.5, 1.0);
-    wheel.edge_rate = std::clamp(num("wheel_edge_rate", wheel.edge_rate), 0.0, 32.0);
-    wheel.invert = num("wheel_invert", 0) != 0;
-    wheel.wrap = num("wheel_wrap", 0) != 0;
-    moza_angle = num("moza_angle", 0) != 0;
-    moza_sdk = std::string(get("moza_sdk"));
-    pedal_axis = binding("pedal_axis");
-    pedal.released = num("pedal_released", pedal.released);
-    pedal.floored = num("pedal_floored", pedal.floored);
-    pedal.deadzone = std::clamp(num("pedal_deadzone", pedal.deadzone), 0.0, 0.3);
-    mouse_counts = std::clamp(num("mouse_counts", mouse_counts), 0.01, 8.0);
-    stick_speed = std::clamp(num("stick_speed", stick_speed), 0.5, 16.0);
-    stick_curve = std::clamp(num("stick_curve", stick_curve), 1.0, 4.0);
-    friction = static_cast<int>(std::clamp(num("friction", friction), 0.0, 100.0));
+    auto controls = [&](ControlSettings& c) {
+        for (std::size_t i = 0; i < c.buttons.size(); ++i) c.buttons[i] = binding(button_keys[i]);
+        const auto steer = get("steering");
+        c.steering = steer == "wheel" ? Steering::wheel : steer == "mouse" ? Steering::mouse : Steering::keys_and_pad;
+        c.wheel_axis = binding("wheel_axis");
+        c.wheel.rotation = std::clamp(num("wheel_rotation", c.wheel.rotation), 90.0, 10000.0);
+        c.wheel.counts_per_turn = std::clamp(num("wheel_counts_per_turn", c.wheel.counts_per_turn), 8.0, 2048.0);
+        c.wheel.edge = std::clamp(num("wheel_edge", c.wheel.edge), 0.5, 1.0);
+        c.wheel.edge_rate = std::clamp(num("wheel_edge_rate", c.wheel.edge_rate), 0.0, 32.0);
+        c.wheel.invert = num("wheel_invert", 0) != 0;
+        c.wheel.wrap = num("wheel_wrap", 0) != 0;
+        c.moza_angle = num("moza_angle", 0) != 0;
+        c.moza_sdk = std::string(get("moza_sdk"));
+        c.pedal_axis = binding("pedal_axis");
+        c.pedal.released = num("pedal_released", c.pedal.released);
+        c.pedal.floored = num("pedal_floored", c.pedal.floored);
+        c.pedal.deadzone = std::clamp(num("pedal_deadzone", c.pedal.deadzone), 0.0, 0.3);
+        c.mouse_counts = std::clamp(num("mouse_counts", c.mouse_counts), 0.01, 8.0);
+        c.stick_speed = std::clamp(num("stick_speed", c.stick_speed), 0.5, 16.0);
+        c.stick_curve = std::clamp(num("stick_curve", c.stick_curve), 1.0, 4.0);
+        c.friction = static_cast<int>(std::clamp(num("friction", c.friction), 0.0, 100.0));
+    };
+    controls(*this);
     const auto scaling = get("scaling");
     display.scaling = scaling == "fit" ? gfx::Scaling::fit : scaling == "stretch" ? gfx::Scaling::stretch : gfx::Scaling::integer;
     display.smooth = num("smooth", 1) != 0;
@@ -195,25 +199,58 @@ bool Settings::load(const std::string& path) {
     display.monitor = std::string(get("monitor"));
     display.gpu = std::string(get("gpu"));
     rom_dir = std::string(get("rom_dir"));
+    profiles.clear();
+    for (const auto& [key, value] : kv) {
+        (void)value;
+        if (key.starts_with("profile.") && key.size() > 41 && key[40] == '.') {
+            const std::string guid = key.substr(8, 32);
+            if (guid.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos) profiles.try_emplace(guid);
+        }
+    }
+    for (auto& [guid, profile] : profiles) {
+        prefix = "profile." + guid + ".";
+        controls(profile);
+    }
+    std::erase_if(profiles, [](const auto& item) {
+        return item.second.steering != Steering::wheel || item.second.wheel_axis.device != item.first;
+    });
     return true;
 }
 
-bool Settings::save(const std::string& path) const {
+namespace {
+void write_controls(std::ostream& destination, const ControlSettings& c, const std::string& prefix) {
     std::ostringstream out;
-    out << "# apb settings, written by the game's settings menu (F1).\n";
     auto binding = [&](std::string_view key, const Binding& b) {
         out << key << " = " << b.text() << '\n';
         if (!b.name.empty()) out << key << "_name = " << b.name << '\n';
     };
-    for (std::size_t i = 0; i < buttons.size(); ++i) binding(button_keys[i], buttons[i]);
-    out << "steering = " << (steering == Steering::wheel ? "wheel" : steering == Steering::mouse ? "mouse" : "keys") << '\n';
-    binding("wheel_axis", wheel_axis);
+    for (std::size_t i = 0; i < c.buttons.size(); ++i) binding(button_keys[i], c.buttons[i]);
+    out << "steering = " << (c.steering == Steering::wheel ? "wheel" : c.steering == Steering::mouse ? "mouse" : "keys") << '\n';
+    binding("wheel_axis", c.wheel_axis);
     out << strf("wheel_rotation = %.9g\nwheel_counts_per_turn = %.9g\nwheel_edge = %.9g\nwheel_edge_rate = %.9g\nwheel_invert = %d\n",
-                wheel.rotation, wheel.counts_per_turn, wheel.edge, wheel.edge_rate, wheel.invert ? 1 : 0);
-    out << "wheel_wrap = " << (wheel.wrap ? 1 : 0) << "\nmoza_angle = " << (moza_angle ? 1 : 0) << "\nmoza_sdk = " << moza_sdk << '\n';
-    binding("pedal_axis", pedal_axis);
-    out << strf("pedal_released = %.9g\npedal_floored = %.9g\npedal_deadzone = %.9g\n", pedal.released, pedal.floored, pedal.deadzone);
-    out << strf("mouse_counts = %.9g\nstick_speed = %.9g\nstick_curve = %.9g\nfriction = %d\n", mouse_counts, stick_speed, stick_curve, friction);
+                c.wheel.rotation, c.wheel.counts_per_turn, c.wheel.edge, c.wheel.edge_rate, c.wheel.invert ? 1 : 0);
+    out << "wheel_wrap = " << (c.wheel.wrap ? 1 : 0) << "\nmoza_angle = " << (c.moza_angle ? 1 : 0) << "\nmoza_sdk = " << c.moza_sdk << '\n';
+    binding("pedal_axis", c.pedal_axis);
+    out << strf("pedal_released = %.9g\npedal_floored = %.9g\npedal_deadzone = %.9g\n", c.pedal.released, c.pedal.floored, c.pedal.deadzone);
+    out << strf("mouse_counts = %.9g\nstick_speed = %.9g\nstick_curve = %.9g\nfriction = %d\n", c.mouse_counts, c.stick_speed, c.stick_curve, c.friction);
+    std::istringstream lines(out.str());
+    for (std::string line; std::getline(lines, line);) destination << prefix << line << '\n';
+}
+}
+void Settings::remember_controls() {
+    if (steering == Steering::wheel && wheel_axis.device.size() == 32 && wheel_axis.device.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos)
+        profiles[wheel_axis.device] = static_cast<const ControlSettings&>(*this);
+}
+bool Settings::select_profile(const std::string& guid) {
+    const auto it = profiles.find(guid);
+    if (it == profiles.end()) return false;
+    static_cast<ControlSettings&>(*this) = it->second;
+    return true;
+}
+bool Settings::save(const std::string& path) const {
+    std::ostringstream out;
+    out << "# apb settings, written by the game's settings menu (F1).\n";
+    write_controls(out, *this, "");
     const char* scaling = display.scaling == gfx::Scaling::fit ? "fit" : display.scaling == gfx::Scaling::stretch ? "stretch" : "integer";
     out << strf("scaling = %s\nsmooth = %d\nvsync = %d\nmatch_display = %d\nfullscreen = %d\n", scaling, display.smooth ? 1 : 0,
                 display.vsync ? 1 : 0, display.match_display ? 1 : 0, display.fullscreen ? 1 : 0);
@@ -221,6 +258,10 @@ bool Settings::save(const std::string& path) const {
     out << strf("effect = %s\ncrt_scanlines = %.9g\ncrt_mask = %.9g\n", effect, display.scanlines, display.mask);
     out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';
     out << "rom_dir = " << rom_dir << '\n';
+    auto saved_profiles = profiles;
+    if (steering == Steering::wheel && wheel_axis.device.size() == 32 && wheel_axis.device.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos)
+        saved_profiles[wheel_axis.device] = static_cast<const ControlSettings&>(*this);
+    for (const auto& [guid, profile] : saved_profiles) write_controls(out, profile, "profile." + guid + ".");
     return out && persist::replace(path, out.str());
 }
 
@@ -295,7 +336,8 @@ void Input::add(SDL_JoystickID id) {
     std::fflush(stdout);
     devices_.push_back(std::move(d));
     if (devices_.back().guid == settings.wheel_axis.device) reset_motion();
-    start_force(devices_.back());
+    if (!active_profile_.empty() && !find(settings.wheel_axis.device) && settings.profiles.contains(devices_.back().guid)) configure();
+    else start_force(devices_.back());
 }
 
 void Input::remove(SDL_JoystickID id) {
@@ -311,13 +353,14 @@ void Input::remove(SDL_JoystickID id) {
     std::printf("apb: controller disconnected: %s\n", it->name.c_str());
     std::fflush(stdout);
     devices_.erase(it);
+    if (!find(settings.wheel_axis.device)) configure();
 }
 
 // The wheel the steering is bound to gets the cabinet's feel: no centring
 // spring (APB's wheel spins freely) and, if set, some friction (or damping,
 // where the wheel has no friction effect), so it doesn't spin on its own.
 void Input::start_force(Device& d) {
-    const bool bound = settings.steering == Steering::wheel && settings.wheel_axis.device == d.guid;
+    const bool bound = playing && settings.steering == Steering::wheel && settings.wheel_axis.device == d.guid;
     if (!bound) {
         if (d.haptic) {
             SDL_StopHapticEffects(d.haptic);
@@ -365,6 +408,14 @@ void Input::start_force(Device& d) {
 }
 
 void Input::configure() {
+    // Known wheel selected in the menu, or a different known wheel connected
+    // while the selected one is absent: restore that wheel's whole setup.
+    std::string selected = settings.wheel_axis.device;
+    if (settings.steering == Steering::wheel && !find(selected))
+        for (const auto& d : devices_) if (settings.profiles.contains(d.guid)) { selected = d.guid; break; }
+    if (settings.steering == Steering::wheel && selected != active_profile_ && settings.profiles.contains(selected)) settings.select_profile(selected);
+    active_profile_ = settings.wheel_axis.device;
+    settings.remember_controls();
     wheel_.configure(settings.wheel);
     stick_.counts_at_full = settings.stick_speed;
     stick_.curve = settings.stick_curve;
@@ -393,10 +444,18 @@ void Input::reset_motion() {
 }
 
 void Input::set_playing(bool value) {
-    resuming_ = value && !was_playing_;
-    playing = value;
-    was_playing_ = value;
+    requested_playing_ = value;
+    const bool effective = value && focused_;
+    if (effective == was_playing_) return;
+    resuming_ = effective && !was_playing_;
+    playing = effective;
+    was_playing_ = effective;
     reset_motion();
+    for (auto& d : devices_) start_force(d);
+}
+void Input::set_focused(bool value) {
+    focused_ = value;
+    set_playing(requested_playing_);
 }
 
 void Input::begin_wheel_measurement() {
@@ -432,6 +491,9 @@ double Input::read(const Binding& b) const {
 
 void Input::handle(const SDL_Event& e) {
     switch (e.type) {
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+    case SDL_EVENT_WINDOW_MINIMIZED: set_focused(false); break;
+    case SDL_EVENT_WINDOW_FOCUS_GAINED: set_focused(true); break;
     case SDL_EVENT_JOYSTICK_ADDED: add(e.jdevice.which); break;
     case SDL_EVENT_JOYSTICK_REMOVED: remove(e.jdevice.which); break;
     case SDL_EVENT_JOYSTICK_AXIS_MOTION:

@@ -47,7 +47,6 @@
 #include "romset.hpp"
 #include "audio_worker.hpp"
 #include "audio_output.hpp"
-#include <stdexcept>
 #include "system2_machine.hpp"
 #include "system2_video.hpp"
 
@@ -184,10 +183,12 @@ int main(int argc, char** argv) {
     // from a terminal, the focus can stay there, and SDL would otherwise
     // ignore every controller until the window is clicked.
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "apb: SDL: %s\n", SDL_GetError());
         return 1;
     }
+    if (!options.mute && !SDL_InitSubSystem(SDL_INIT_AUDIO))
+        std::fprintf(stderr, "apb: audio unavailable, will retry: %s\n", SDL_GetError());
     // The player's settings: the controls (for the input below), the display and the ROM folder.
     const std::string settings_path = pref_path("apb.ini");
     app::Settings saved;
@@ -283,16 +284,8 @@ int main(int argc, char** argv) {
     std::unique_ptr<sys2::AudioWorker> audio;
     if (!options.mute) {
         sound = std::make_unique<app::AudioOutput>();
-        if (sound->ok()) {
-            audio = std::make_unique<sys2::AudioWorker>([&](std::span<const std::int16_t> pcm) {
-                if (!sound->push(pcm)) throw std::runtime_error(SDL_GetError());
-                return true;
-            });
-            machine.sound_sink = audio.get();
-        } else {
-            std::fprintf(stderr, "apb: no sound: %s\n", SDL_GetError());
-            sound.reset();
-        }
+        audio = std::make_unique<sys2::AudioWorker>([&](std::span<const std::int16_t> pcm) { return sound->push(pcm); });
+        machine.sound_sink = audio.get();
     }
 
     // The controls and the settings menu, with the player's saved settings.
@@ -301,11 +294,13 @@ int main(int argc, char** argv) {
     app::Input& input = *input_owner;
     input.settings = saved;
     input.configure();
+    input.set_focused((SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0);
     auto menu_owner = std::make_unique<app::Menu>(window, *renderer, input, settings_path);
     app::Menu& menu = *menu_owner;
     if (!menu.ok()) fail("the settings menu couldn't start on this window's Vulkan device");
     for (const auto& d : input.devices()) menu.notify("Controller: " + d.name);
     if (input.devices().empty()) menu.notify("No controller found yet (the keyboard works)");
+    if (sound && !sound->ok()) menu.notify("Audio device unavailable; retrying automatically");
     if (loaded_eeprom == persist::Eeprom::Loaded::backup) menu.notify("Recovered high scores and audits from the EEPROM backup");
     if (loaded_eeprom == persist::Eeprom::Loaded::invalid) menu.notify(eeprom.error());
     std::string save_notice;
@@ -327,6 +322,8 @@ int main(int argc, char** argv) {
     std::uint64_t lock_since = 0;
     bool lock_failed = false;
     bool quit = false;
+    Uint64 audio_retry_at = 0;
+    auto audio_state = sound ? sound->state() : app::AudioOutput::State::unavailable;
     // The window's events, a frame at a time: the controls', the menu's, apb's own.
     auto events = [&] {
         SDL_Event e;
@@ -353,13 +350,33 @@ int main(int argc, char** argv) {
             }
             switch (e.type) {
             case SDL_EVENT_QUIT: quit = true; break;
+            case SDL_EVENT_AUDIO_DEVICE_ADDED:
+            case SDL_EVENT_AUDIO_DEVICE_REMOVED:
+                if (sound && !e.adevice.recording && (e.type == SDL_EVENT_AUDIO_DEVICE_REMOVED || !sound->ok())) sound->request_reopen();
+                break;
             case SDL_EVENT_KEY_DOWN:
                 if (e.key.key == SDLK_F2 && !e.key.repeat) input.test_switch = !input.test_switch;
+                break;
+            case SDL_EVENT_WINDOW_RESTORED:
+                input.set_focused((SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0);
                 break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 renderer->resize_window(static_cast<std::uint32_t>(e.window.data1), static_cast<std::uint32_t>(e.window.data2));
                 break;
             default: break;
+            }
+        }
+        if (sound) {
+            if (SDL_GetTicks() >= audio_retry_at && !(SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO)) {
+                audio_retry_at = SDL_GetTicks() + 1000;
+                if (audio) audio->drain();
+                if (SDL_InitSubSystem(SDL_INIT_AUDIO)) sound->request_reopen();
+            }
+            const auto state = sound->state();
+            if (state != audio_state) {
+                if (state == app::AudioOutput::State::unavailable) menu.notify("Audio device unavailable; retrying automatically");
+                else if (audio_state == app::AudioOutput::State::unavailable) menu.notify("Audio device reconnected");
+                audio_state = state;
             }
         }
         if (menu.quit_requested()) quit = true;
@@ -376,7 +393,7 @@ int main(int argc, char** argv) {
             if (!audio->submit(machine.sound_time)) {
                 machine.sound_sink = nullptr;
                 std::fprintf(stderr, "apb: audio stopped: %s\n", audio->error().c_str());
-                menu.notify("Audio stopped; check your playback device and restart APB");
+                menu.notify("Audio mixer failed; restart APB");
             }
         }
         sys2::to_bgra(video.frame(), machine.palette(), pixels.data());
@@ -396,16 +413,18 @@ int main(int argc, char** argv) {
         }
         renderer->set_lock_to_display(repeats > 0);
         // The menu pauses the game: the same frame, the menu over it, until it closes.
-        if (menu.is_open() && !eeprom.save(machine.eeprom())) report_save_failure();
-        if (menu.is_open() && audio) {
+        if ((menu.is_open() || !input.focused()) && !eeprom.save(machine.eeprom())) report_save_failure();
+        if ((menu.is_open() || !input.focused()) && audio) {
             audio->drain();
             if (!sound->pause()) std::fprintf(stderr, "apb: audio pause: %s\n", SDL_GetError());
         }
-        while (menu.is_open() && !quit) {
-            renderer->write_back_buffer(pixels.data());
-            menu.frame();
-            renderer->present();
-            if (!renderer->config().lock_to_display || !renderer->config().vsync) SDL_Delay(16);   // only a locked FIFO waits by itself
+        while ((menu.is_open() || !input.focused()) && !quit) {
+            if (input.focused()) {
+                renderer->write_back_buffer(pixels.data());
+                menu.frame();
+                renderer->present();
+            }
+            if (!input.focused() || !renderer->config().lock_to_display || !renderer->config().vsync) SDL_Delay(16);   // only a locked FIFO waits by itself
             events();
             input.apply(machine.inputs);   // keeps the meters live; the cabinet's controls rest
             paced_from = frame;
