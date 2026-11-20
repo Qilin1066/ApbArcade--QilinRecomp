@@ -63,6 +63,8 @@ endfunction()
 # ---- Runtime headers the generated code includes (board devices, CPU state) ----
 add_library(qilin_runtime INTERFACE)
 target_include_directories(qilin_runtime INTERFACE recomp/runtime)
+add_library(qilin_persistence STATIC recomp/runtime/persistence.cpp)
+target_link_libraries(qilin_persistence PUBLIC qilin_runtime PRIVATE qilin_warnings)
 
 # The System 2 board as both CPUs see it: run by the reference run now, by the game later.
 # MAME's TMS5220, adapted to run outside its device framework (built with its own warnings).
@@ -75,8 +77,9 @@ target_link_libraries(qilin_board PUBLIC qilin_runtime qilin_tms5220 PRIVATE qil
 add_library(qilin_ymfm STATIC third_party/ymfm/ymfm_opm.cpp)
 target_include_directories(qilin_ymfm SYSTEM PUBLIC third_party/ymfm)
 target_compile_features(qilin_ymfm PUBLIC cxx_std_14)
-add_library(qilin_audio STATIC recomp/runtime/system2_audio.cpp)
-target_link_libraries(qilin_audio PUBLIC qilin_board PRIVATE qilin_ymfm qilin_warnings)
+find_package(Threads REQUIRED)
+add_library(qilin_audio STATIC recomp/runtime/system2_audio.cpp recomp/runtime/audio_worker.cpp)
+target_link_libraries(qilin_audio PUBLIC qilin_board Threads::Threads PRIVATE qilin_ymfm qilin_warnings)
 # Video as MAME draws it, from the board's RAM: the CPU reference renderer.
 add_library(qilin_video STATIC recomp/runtime/system2_video.cpp)
 target_link_libraries(qilin_video PUBLIC qilin_board qilin_core PRIVATE qilin_warnings)
@@ -113,7 +116,7 @@ qilin_tool(qilin)
 # ---- Tests (no game files needed) ----
 enable_testing()
 add_executable(qilin_tests recomp/tests/tests.cpp)
-target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qilin_warnings)
+target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qilin_persistence qilin_warnings)
 target_include_directories(qilin_tests PRIVATE recomp/runtime/app)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
@@ -284,9 +287,9 @@ if(SDL3_FOUND)
         target_compile_options(qilin_imgui PRIVATE -w)
     endif()
     # The controls (any wheel, pedals, gamepads, mice) and the settings menu.
-    add_library(qilin_app STATIC recomp/runtime/app/input.cpp recomp/runtime/app/menu.cpp recomp/runtime/app/moza.cpp)
+    add_library(qilin_app STATIC recomp/runtime/app/audio_output.cpp recomp/runtime/app/input.cpp recomp/runtime/app/menu.cpp recomp/runtime/app/moza.cpp)
     target_include_directories(qilin_app PUBLIC recomp/runtime/app)
-    target_link_libraries(qilin_app PUBLIC qilin_board qilin_gfx qilin_imgui SDL3::SDL3 PRIVATE qilin_warnings)
+    target_link_libraries(qilin_app PUBLIC qilin_board qilin_gfx qilin_imgui qilin_persistence SDL3::SDL3 PRIVATE qilin_warnings)
     # The controls on SDL's virtual joysticks: a wheel and pedals (no window or device needed).
     add_executable(qilin_input_tests recomp/runtime/app/input_tests.cpp)
     target_link_libraries(qilin_input_tests PRIVATE qilin_app qilin_warnings)
@@ -317,7 +320,7 @@ if(QILIN_PLAYER_KIT)
     add_library(qilin_kit_main OBJECT recomp/runtime/app/apb.cpp recomp/runtime/game/game.cpp)
     target_include_directories(qilin_kit_main PRIVATE recomp/runtime/game)
     target_link_libraries(qilin_kit_main PRIVATE qilin_app qilin_core qilin_video qilin_audio qilin_gfx qilin_board SDL3::SDL3 qilin_warnings)
-    set(kit_libraries qilin_app qilin_core qilin_video qilin_audio qilin_gfx qilin_imgui qilin_volk qilin_board qilin_tms5220 qilin_ymfm SDL3-static)
+    set(kit_libraries qilin_app qilin_core qilin_video qilin_audio qilin_persistence qilin_gfx qilin_imgui qilin_volk qilin_board qilin_tms5220 qilin_ymfm SDL3-static)
     set(kit_archive "${CMAKE_BINARY_DIR}/libapb_kit.a")
     set(mri "CREATE ${kit_archive}\n")
     foreach(library IN LISTS kit_libraries)
@@ -403,6 +406,13 @@ if(QILIN_ROM_DIR)
     if(NOT IS_DIRECTORY "${QILIN_ROM_DIR_ABSOLUTE}")
         message(FATAL_ERROR "QILIN_ROM_DIR is not a directory: ${QILIN_ROM_DIR_ABSOLUTE}")
     endif()
+    add_test(NAME qilin_audio_parity
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNATIVE=$<TARGET_FILE:qilin_run>"
+            "-DROM_DIR=${QILIN_ROM_DIR_ABSOLUTE}"
+            "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/audio-parity/$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/audio_parity.cmake")
+    set_tests_properties(qilin_audio_parity PROPERTIES LABELS "rom;parity" TIMEOUT 600)
     foreach(scenario attract credited monkey selftest)
         add_test(NAME qilin_game_parity_${scenario}
             COMMAND "${CMAKE_COMMAND}"

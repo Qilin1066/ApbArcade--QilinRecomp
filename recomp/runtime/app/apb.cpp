@@ -43,8 +43,11 @@
 #include "input.hpp"
 #include "text.hpp"
 #include "menu.hpp"
+#include "persistence.hpp"
 #include "romset.hpp"
-#include "system2_audio.hpp"
+#include "audio_worker.hpp"
+#include "audio_output.hpp"
+#include <stdexcept>
 #include "system2_machine.hpp"
 #include "system2_video.hpp"
 
@@ -265,7 +268,10 @@ int main(int argc, char** argv) {
     // The board, its saved EEPROM, the video and the scheduler.
     sys2::Machine machine(set->region(rom::Region::main_cpu), set->region(rom::Region::sound_cpu));
     const std::string nv = pref_path("eeprom.bin");
-    if (std::ifstream in{nv, std::ios::binary}; in) in.read(reinterpret_cast<char*>(machine.eeprom().data()), std::ssize(machine.eeprom()));
+    persist::Eeprom eeprom(nv);
+    const auto loaded_eeprom = eeprom.load(machine.eeprom());
+    if (loaded_eeprom == persist::Eeprom::Loaded::backup) std::fprintf(stderr, "apb: recovered EEPROM from backup\n");
+    if (loaded_eeprom == persist::Eeprom::Loaded::invalid) std::fprintf(stderr, "apb: %s\n", eeprom.error().c_str());
     const sys2::Graphics graphics(*set);
     sys2::Video video(graphics);
     machine.video_sink = &video;
@@ -273,19 +279,21 @@ int main(int argc, char** argv) {
 
     // Sound: the board's chips, queued to the default playback device. No
     // device is not an error; the game runs silent, with a note.
-    sys2::Audio audio;
-    SDL_AudioStream* sound = nullptr;
+    std::unique_ptr<app::AudioOutput> sound;
+    std::unique_ptr<sys2::AudioWorker> audio;
     if (!options.mute) {
-        const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, 55930};
-        sound = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-        if (sound) {
-            machine.sound_sink = &audio;
-            SDL_ResumeAudioStreamDevice(sound);
+        sound = std::make_unique<app::AudioOutput>();
+        if (sound->ok()) {
+            audio = std::make_unique<sys2::AudioWorker>([&](std::span<const std::int16_t> pcm) {
+                if (!sound->push(pcm)) throw std::runtime_error(SDL_GetError());
+                return true;
+            });
+            machine.sound_sink = audio.get();
         } else {
             std::fprintf(stderr, "apb: no sound: %s\n", SDL_GetError());
+            sound.reset();
         }
     }
-    constexpr int frame_bytes = 55930 / 60 * 4;   // one video frame of sound
 
     // The controls and the settings menu, with the player's saved settings.
     // (Pointers, so they go before the renderer and SDL do.)
@@ -298,6 +306,16 @@ int main(int argc, char** argv) {
     if (!menu.ok()) fail("the settings menu couldn't start on this window's Vulkan device");
     for (const auto& d : input.devices()) menu.notify("Controller: " + d.name);
     if (input.devices().empty()) menu.notify("No controller found yet (the keyboard works)");
+    if (loaded_eeprom == persist::Eeprom::Loaded::backup) menu.notify("Recovered high scores and audits from the EEPROM backup");
+    if (loaded_eeprom == persist::Eeprom::Loaded::invalid) menu.notify(eeprom.error());
+    std::string save_notice;
+    auto report_save_failure = [&] {
+        if (save_notice != eeprom.error()) {
+            save_notice = eeprom.error();
+            std::fprintf(stderr, "apb: EEPROM: %s\n", save_notice.c_str());
+            menu.notify("High scores could not be saved: " + save_notice);
+        }
+    };
 
     game::Scheduler scheduler(machine);
     const double frame_ns = 166400.0 / 10e6 * 1e9;
@@ -351,17 +369,15 @@ int main(int argc, char** argv) {
     machine.on_vblank = [&](std::uint64_t) { input.apply(machine.inputs); };
     scheduler.on_frame = [&](std::uint64_t frame) {
         events();
+        if (!eeprom.poll(machine.eeprom(), SDL_GetTicks())) report_save_failure();
         if (quit) throw game::Stop{game::Stop::frames, "closed"};
-        if (sound) {
+        if (audio && machine.sound_sink) {
             machine.advance_speech(machine.sound_time);
-            audio.advance(machine.sound_time);
-            auto& made = audio.frames();
-            // Keep the queue between one and four frames: drop what would
-            // overfill it (the device's clock runs a little slow), and let
-            // it fill again when it runs low.
-            const int queued = SDL_GetAudioStreamQueued(sound);
-            if (queued < 4 * frame_bytes) SDL_PutAudioStreamData(sound, made.data(), static_cast<int>(made.size() * sizeof(std::int16_t)));
-            made.clear();
+            if (!audio->submit(machine.sound_time)) {
+                machine.sound_sink = nullptr;
+                std::fprintf(stderr, "apb: audio stopped: %s\n", audio->error().c_str());
+                menu.notify("Audio stopped; check your playback device and restart APB");
+            }
         }
         sys2::to_bgra(video.frame(), machine.palette(), pixels.data());
         // Locked to the display ("match the display"), presenting paces the
@@ -380,6 +396,11 @@ int main(int argc, char** argv) {
         }
         renderer->set_lock_to_display(repeats > 0);
         // The menu pauses the game: the same frame, the menu over it, until it closes.
+        if (menu.is_open() && !eeprom.save(machine.eeprom())) report_save_failure();
+        if (menu.is_open() && audio) {
+            audio->drain();
+            if (!sound->pause()) std::fprintf(stderr, "apb: audio pause: %s\n", SDL_GetError());
+        }
         while (menu.is_open() && !quit) {
             renderer->write_back_buffer(pixels.data());
             menu.frame();
@@ -431,8 +452,13 @@ int main(int argc, char** argv) {
     };
     const auto stop = scheduler.run(options.frames ? options.frames : ~0ull);
 
-    if (std::ofstream out{nv, std::ios::binary}; out) out.write(reinterpret_cast<const char*>(machine.eeprom().data()), std::ssize(machine.eeprom()));
-    if (sound) SDL_DestroyAudioStream(sound);
+    if (!eeprom.save(machine.eeprom())) {
+        report_save_failure();
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB: save failed", eeprom.error().c_str(), window);
+    }
+    machine.sound_sink = nullptr;
+    audio.reset();   // join before destroying the playback stream
+    sound.reset();
     machine.on_vblank = nullptr;
     menu_owner.reset();
     if (!input.settings.save(settings_path)) std::fprintf(stderr, "apb: couldn't write the settings to %s\n", settings_path.c_str());

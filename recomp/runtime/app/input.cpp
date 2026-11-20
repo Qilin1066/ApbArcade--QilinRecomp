@@ -1,4 +1,5 @@
 #include "input.hpp"
+#include "persistence.hpp"
 
 #include <cstdio>
 #include "text.hpp"
@@ -9,7 +10,9 @@
 #include <cstdlib>
 #include <cmath>
 #include <fstream>
+#include <filesystem>
 #include <map>
+#include <sstream>
 
 namespace qilin::app {
 
@@ -135,7 +138,7 @@ int matching_preset(const DisplaySettings& d) {
 }
 
 bool Settings::load(const std::string& path) {
-    std::ifstream in(path);
+    std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())));
     if (!in) return false;
     std::map<std::string, std::string, std::less<>> kv;
     for (std::string line; std::getline(in, line);) {
@@ -196,8 +199,7 @@ bool Settings::load(const std::string& path) {
 }
 
 bool Settings::save(const std::string& path) const {
-    std::ofstream out(path, std::ios::trunc);
-    if (!out) return false;
+    std::ostringstream out;
     out << "# apb settings, written by the game's settings menu (F1).\n";
     auto binding = [&](std::string_view key, const Binding& b) {
         out << key << " = " << b.text() << '\n';
@@ -219,7 +221,7 @@ bool Settings::save(const std::string& path) const {
     out << strf("effect = %s\ncrt_scanlines = %.9g\ncrt_mask = %.9g\n", effect, display.scanlines, display.mask);
     out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';
     out << "rom_dir = " << rom_dir << '\n';
-    return static_cast<bool>(out);
+    return out && persist::replace(path, out.str());
 }
 
 // ---- Devices ----------------------------------------------------------------

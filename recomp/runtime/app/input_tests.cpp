@@ -3,6 +3,7 @@
 // Needs SDL3 and no window or real device.
 
 #include "input.hpp"
+#include "audio_output.hpp"
 #include "menu.hpp"
 
 #include <SDL3/SDL.h>
@@ -413,6 +414,20 @@ int main(int argc, char** argv) {
     CHECK((SDL_WasInit(SDL_INIT_HAPTIC) & SDL_INIT_HAPTIC) == 0);
     SDL_CloseJoystick(wheel);
     SDL_CloseJoystick(pedals);
+    // Exercise stream setup, prebuffering, pause and restart without a
+    // physical playback device on all platforms.
+    SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+    CHECK(SDL_InitSubSystem(SDL_INIT_AUDIO));
+    {
+        app::AudioOutput output;
+        CHECK(output.ok());
+        const std::array<std::int16_t, 1864> pcm{};
+        for (int i = 0; i < 20; ++i) CHECK(output.push(pcm));
+        CHECK(output.pause());
+        for (int i = 0; i < 3; ++i) CHECK(output.push(pcm));
+        CHECK(output.pause());
+    }
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
     SDL_Quit();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

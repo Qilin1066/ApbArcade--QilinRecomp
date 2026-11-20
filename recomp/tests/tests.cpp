@@ -7,17 +7,20 @@
 
 #include "cfg.hpp"
 #include "controls.hpp"
+#include "persistence.hpp"
 #include "m6502_cfg.hpp"
 #include "romset.hpp"
 #include "system2.hpp"
 #include "system2_machine.hpp"
 #include "system2_audio.hpp"
+#include "audio_worker.hpp"
 #include "system2_video.hpp"
 #include "t11_decoder.hpp"
 
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <random>
 #include <string>
@@ -917,8 +920,95 @@ void test_controls() {
     CHECK(pedal_travel(0.7, flat) == 0);              // uncalibrated: no throttle, not a stuck one
 }
 
+void test_audio_worker() {
+    using namespace qilin::sys2;
+    std::vector<std::int16_t> expected, actual;
+    Audio reference;
+    AudioWorker worker([&](std::span<const std::int16_t> pcm) {
+        actual.insert(actual.end(), pcm.begin(), pcm.end()); return true;
+    });
+    // Ordered changes to every sink interface, split into many batches so
+    // queue backpressure and vector reuse are exercised as well as mixing.
+    for (int frame = 0; frame < 200; ++frame) {
+        const std::int64_t time = static_cast<std::int64_t>(frame) * 30000;
+        auto writes = [&](Machine::SoundSink& sink) {
+            sink.ym_reset(frame % 7 != 0, time);
+            sink.mixer_write(static_cast<std::uint8_t>(frame), time + 1);
+            sink.pokey_write(frame % 2, 0, static_cast<std::uint8_t>(frame), time + 2);
+            sink.pokey_write(frame % 2, 1, 0xaf, time + 3);
+            sink.ym_write(false, 0x20, time + 4);
+            sink.ym_write(true, 0xc7, time + 5);
+            sink.speech_sample(static_cast<std::int16_t>((frame % 2 ? -1 : 1) * 12000), main_cycles_at(time + 6));
+        };
+        writes(reference); writes(worker);
+        reference.advance(time + 29999);
+        expected.insert(expected.end(), reference.frames().begin(), reference.frames().end());
+        reference.frames().clear();
+        CHECK(worker.submit(time + 29999));
+    }
+    CHECK(worker.drain());
+    CHECK(!expected.empty() && expected == actual);
+    worker.finish(); worker.finish();
+    CHECK(!worker.submit(6000000));
+    // A failed output wakes a blocked producer/drainer and shuts down cleanly.
+    AudioWorker rejected([](std::span<const std::int16_t>) { return false; });
+    CHECK(rejected.submit(30000));
+    CHECK(!rejected.drain());
+    CHECK(!rejected.error().empty());
+    CHECK(!rejected.submit(60000));
+}
+
+void test_persistence() {
+    namespace fs = std::filesystem;
+    using qilin::persist::Eeprom;
+    const auto dir = fs::temp_directory_path() / "qilin-persistence-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const auto path = (dir / "eeprom.bin").string();
+    Eeprom::Bytes original{}, next{}, loaded;
+    original.fill(0x55); next.fill(0xaa); loaded.fill(0xff);
+    Eeprom store(path);
+    CHECK(store.load(loaded) == Eeprom::Loaded::fresh && loaded[0] == 0xff);
+    CHECK(store.save(original));
+    CHECK(store.poll(next, 4999));
+    Eeprom reader(path);
+    CHECK(reader.load(loaded) == Eeprom::Loaded::primary && loaded == original);
+    CHECK(store.poll(next, 5000));
+    CHECK(reader.load(loaded) == Eeprom::Loaded::primary && loaded == next);
+    // A truncated primary never partially overwrites the board, and the
+    // last complete backup is recovered and repaired on the next save.
+    { std::ofstream out(path, std::ios::binary | std::ios::trunc); out << "bad"; }
+    CHECK(reader.load(loaded) == Eeprom::Loaded::backup && loaded == original);
+    CHECK(reader.save(loaded));
+    CHECK(store.load(loaded) == Eeprom::Loaded::primary && loaded == original);
+    CHECK(fs::file_size(path) == 512);
+    // Both invalid: preserve the caller's factory state, not a partial file.
+    { std::ofstream out(path, std::ios::trunc); out << "bad"; }
+    fs::remove(path + ".bak"); loaded.fill(0xcc);
+    CHECK(reader.load(loaded) == Eeprom::Loaded::invalid && loaded[0] == 0xcc && loaded[511] == 0xcc);
+    // Rename failure: do not damage the destination and remove the temp.
+    const auto blocked = dir / "directory";
+    fs::create_directory(blocked);
+    CHECK(!qilin::persist::replace(blocked.string(), "text"));
+    CHECK(fs::is_directory(blocked));
+    for (const auto& entry : fs::directory_iterator(dir)) CHECK(entry.path().filename().string().find(".tmp.") == std::string::npos);
+    const auto text = (dir / "settings.ini").string();
+    CHECK(qilin::persist::replace(text, "old complete settings"));
+    CHECK(qilin::persist::replace(text, "new complete settings"));
+    std::ifstream in(text); std::string contents; std::getline(in, contents);
+    CHECK(contents == "new complete settings");
+    in.close();
+    const auto unicode = (dir / fs::path(u8"高分-é.bin")).u8string();
+    Eeprom unicode_store(std::string(unicode.begin(), unicode.end()));
+    CHECK(unicode_store.save(next));
+    CHECK(unicode_store.load(loaded) == Eeprom::Loaded::primary && loaded == next);
+    fs::remove_all(dir);
+}
+
 int main() {
     test_sha1();
+    test_persistence();
+    test_audio_worker();
     test_controls();
     test_rom_set();
     test_memory_map();
