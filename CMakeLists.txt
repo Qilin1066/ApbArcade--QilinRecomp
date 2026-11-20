@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(ApbArcadeQilinRecomp VERSION 0.18.0 LANGUAGES C CXX)
+project(ApbArcadeQilinRecomp VERSION 0.18.1 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -175,6 +175,16 @@ add_executable(qilin_gfx_tests recomp/runtime/gfx/gfx_tests.cpp)
 target_link_libraries(qilin_gfx_tests PRIVATE qilin_gfx qilin_warnings)
 add_test(NAME qilin_gfx_tests COMMAND qilin_gfx_tests)
 set_tests_properties(qilin_gfx_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+# Independent chip/mixer checks from MAME's timestamped bus traffic; no ROMs.
+add_executable(qilin_audio_trace tools/audio_trace/audio_trace.cpp)
+target_include_directories(qilin_audio_trace PRIVATE tools/common)
+target_link_libraries(qilin_audio_trace PRIVATE qilin_audio qilin_warnings)
+qilin_tool(qilin_audio_trace)
+add_test(NAME qilin_audio_trace_check COMMAND "${CMAKE_COMMAND}"
+    "-DPROGRAM=$<TARGET_FILE:qilin_audio_trace>"
+    "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/audio-trace-check/$<CONFIG>"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/audio_trace.cmake")
 
 # ---- Reference run: the game on MAME's CPU cores and the board model (needs your ROMs) ----
 add_executable(qilin_refrun tools/refrun/refrun.cpp)

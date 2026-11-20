@@ -9,6 +9,8 @@ import argparse
 import json
 import math
 import os
+import re
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -84,6 +86,8 @@ def compare_traces(out):
         last_coin, ym_count = 0x40, 0
         with (out / f'{engine}-io.trace').open() as trace:
             for line in trace:
+                if line.startswith('# end '):
+                    continue
                 kind, address, value, time = line.split()
                 address, value, time = int(address, 16) & 0x7f, int(value, 16), int(time)
                 if kind == 'r' and address == 0x60:
@@ -115,6 +119,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--mame', type=Path, required=True)
     p.add_argument('--native', type=Path, required=True)
+    p.add_argument('--audio-trace', type=Path, help='Trace replay tool (default: beside qilin_run)')
     p.add_argument('--rom-dir', type=Path, required=True)
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--frames', default='600,1500,2100,3000,4500', help='MAME frame numbers')
@@ -122,6 +127,9 @@ def main():
     p.add_argument('--audio-window', default='14.5:20', help='Native WAV seconds spanning two coin sounds')
     args = p.parse_args()
     mame, native, roms, out = [x.resolve() for x in (args.mame, args.native, args.rom_dir, args.out)]
+    audio_trace = (args.audio_trace or native.with_name('qilin_audio_trace' + native.suffix)).resolve()
+    if not audio_trace.is_file():
+        raise ValueError('Build qilin_audio_trace, or specify --audio-trace')
     frames = sorted(set(int(n) for n in args.frames.split(',')))
     if not frames or min(frames) < max(1, args.boot_offset) or max(frames) < 1300:
         raise ValueError('Frames must include at least 1300 frames to capture the audio window')
@@ -185,7 +193,7 @@ emu.register_frame_done(function()
   f:write(pixels);f:close()
  end
  controls(n+1)
- if n>={max(frames)+5} then trace:close(); inputs:close(); m:exit() end
+ if n>={max(frames)+5} then trace:write(string.format('# end %d\\n',at())); trace:close(); inputs:close(); m:exit() end
 end,'frame')
 '''
     script = out / 'capture.lua'
@@ -224,7 +232,30 @@ end,'frame')
     start, end = map(float, args.audio_window.split(':'))
     result['traces'] = compare_traces(out)
     result['audio'] = compare_audio(out / 'native.wav', out / 'mame.wav', start, end)
-    result['passed'] = not any(f['different_pixels'] for f in result['images']) and result['audio']['passed']
+    # Replay exactly the same bus events, independently of CPU scheduling.
+    # The native replay is a byte-for-byte positive control for the importer.
+    match = re.search(r'\((\d+) chip frames\)', (out / 'native.log').read_text(encoding='utf-8'))
+    if not match:
+        raise ValueError('Native run did not report the source chip-frame count')
+    native_samples = int(match.group(1))
+    with wave.open(str(out / 'mame.wav'), 'rb') as recorded:
+        mame_samples = recorded.getnframes()
+        mame_rate = recorded.getframerate()
+    source_frames = (mame_samples * 14318181 + mame_rate * 256 - 1) // (mame_rate * 256)
+    for engine, samples in (('native', native_samples), ('mame', source_frames)):
+        run([audio_trace, out / f'{engine}-io.trace', out / f'{engine}-chips.wav', samples], out / f'{engine}-chips.log')
+    def digest(path):
+        with path.open('rb') as data:
+            return hashlib.file_digest(data, 'sha256').hexdigest()
+    positive_control = digest(out / 'native-chips.wav') == digest(out / 'native.wav')
+    if not positive_control:
+        raise ValueError('Native trace replay changed PCM; importer cannot validate MAME')
+    result['chip_replay'] = {'native_byte_identical': positive_control,
+                            'mame_coin': compare_audio(out / 'mame-chips.wav', out / 'mame.wav', start, end),
+                            'mame_long': compare_audio(out / 'mame-chips.wav', out / 'mame.wav', start,
+                                                      min(74.0, mame_samples / mame_rate - 0.3))}
+
+    result['passed'] = not any(f['different_pixels'] for f in result['images']) and result['audio']['passed'] and result['chip_replay']['mame_coin']['passed'] and result['chip_replay']['mame_long']['passed']
     (out / 'report.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(result, indent=2))
     return 0 if result['passed'] else 1

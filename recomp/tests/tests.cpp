@@ -8,6 +8,7 @@
 #include "cfg.hpp"
 #include "controls.hpp"
 #include "script.hpp"
+#include "wav.hpp"
 #include "persistence.hpp"
 #include "m6502_cfg.hpp"
 #include "romset.hpp"
@@ -921,6 +922,39 @@ void test_controls() {
     CHECK(pedal_travel(0.7, flat) == 0);              // uncalibrated: no throttle, not a stuck one
 }
 
+void test_wav_clock() {
+    namespace fs = std::filesystem;
+    const auto path = (fs::temp_directory_path() / "qilin-clock-test.wav").string();
+    constexpr int input_count = 55931;
+    std::vector<std::int16_t> pcm(input_count * 2);
+    for (int i = 0; i < input_count; ++i) {
+        pcm[i * 2] = static_cast<std::int16_t>(std::lround(10000 * std::sin(2 * 3.14159265358979323846 * 1000 * i / qilin::sys2::Audio::sample_rate)));
+        pcm[i * 2 + 1] = 1234;   // unity DC gain, independent stereo channels
+    }
+    CHECK(qilin::tools::write_wav(path, pcm, 55930, 14318181, 256));
+    const std::size_t expected = static_cast<std::size_t>(input_count) * 55930 * 256 / 14318181;
+    CHECK(fs::file_size(path) == 44 + expected * 4);
+    std::ifstream in(path, std::ios::binary);
+    std::vector<unsigned char> bytes(static_cast<std::size_t>(fs::file_size(path)));
+    in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    CHECK(bytes[24] == (55930 & 255) && bytes[25] == (55930 >> 8));
+    auto read = [&](std::size_t frame, std::size_t ch) {
+        const auto at = 44 + frame * 4 + ch * 2;
+        return static_cast<std::int16_t>(bytes[at] | (bytes[at + 1] << 8));
+    };
+    for (std::size_t i = 32; i + 32 < expected; ++i) {
+        const double ideal = 10000 * std::sin(2 * 3.14159265358979323846 * 1000 * static_cast<double>(i) / 55930);
+        CHECK(std::abs(read(i, 0) - ideal) < 3);
+        CHECK(read(i, 1) == 1234);
+    }
+    in.close();
+    CHECK(!qilin::tools::write_wav(path, pcm, 0));
+    CHECK(!qilin::tools::write_wav(path, pcm, 55930, 14318181, 0));
+    pcm.push_back(0);
+    CHECK(!qilin::tools::write_wav(path, pcm, 55930));
+    fs::remove(path);
+}
+
 void test_script() {
     qilin::tools::Script script;
     sys2::Inputs input;
@@ -1067,6 +1101,7 @@ int main() {
     test_sha1();
     test_persistence();
     test_script();
+    test_wav_clock();
     test_pokey_random();
     test_audio_worker();
     test_controls();

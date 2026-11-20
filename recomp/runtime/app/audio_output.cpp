@@ -1,9 +1,11 @@
 #include "audio_output.hpp"
+#include "system2_audio.hpp"
 #include <algorithm>
 
 namespace qilin::app {
 namespace {
 constexpr int sample_rate = 55930;
+constexpr float chip_ratio = static_cast<float>(sys2::Audio::sample_rate / sample_rate);
 constexpr int frame_bytes = sample_rate * 4 / 60;
 }
 AudioOutput::AudioOutput() { open(); }
@@ -11,13 +13,13 @@ void AudioOutput::open() {
     if (stream_) SDL_DestroyAudioStream(stream_);
     const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, sample_rate};
     stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-    started_ = false; ratio_ = 1;
+    started_ = false; ratio_ = chip_ratio;
     state_.store(stream_ ? State::buffering : State::unavailable);
     retry_at_ = SDL_GetTicks() + 1000;
 }
 void AudioOutput::unavailable() {
     if (stream_) SDL_DestroyAudioStream(stream_);
-    stream_ = nullptr; started_ = false; ratio_ = 1;
+    stream_ = nullptr; started_ = false; ratio_ = chip_ratio;
     state_.store(State::unavailable);
     retry_at_ = SDL_GetTicks() + 1000;
 }
@@ -45,7 +47,7 @@ bool AudioOutput::queue(std::span<const std::int16_t> samples) {
     if (queued > sample_rate * 4 * 2) { SDL_SetError("Audio device stopped consuming samples"); return false; }
     if (!SDL_PutAudioStreamData(stream_, samples.data(), static_cast<int>(samples.size_bytes()))) return false;
     if (!started_) {
-        ratio_ = 1;
+        ratio_ = chip_ratio;
         if (!SDL_SetAudioStreamFrequencyRatio(stream_, ratio_)) return false;
         if (queued + static_cast<int>(samples.size_bytes()) >= 2 * frame_bytes) {
             if (!SDL_ResumeAudioStreamDevice(stream_)) return false;
@@ -56,13 +58,13 @@ bool AudioOutput::queue(std::span<const std::int16_t> samples) {
     }
     // Correct device/display clock drift smoothly instead of discarding
     // complete frames of PCM. The exact chip mix remains unchanged.
-    const float target = std::clamp(1.0f + 0.003f * (static_cast<float>(queued) / frame_bytes - 2.0f), 0.98f, 1.02f);
+    const float target = chip_ratio * std::clamp(1.0f + 0.003f * (static_cast<float>(queued) / frame_bytes - 2.0f), 0.98f, 1.02f);
     ratio_ += (target - ratio_) * 0.02f;
     return SDL_SetAudioStreamFrequencyRatio(stream_, ratio_);
 }
 bool AudioOutput::pause() {
     if (!stream_) return true;
-    started_ = false; ratio_ = 1;
+    started_ = false; ratio_ = chip_ratio;
     if (!SDL_PauseAudioStreamDevice(stream_) || !SDL_ClearAudioStream(stream_) || !SDL_SetAudioStreamFrequencyRatio(stream_, ratio_)) {
         unavailable(); return false;
     }

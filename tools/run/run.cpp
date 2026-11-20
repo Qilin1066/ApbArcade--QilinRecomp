@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
     }
     std::uint64_t frames = 600;
     bool threaded = false;
+    std::int32_t quantum = 64;
     std::string_view log_path, wav_path, io_trace_path, input_trace_path;
     tools::Script script;
     tools::FrameCapture capture;
@@ -62,6 +63,12 @@ int main(int argc, char** argv) {
         std::uint64_t number = 0;
         std::from_chars(value.data(), value.data() + value.size(), number);
         if (flag == "--frames") frames = number;
+        else if (flag == "--quantum") {
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), quantum);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || quantum < 1) {
+                std::fprintf(stderr, "--quantum needs a positive 32-bit cycle count\n"); return 2;
+            }
+        }
         else if (flag == "--log") log_path = value;
         else if (flag == "--wav") wav_path = value;
         else if (flag == "--audio-threaded") threaded = number != 0;
@@ -132,6 +139,7 @@ int main(int argc, char** argv) {
         }
     }
     game::Scheduler scheduler(machine);
+    scheduler.quantum = quantum;
     // The controls change at each vblank (script.attach), as in qilin_refrun.
     scheduler.on_frame = [&](std::uint64_t) {
         capture.poll(machine);
@@ -145,6 +153,7 @@ int main(int argc, char** argv) {
     };
     const auto start = std::chrono::steady_clock::now();
     const auto stop = scheduler.run(frames);
+    if (io_trace) std::print(io_trace.get(), "# end {}\n", sys2::main_cycles_at(machine.sound_time));
     if (worker && !worker->drain()) {
         std::print(stderr, "qilin_run: audio worker: {}\n", worker->error()); return 1;
     }
@@ -169,11 +178,11 @@ int main(int argc, char** argv) {
     if (const auto* v = capture.video(); v && capture.draw_all)
         std::print("Video: {} frames drawn in {} bands.\n", v->frames(), v->bands());
     if (!wav_path.empty()) {
-        if (!tools::write_wav(std::string(wav_path), sound, 55930)) {
+        if (!tools::write_wav(std::string(wav_path), sound, 55930, 14318181, 256)) {
             std::print(stderr, "qilin_run: can't write {}\n", wav_path);
             return 1;
         }
-        std::print("Sound: {:.1f} s written to {}.\n", static_cast<double>(sound.size() / 2) / sys2::Audio::sample_rate, wav_path);
+        std::print("Sound: {:.1f} s written to {} ({} chip frames).\n", static_cast<double>(sound.size() / 2) / sys2::Audio::sample_rate, wav_path, sound.size() / 2);
     }
     if (!log_path.empty()) {
         std::ofstream out{std::string(log_path), std::ios::trunc};

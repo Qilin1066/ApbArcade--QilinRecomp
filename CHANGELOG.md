@@ -11,6 +11,15 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-20
+
+### Fixed
+- **Fractional sound clock was labelled as an integer rate.** The chips emit 14,318,181 / 256 = 55,930.39453125 stereo frames per second, but WAV files labelled those samples as 55,930 Hz. This accumulated about 26 samples of timing error by 65 seconds. WAV export now converts from the exact rational source clock with a 32-tap, 1,024-phase windowed-sinc filter and exact output-frame counts; playback's initial frequency ratio also accounts for the fractional chip rate before device drift correction. The chip model itself is unchanged. Tests verify duration, an analytic tone, independent stereo/DC gain and invalid parameters; synchronous/worker WAV parity remains required.
+
+### Added
+- **Independent audio-chip replay** (`qilin_audio_trace`, no ROMs required). Feed original MAME's timestamped sound-bus writes through the native chips/mixer while excluding CPU scheduling and controls. The MAME comparison now requires a byte-identical native-trace replay as a positive control and reports separate MAME coin/long-window replay correlations. Trace end markers prevent incomplete captures from becoming successful comparisons; ROM-free tests cover truncated, unordered, malformed and out-of-range traces. The new capture gives a byte-identical native positive control and MAME replay correlations above 0.999 over 14.5–74 seconds, with levels within 0.003 dB on that long window. The overall comparison still requires the original full-game picture/audio checks and remains failing, so isolated chip results do not hide remaining scheduling differences.
+- **Diagnostic scheduler quantum** (`qilin_run --quantum CYCLES`), with positive 32-bit validation, for investigating CPU interleave differences. The player and default regression runs retain their original 64-cycle quantum; large values change CPU interaction and are not a gameplay recommendation.
+
 ## [0.18.0] - 2026-11-20
 
 ### Added
