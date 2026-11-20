@@ -140,7 +140,7 @@ build/apb ["D:/APB Arcade Project"] [--scale N] [--no-vsync] [--gpu N] [--mute]
 
 **Wheels, pedals, spinners.** The settings menu sets them up; nothing is needed for the keyboard or a gamepad. APB's cabinet wheel spins freely and the game counts how far it turns, so a PC wheel drives it by how far its angle moves each frame:
 
-- **MOZA R5:** the *MOZA R5 (physical angle)* setup reads physical degrees through the optional Windows x64 MOZA SDK 1.0.1.8 DLL, independently of a joystick axis that may clip. It needs the user's DLL and Pit House; no proprietary SDK is bundled. Check the physical-angle meter through several turns. Actual R5 hardware remains unverified.
+- **MOZA R5:** the *MOZA R5 (physical angle)* setup reads physical degrees through the optional Windows x64 MOZA SDK 1.0.1.8 DLL, independently of a joystick axis that may clip. It needs the user's DLL and the SDK-enabled Pit House build specified by MOZA; no proprietary SDK is bundled. Check the physical-angle meter through several turns. Actual R5 hardware remains unverified.
 - **Logitech G920:** *Find it*, then *Logitech G920 (900 degrees)*, matching 900° in G HUB. Held-at-lock steering lets you keep turning the cabinet dial when the wheel reaches a stop.
 - **Continuous wrapping axes:** select that input type and set/measure degrees per axis cycle. Every SDL motion event is counted, including seam crossings and complete turns between game frames. This mode cannot recover movement from an axis that clips.
 - **Force feedback:** SDL haptics is initialised explicitly, with passive friction/damping and autocentre disabled where supported. The menu reports whether the effect actually started; driver-side centring may need turning off separately.
