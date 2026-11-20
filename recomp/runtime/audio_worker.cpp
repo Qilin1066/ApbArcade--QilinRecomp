@@ -1,9 +1,10 @@
 #include "audio_worker.hpp"
+#include "profile.hpp"
 #include <exception>
 #include <stdexcept>
 
 namespace qilin::sys2 {
-AudioWorker::AudioWorker(Output output) : output_(std::move(output)) {
+AudioWorker::AudioWorker(Output output, profile::Profiler* profiler) : output_(std::move(output)), profiler_(profiler) {
     pending_.reserve(512);
     worker_ = std::thread([this] { run(); });
 }
@@ -53,6 +54,7 @@ void AudioWorker::run() {
                 batch = std::move(queue_.front()); queue_.pop_front(); busy_ = true;
                 changed_.notify_all();
             }
+            profile::Scope measured(profiler_, profile::Stage::audio_worker);
             for (const auto& e : batch.events) {
                 switch (e.kind) {
                 case Kind::pokey: audio_.pokey_write(e.a / 16, static_cast<unsigned>(e.a % 16), static_cast<std::uint8_t>(e.b), e.time); break;

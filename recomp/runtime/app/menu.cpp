@@ -1,4 +1,6 @@
 #include "menu.hpp"
+#include "persistence.hpp"
+#include <filesystem>
 #include "text.hpp"
 
 #include "imgui.h"
@@ -222,6 +224,14 @@ void Menu::controls_tab() {
             ImGui::BulletText("%s  (%s; %d axes, %d buttons%s)", d.name.c_str(), Input::type_name(d.type), SDL_GetNumJoystickAxes(d.joystick),
                               SDL_GetNumJoystickButtons(d.joystick), SDL_IsJoystickHaptic(d.joystick) ? "; force feedback" : "");
         }
+    }
+    if (ImGui::Button("Save controller diagnostics")) {
+        auto path = std::filesystem::path(std::u8string(path_.begin(), path_.end())).parent_path() / "controllers.txt";
+        const auto utf8 = path.u8string();
+        const std::string output(utf8.begin(), utf8.end());
+        std::string error;
+        if (persist::replace(output, input_.diagnostics(), &error)) notify("Controller report saved: " + output);
+        else notify(error);
     }
     steering_section();
     pedal_section();

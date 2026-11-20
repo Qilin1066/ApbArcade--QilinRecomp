@@ -358,7 +358,7 @@ void Machine::run_events(std::int64_t now) {
         const auto t = next_event();
         if (t > now) break;
         if (t == next_scanline_event_) {
-            const auto line = static_cast<unsigned>((t % cycles_per_frame) / cycles_per_scanline);
+            const auto line = static_cast<unsigned>(((t + cycles_per_frame - raster_origin) % cycles_per_frame) / cycles_per_scanline);
             scanline_int_ = (interrupt_enable_ & 4) != 0;   // the 32V interrupt, every 64 lines
             speech_.advance(t);   // keeps the speech samples coming between accesses
             // MAME's motion objects force a partial update every 64 lines

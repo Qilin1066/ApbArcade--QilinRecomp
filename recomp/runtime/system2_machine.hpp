@@ -23,6 +23,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -34,12 +35,20 @@ inline constexpr std::int64_t cycles_per_frame = cycles_per_scanline * vtotal;  
 inline constexpr std::int64_t sound_irq_period = 16 * 16 * 16 * 10;              // 40,960: 244 Hz
 inline constexpr std::int64_t watchdog_period = 16 * 16 * 16 * 256;              // 1,048,576
 inline constexpr unsigned vblank_line = visible_height;                          // 384
+// MAME's raster starts at the beginning of vblank. Visible line zero is
+// reached 32 scanlines (12,800 main cycles) after machine time zero.
+inline constexpr std::int64_t raster_origin = (vtotal - visible_height) * cycles_per_scanline;
 
 // The sound CPU's clock against the main CPU's: MAME's 14,318,181 Hz / 8 against 10 MHz.
 inline constexpr std::int64_t sound_clock_num = 14'318'181;
 inline constexpr std::int64_t sound_clock_den = 80'000'000;
 [[nodiscard]] constexpr std::int64_t sound_cycles_at(std::int64_t main_cycles) noexcept {
-    return main_cycles * sound_clock_num / sound_clock_den;
+    constexpr auto safe = std::numeric_limits<std::int64_t>::max() / sound_clock_num;
+    if (static_cast<std::uint64_t>(main_cycles) <= static_cast<std::uint64_t>(safe))
+        return main_cycles * sound_clock_num / sound_clock_den;
+    // Avoid overflowing the multiply after roughly 18 hours of cabinet uptime.
+    return (main_cycles / sound_clock_den) * sound_clock_num +
+           (main_cycles % sound_clock_den) * sound_clock_num / sound_clock_den;
 }
 // The first main-CPU cycle at or after a sound-CPU cycle (no overflow for centuries).
 [[nodiscard]] constexpr std::int64_t main_cycles_at(std::int64_t sound_cycles) noexcept {
@@ -189,7 +198,7 @@ public:
     [[nodiscard]] const Speech& speech() const noexcept { return speech_; }
     void advance_speech(std::int64_t to_sound_time) { speech_.advance(main_cycles_at(to_sound_time)); }
     // The scanline the beam is on, at main_time.
-    [[nodiscard]] int vpos() const noexcept { return static_cast<int>((main_time % cycles_per_frame) / cycles_per_scanline); }
+    [[nodiscard]] int vpos() const noexcept { return static_cast<int>(((main_time + cycles_per_frame - raster_origin) % cycles_per_frame) / cycles_per_scanline); }
     struct Counters {
         std::uint64_t sound_commands = 0, sound_command_reads = 0, sound_replies = 0, sound_reply_reads = 0;
         std::uint64_t sound_resets = 0, watchdog_strobes = 0, eeprom_writes = 0, speech_bytes = 0;
@@ -257,7 +266,7 @@ private:
     std::uint8_t coin_counters_ = 0, switch_bits_ = 0, mixer_ = 0;
 
     // Events (main-CPU cycles).
-    std::int64_t next_scanline_event_ = 0;   // the 32V timer: lines 0, 64, ... 384 of each frame
+    std::int64_t next_scanline_event_ = raster_origin;   // the 32V timer: lines 0, 64, ... 384 of each frame
     std::int64_t next_sound_irq_ = sound_irq_period;
     std::int64_t watchdog_deadline_ = watchdog_period;
     bool watchdog_expired_ = false;

@@ -25,6 +25,7 @@
 #include "script.hpp"
 #include "system2_audio.hpp"
 #include "audio_worker.hpp"
+#include "input_movie.hpp"
 #include "wav.hpp"
 #include "game.hpp"
 #include "romset.hpp"
@@ -46,14 +47,17 @@
 int main(int argc, char** argv) {
     using namespace qilin;
     if (argc < 2) {
-        std::print(stderr, "usage: qilin_run <rom-dir> [--frames N]\n");
+        std::print(stderr, "usage: qilin_run <rom-dir> [--frames N] [--record FILE.qir | --replay FILE.qir]\n"
+                           "                 [--profile FILE] [--draw 1] [--wav FILE] [--audio-threaded 1]\n"
+                           "                 [--frame-hashes FILE] [--frame-out FRAME:FILE]\n");
         return 2;
     }
     if (argc % 2 != 0) {
         std::fprintf(stderr, "Each option needs a value\n"); return 2;
     }
     std::uint64_t frames = 600;
-    bool threaded = false;
+    bool threaded = false, frames_specified = false;
+    std::string record_path, replay_path, profile_path;
     std::int32_t quantum = 64;
     std::string_view log_path, wav_path, io_trace_path, input_trace_path;
     tools::Script script;
@@ -62,7 +66,10 @@ int main(int argc, char** argv) {
         const std::string_view flag = argv[i], value = argv[i + 1];
         std::uint64_t number = 0;
         std::from_chars(value.data(), value.data() + value.size(), number);
-        if (flag == "--frames") frames = number;
+        if (flag == "--frames") { frames = number; frames_specified = true; }
+        else if (flag == "--profile") profile_path = value;
+        else if (flag == "--record") record_path = value;
+        else if (flag == "--replay") replay_path = value;
         else if (flag == "--quantum") {
             const auto parsed = std::from_chars(value.data(), value.data() + value.size(), quantum);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || quantum < 1) {
@@ -94,6 +101,16 @@ int main(int argc, char** argv) {
     if (!script.error().empty()) {
         std::fprintf(stderr, "%s\n", script.error().c_str()); return 2;
     }
+    if ((!record_path.empty() && !replay_path.empty()) || (!replay_path.empty() && script.used()) ||
+        ((!record_path.empty() || !replay_path.empty()) && quantum != 64)) {
+        std::fprintf(stderr, "Input movies require the default quantum; replay cannot combine recording or scripted controls\n"); return 2;
+    }
+    if ((!profile_path.empty() && (profile_path == record_path || profile_path == replay_path)) ||
+        (!wav_path.empty() && (wav_path == record_path || wav_path == replay_path))) {
+        std::fprintf(stderr, "Movie and diagnostic output paths must differ\n"); return 2;
+    }
+    auto profiler = profile_path.empty() ? nullptr : std::make_unique<profile::Profiler>();
+    capture.profiler = profiler.get();
     const auto set = rom::RomSet::load(argv[1]);
     if (!set) {
         std::print(stderr, "qilin_run: {}\n", set.error());
@@ -124,6 +141,24 @@ int main(int argc, char** argv) {
         };
     }
     script.attach(machine);
+    movie::Reader replay;
+    movie::Writer recording;
+    if (!replay_path.empty()) {
+        if (!replay.load(replay_path)) { std::fprintf(stderr, "%s\n", replay.error().c_str()); return 1; }
+        machine.eeprom() = replay.eeprom();
+        replay.apply(0, machine.inputs);
+        frames = frames_specified ? std::min(frames, replay.duration()) : replay.duration();
+        machine.on_vblank = [&](std::uint64_t frame) { replay.apply(frame, machine.inputs); };
+        if (replay.interrupted()) std::fprintf(stderr, "Recording interrupted; replaying validated input prefix\n");
+    }
+    if (!record_path.empty()) {
+        if (!recording.open(record_path, machine.eeprom(), machine.inputs)) { std::fprintf(stderr, "%s\n", recording.error().c_str()); return 1; }
+        const auto controls = machine.on_vblank;
+        machine.on_vblank = [&, controls](std::uint64_t frame) {
+            controls(frame);
+            if (!recording.frame(frame, machine.inputs)) throw game::Stop{game::Stop::frames, recording.error()};
+        };
+    }
     std::unique_ptr<sys2::Audio> audio;
     std::vector<std::int16_t> sound;
     std::unique_ptr<sys2::AudioWorker> worker;
@@ -131,7 +166,7 @@ int main(int argc, char** argv) {
         if (threaded) {
             worker = std::make_unique<sys2::AudioWorker>([&](std::span<const std::int16_t> pcm) {
                 sound.insert(sound.end(), pcm.begin(), pcm.end()); return true;
-            });
+            }, profiler.get());
             machine.sound_sink = worker.get();
         } else {
             audio = std::make_unique<sys2::Audio>();
@@ -142,6 +177,7 @@ int main(int argc, char** argv) {
     scheduler.quantum = quantum;
     // The controls change at each vblank (script.attach), as in qilin_refrun.
     scheduler.on_frame = [&](std::uint64_t) {
+        profile::FrameMark frame_profile(profiler.get());
         capture.poll(machine);
         if (worker || audio) machine.advance_speech(machine.sound_time);
         if (worker && !worker->submit(machine.sound_time)) throw game::Stop{game::Stop::frames, "audio worker failed"};
@@ -154,10 +190,15 @@ int main(int argc, char** argv) {
     const auto start = std::chrono::steady_clock::now();
     const auto stop = scheduler.run(frames);
     if (io_trace) std::print(io_trace.get(), "# end {}\n", sys2::main_cycles_at(machine.sound_time));
+    if (!record_path.empty() && (!recording.active() || !recording.finish(machine.frames()))) {
+        std::fprintf(stderr, "%s\n", recording.error().c_str()); return 1;
+    }
     if (worker && !worker->drain()) {
         std::print(stderr, "qilin_run: audio worker: {}\n", worker->error()); return 1;
     }
+    if (worker) worker->finish();
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (profiler && !profiler->save(profile_path, "headless native run; board frames=" + std::to_string(machine.frames()))) { std::fprintf(stderr, "Cannot save profile\n"); return 1; }
 
     const char* reasons[] = {"the frame count", "the watchdog", "unlifted main-CPU code", "unlifted sound-CPU code"};
     std::print("Stopped by {}{}{} at frame {} ({:.2f} s of game time, {:.2f} s here: {:.1f}x real time).\n",

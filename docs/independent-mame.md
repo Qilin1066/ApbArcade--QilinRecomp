@@ -74,3 +74,29 @@ Both replay windows align with one shared **2-sample** lag at 55,930 Hz. The nat
 The full-game coin comparison remains **0.746750** because the independently executed CPUs issue sound events at different times. The sampled picture differences remain **0, 0, 3,038, 169,672, 0**. The overall check therefore still exits **1**; isolated chip passes do not turn it green. `report.json` keeps `audio`, `chip_replay` and `images` separate. The startup-command divergence described above remains the next scheduling investigation point.
 
 `qilin_run --quantum CYCLES` exposes the scheduler's existing positive 32-bit slice limit for controlled diagnostics. The default and the player stay at 64 cycles. Changing interleave changes CPU interactions and must be recorded when interpreting captures; this option is not a gameplay setting.
+
+## Version 0.19.0: raster origin and independent graphics replay
+
+Original MAME starts the screen at the beginning of vblank, line 384, at machine time zero. Its saved initial vblank end is 1.28 ms later: 32 lines × 400 main cycles. The native board previously began at visible line zero. The board now schedules line zero at cycle 12,800 and the first completed frame at cycle 166,400. The 32V interrupt tests cover the initial phase explicitly. The normal CPU scheduler retains its 64-cycle quantum.
+
+The harness loads `tools/check/mame_video.lua` to capture original MAME's shared video pages and scroll state before scroll/list writes and at the motion-object partial-update boundaries. It captures per-band state rather than assuming that end-of-frame RAM describes the whole picture. These taps read state without altering RAM or replacing MAME's renderer. `qilin_video_trace ROM_DIR CAPTURE OUTPUT_PREFIX` then renders those bands through the native renderer without executing either native CPU. It requires the same verified private ROMs for graphics, and rejects incomplete, overlapping or inconsistent captures. The harness finds the tool beside `qilin_run`, or accepts `--video-trace PATH`.
+
+Fresh original-MAME 0.264 capture, Linux x64 Release, 20 November 2026:
+
+| MAME frame | Native full-game differing RGB pixels | Identical-state video replay differing RGB pixels |
+| --- | --- | --- |
+| 600 | 0 | 0 |
+| 1500 | 0 | 0 |
+| 2100 | 3,038 | 0 |
+| 3000 | 169,579 | 0 |
+| 4500 | 0 | 0 |
+
+The video replay covers 35 scanline bands across those five pictures. This validates rendering for the captured states, including the mismatching full-game pictures; it does not prove every possible video state. The full-game coin correlation after the raster correction is approximately **0.785797**, still below 0.98. The overall harness still exits **1**: it requires the original full-game image/audio checks as well as independent graphics and chip replays. No threshold or picture offset has been changed to obtain a pass.
+
+### Startup interleave probe
+
+`mame-schedule.trace` and the report's `mame_startup_scheduling` array record the first 32 command writes/reads, machine time in main cycles and the main CPU's saved local clock. On sound-command reads, the main CPU has finished its current slice, so the difference between those clocks shows how far it has already executed ahead. On main-CPU writes, saved localtime is only the slice's starting clock and must not be interpreted as an ahead measurement.
+
+In the measured startup, the first sound-side read of zero occurs at main cycle **87,476,505**, while the main CPU's saved local clock is already **87,489,948**: **13,443 cycles (1.3443 ms) ahead**. Its next command write, `0x09`, occurs at **87,491,151**. The native board's first zero read and next command are approximately **87,476,459** and **87,477,753**, separated by about **129.4 µs**, compared with MAME's **1.4646 ms**. This directly supports CPU interleave as a cause of the early startup response delay. It does not establish the cause of every later difference or claim that either software scheduler exactly reproduces physical hardware.
+
+The relevant independent implementation is MAME 0.264's [CPU scheduler](https://github.com/mamedev/mame/blob/mame0264/src/emu/schedule.cpp) and [System 2 board/latch synchronisation](https://github.com/mamedev/mame/blob/mame0264/src/mame/atari/atarisy2.cpp), including its temporary 200 µs perfect-quantum request for a pending sound command. The probe uses existing saved CPU clocks and memory taps; it introduces no additional timers or memory writes. Keep full-game timing investigation separate from the already passing same-state renderer/chip checks and shared-board CPU parity.

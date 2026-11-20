@@ -52,13 +52,18 @@ Graphics::Graphics(std::span<const std::uint8_t> tiles, std::span<const std::uin
 // and in the motion-object bitmap only the spans objects were drawn to. The
 // result is pixel for pixel what MAME's screen_update makes.
 void render(const Machine& machine, const Graphics& graphics, Frame& frame, int first, int last) {
+    render(RenderView{machine.video().pages(), machine.playfield_scroll_x(), machine.playfield_scroll_y(),
+                      {machine.playfield_tile_bank(0), machine.playfield_tile_bank(1)}}, graphics, frame, first, last);
+}
+
+void render(const RenderView& view, const Graphics& graphics, Frame& frame, int first, int last) {
     constexpr int W = Frame::width, H = Frame::height;
     first = std::max(first, 0);
     last = std::min(last, H - 1);
     if (first > last) return;
-    const auto& pages = machine.video().pages();
-    const int sx = machine.playfield_scroll_x(), sy = machine.playfield_scroll_y();
-    const unsigned banks[2] = {machine.playfield_tile_bank(0), machine.playfield_tile_bank(1)};
+    const auto& pages = view.pages;
+    const int sx = view.scroll_x, sy = view.scroll_y;
+    const auto& banks = view.banks;
     auto playfield_data = [&](int tx, int ty) {
         const unsigned index = static_cast<unsigned>((ty >> 3) * 128 + (tx >> 3));
         return index < 0x1000 ? pages[1][index] : pages[2][index & 0xfff];
@@ -117,13 +122,13 @@ void render(const Machine& machine, const Graphics& graphics, Frame& frame, int 
             const std::uint8_t* pixels = graphics.sprite(code);
             for (int py = std::max(0, first - top); py < 16 && top + py <= last; ++py) {
                 const int y = top + py;
-                std::uint16_t* row = &mo[static_cast<std::size_t>(y) * W + xpos];
+                std::uint16_t* row = &mo[static_cast<std::size_t>(y) * W];
                 const std::uint8_t* src = pixels + py * 16;
                 bool any = false;
                 for (int px = px0; px < px1; ++px) {
                     const auto pen = src[hflip ? 15 - px : px];
                     if (pen != 15) {
-                        row[px] = static_cast<std::uint16_t>(pen + color);
+                        row[xpos + px] = static_cast<std::uint16_t>(pen + color);
                         any = true;
                     }
                 }
@@ -179,6 +184,7 @@ void Video::draw_through(const Machine& machine, int scanline) {
     // the bottom, so cars came and went with the wrong half's list.)
     if (scanline >= static_cast<int>(Frame::height) || scanline < next_line_) return;
     if (!only_.empty() && std::ranges::find(only_, frames_) == only_.end()) return;
+    profile::Scope measured(profiler, profile::Stage::video);
     render(machine, graphics_, *drawing_, next_line_, scanline);
     ++bands_;
     next_line_ = scanline + 1;
@@ -219,8 +225,7 @@ void to_bgra(const Frame& frame, const PaletteRam& palette, std::uint32_t* out) 
     // ROT270, as to_rgba: source row y becomes destination column y, read bottom to top.
     for (unsigned y = 0; y < H; ++y) {
         const std::uint16_t* row = &frame.pens[y * W];
-        std::uint32_t* column = out + y + (W - 1) * H;
-        for (unsigned x = 0; x < W; ++x, column -= H) *column = lookup[row[x] & 0xff];
+        for (unsigned x = 0; x < W; ++x) out[(W - 1 - x) * H + y] = lookup[row[x] & 0xff];
     }
 }
 

@@ -119,6 +119,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--mame', type=Path, required=True)
     p.add_argument('--native', type=Path, required=True)
+    p.add_argument('--video-trace', type=Path, help='Video replay tool (default: beside qilin_run)')
     p.add_argument('--audio-trace', type=Path, help='Trace replay tool (default: beside qilin_run)')
     p.add_argument('--rom-dir', type=Path, required=True)
     p.add_argument('--out', type=Path, required=True)
@@ -127,6 +128,9 @@ def main():
     p.add_argument('--audio-window', default='14.5:20', help='Native WAV seconds spanning two coin sounds')
     args = p.parse_args()
     mame, native, roms, out = [x.resolve() for x in (args.mame, args.native, args.rom_dir, args.out)]
+    video_trace = (args.video_trace or native.with_name('qilin_video_trace' + native.suffix)).resolve()
+    if not video_trace.is_file():
+        raise ValueError('Build qilin_video_trace, or specify --video-trace')
     audio_trace = (args.audio_trace or native.with_name('qilin_audio_trace' + native.suffix)).resolve()
     if not audio_trace.is_file():
         raise ValueError('Build qilin_audio_trace, or specify --audio-trace')
@@ -155,6 +159,7 @@ def main():
     lua = f'''local m=manager.machine
 local s=m.screens[':screen']
 local wanted={{{wanted}}}
+local video_capture=dofile({lua_string(Path(__file__).with_name('mame_video.lua').resolve())})(m,wanted,{lua_string(out)},{max(frames)})
 local coin=m.ioport.ports[':1840'].fields['Coin 1']
 local siren=m.ioport.ports[':1800'].fields['P1 Button 3']
 local pedal=m.ioport.ports[':ADC1'].fields['P1 Pedal 1']
@@ -162,11 +167,23 @@ assert(coin and siren and pedal)
 -- Keep taps alive until exit; no debugger or modified MAME required.
 local trace=assert(io.open({lua_string(out / 'mame-io.trace')},'w'))
 local inputs=assert(io.open({lua_string(out / 'mame-input.trace')},'w'))
+local schedule=assert(io.open({lua_string(out / 'mame-schedule.trace')},'w'))
+local maincpu=m.devices[':maincpu']
+local saved_seconds=emu.item(maincpu.items['0/m_localtime.seconds'])
+local saved_attoseconds=emu.item(maincpu.items['0/m_localtime.attoseconds'])
+local schedule_count=0
 apb_taps={{}}
 local function at() return math.floor(m.time:as_double()*10000000+0.5) end
+local function scheduling(kind,value)
+ if schedule_count>=32 then return end
+ local local_cycles=math.floor((saved_seconds:read(0)+saved_attoseconds:read(0)/1e18)*10000000+0.5)
+ schedule:write(string.format('%s %02X %d %d\\n',kind,value,at(),local_cycles))
+ schedule_count=schedule_count+1
+end
 local sound=m.devices[':audiocpu'].spaces['program']
 apb_taps[1]=sound:install_read_tap(0x1800,0x187f,'apb-sound-read',function(a,d,mask)
  trace:write(string.format('r %04X %02X %d\\n',a,d,at()))
+ if (a & 0x7f)==0x60 then scheduling('c',d) end
 end)
 apb_taps[2]=sound:install_write_tap(0x1800,0x187f,'apb-sound-write',function(a,d,mask)
  trace:write(string.format('w %04X %02X %d\\n',a,d,at()))
@@ -177,6 +194,9 @@ local function mainread(a,d,mask)
 end
 apb_taps[3]=main:install_read_tap(0x1400,0x147f,'apb-adc',mainread)
 apb_taps[4]=main:install_read_tap(0x1800,0x1bff,'apb-controls',mainread)
+apb_taps[5]=main:install_write_tap(0x1680,0x16ff,'apb-command',function(a,d,mask)
+ if (mask & 0xff)~=0 then scheduling('C',d & 0xff) end
+end)
 local function controls(frame)
  local n=frame-{offset}
  coin:set_value(((n>=900 and n<903) or (n>=930 and n<933)) and 1 or 0)
@@ -186,6 +206,7 @@ end
 controls(0)
 emu.register_frame_done(function()
  local n=s:frame_number()
+ video_capture.frame_done(n)
  if wanted[n] then
   local pixels,w,h=s:pixels()
   assert(w==512 and h==384 and #pixels==512*384*4)
@@ -193,8 +214,9 @@ emu.register_frame_done(function()
   f:write(pixels);f:close()
  end
  controls(n+1)
- if n>={max(frames)+5} then trace:write(string.format('# end %d\\n',at())); trace:close(); inputs:close(); m:exit() end
+ if n>={max(frames)+5} then video_capture.finish(); trace:write(string.format('# end %d\\n',at())); trace:close(); inputs:close(); schedule:close(); m:exit() end
 end,'frame')
+video_capture.run()
 '''
     script = out / 'capture.lua'
     script.write_text(lua, encoding='utf-8')
@@ -230,7 +252,27 @@ end,'frame')
         result['images'].append({'mame_frame': frame, 'native_frame': frame-offset,
                                  'different_pixels': count, 'total_pixels': int(mismatch.size)})
     start, end = map(float, args.audio_window.split(':'))
+    run([video_trace, roms, out / 'mame-video.capture', out / 'video-replayed'], out / 'video-replayed.log')
+    result['video_replay'] = []
+    for frame in frames:
+        original = np.array(Image.open(out / f'mame-{frame}.png').convert('RGB'))
+        replayed = np.array(Image.open(out / f'video-replayed-{frame}.png').convert('RGB'))
+        count = int(np.count_nonzero(np.any(original != replayed, axis=2)))
+        result['video_replay'].append({'mame_frame': frame, 'different_pixels': count})
     result['traces'] = compare_traces(out)
+    scheduling = []
+    for line in (out / 'mame-schedule.trace').read_text(encoding='utf-8').splitlines():
+        kind, value, when, local = line.split()
+        event = {'kind': kind, 'value': int(value, 16), 'main_cycles': int(when),
+                 'saved_main_cpu_cycles': int(local)}
+        # Saved localtime is an end-of-slice clock when the sound CPU runs;
+        # while the main CPU executes it is only the start-of-slice clock.
+        if kind == 'c':
+            event['main_cpu_ahead_cycles'] = int(local) - int(when)
+        scheduling.append(event)
+    if not any(event['kind'] == 'c' for event in scheduling):
+        raise ValueError('MAME scheduling probe captured no sound-command reads')
+    result['mame_startup_scheduling'] = scheduling
     result['audio'] = compare_audio(out / 'native.wav', out / 'mame.wav', start, end)
     # Replay exactly the same bus events, independently of CPU scheduling.
     # The native replay is a byte-for-byte positive control for the importer.
@@ -255,7 +297,7 @@ end,'frame')
                             'mame_long': compare_audio(out / 'mame-chips.wav', out / 'mame.wav', start,
                                                       min(74.0, mame_samples / mame_rate - 0.3))}
 
-    result['passed'] = not any(f['different_pixels'] for f in result['images']) and result['audio']['passed'] and result['chip_replay']['mame_coin']['passed'] and result['chip_replay']['mame_long']['passed']
+    result['passed'] = not any(f['different_pixels'] for f in result['images']) and result['audio']['passed'] and result['chip_replay']['mame_coin']['passed'] and result['chip_replay']['mame_long']['passed'] and not any(f['different_pixels'] for f in result['video_replay'])
     (out / 'report.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(result, indent=2))
     return 0 if result['passed'] else 1

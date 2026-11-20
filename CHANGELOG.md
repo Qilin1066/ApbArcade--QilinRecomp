@@ -11,6 +11,21 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-20
+
+### Added
+- **Input recording and replay** in the player and headless runner (`--record FILE.qir`, `--replay FILE.qir`). Store initial EEPROM and every cabinet input, with version metadata, ordered frames and CRC32 checks. Recover only complete validated records after an interrupted recording; refuse to overwrite an existing recording. Playback leaves personal high-score EEPROM untouched. A seeded 6,000-frame regression requires identical frame hashes and byte-identical synchronous/worker WAVs. See `docs/input-movies.md`.
+- **Controller diagnostic export** from Controls. Save device identities, observed axis ranges, pedal calibration, wheel mode, actual haptic status and optional MOZA physical-angle range to `controllers.txt` beside the settings file. Virtual-device tests cover observed endpoints. Real R5/G920 verification remains pending; an endpoint is not proof of unlimited rotation.
+- **Optional performance reports** (`--profile FILE`) for simulation, video CPU work, sound-worker work, input, recording, upload, UI, presentation and pacing. Exact aggregate mean/max and bounded sampled percentiles; reports save atomically after the worker joins. A 6,000-frame development-runner benchmark measured about 0.56 ms simulation per frame with drawing and threaded audio; physical GPU/USB and presentation still require measurement. See `docs/profiling.md`.
+- **Independent graphics replay** (`qilin_video_trace` and `mame_video.lua`). Capture original MAME's read-only per-band video state at partial-update boundaries, then render it without running either native CPU. All five sampled original-MAME pictures replay with zero differing RGB pixels. Reject truncated captures, gaps, overlaps and inconsistent end counts. The original full-game comparison remains strict and still fails; this isolates sampled renderer fidelity from execution timing.
+- **Original-MAME startup scheduling probe** in the comparison report. Record early command writes/reads and the main CPU's saved local clock to make CPU interleave differences observable without modifying MAME's memory or scheduling.
+
+### Fixed
+- **Initial raster phase started in the visible area.** Start at vblank line 384, schedule visible line zero 12,800 main cycles later and complete the first frame at 166,400 cycles, matching original MAME's initial screen phase. Shared-board CPU parity still matches all 24,000 checked frames. Full-game coin correlation improves to about 0.786 but is still below the independent comparison threshold; this is not a full equivalence claim.
+- **Live controls were sampled before pumping the latest SDL events.** Sample after the event pump at the same frame boundary, before either CPU resumes. Replay retains its vblank timing, and paused controls still rebase on resume.
+- **Video pointer arithmetic could form out-of-bounds pointers** for sprites clipped at the left edge and after the final rotated BGRA pixel. Use bounded row/index addressing; clipped and flipped sprite tests cover the renderer change.
+- **Main-to-sound clock conversion could overflow after roughly 18 hours.** Split large timestamps into quotient and remainder while retaining the normal fast path; tests cover positive and negative long-duration values.
+
 ## [0.18.1] - 2026-11-20
 
 ### Fixed

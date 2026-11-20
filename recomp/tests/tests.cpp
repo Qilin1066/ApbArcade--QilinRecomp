@@ -9,6 +9,8 @@
 #include "controls.hpp"
 #include "script.hpp"
 #include "wav.hpp"
+#include "input_movie.hpp"
+#include "profile.hpp"
 #include "persistence.hpp"
 #include "m6502_cfg.hpp"
 #include "romset.hpp"
@@ -516,6 +518,10 @@ void test_cfg_routine_inside_gap() {
 // sound IRQ (not while the 6502 is held in reset), the watchdog, sound-side
 // mirrors and main-side byte lanes.
 void test_machine() {
+    static_assert(sys2::sound_cycles_at(80000000LL * 500000) == 14318181LL * 500000);
+    static_assert(sys2::sound_cycles_at(-80000000LL * 500000) == -14318181LL * 500000);
+    const auto long_time = 80000000LL * 500000;
+    CHECK(sys2::main_cycles_at(sys2::sound_cycles_at(long_time)) == long_time);
     std::vector<std::uint8_t> main_rom(0x90000, 0), sound_rom(0x10000, 0);
     sys2::Machine m(main_rom, sound_rom);
     CHECK(m.sound_held_in_reset());
@@ -530,7 +536,12 @@ void test_machine() {
     CHECK((m.main_cp_lines() & 2) == 0);
     CHECK((m.main_read16(0x1800) & 0x30) == 0x10 && (m.sound_read(0x1840) & 3) == 2);
     CHECK(m.main_read16(0x1C00) == 0xff56 && (m.main_read16(0x1800) & 0x10) == 0);
-    m.run_events(0);                           // applies the enable; line 0's 32V interrupt
+    CHECK(m.vpos() == 384 && m.frames() == 0);
+    m.run_events(0);                           // applies enable during initial vblank
+    CHECK((m.main_cp_lines() & 4) == 0);
+    m.main_time = 12800;
+    CHECK(m.vpos() == 0);
+    m.run_events(m.main_time);                 // line zero follows 32 blank lines
     CHECK((m.main_cp_lines() & 4) != 0);
     m.main_write16(0x15C0, 0);
     CHECK((m.main_cp_lines() & 4) == 0);
@@ -548,7 +559,7 @@ void test_machine() {
     CHECK((m.main_cp_lines() & 2) == 0);
 
     // VBLANK at line 384: CP3 and a frame.
-    m.main_time = 384 * sys2::cycles_per_scanline;
+    m.main_time = 166400;
     m.run_events(m.main_time);
     CHECK((m.main_cp_lines() & 8) != 0 && m.frames() == 1);
 
@@ -708,6 +719,18 @@ void test_video() {
     m.main_write16(0x3806, 1 << 3);
     video.vblank(m);
     CHECK(video.frame().pens[103 * sys2::Frame::width + 55] == 8);   // sprite 0's pen 8 at (5, 3)
+    // Object crosses the top-left edge: only in-bounds pointers may be
+    // formed, even when visible pixels begin inside a clipped sprite.
+    m.main_write16(0x3808, static_cast<std::uint16_t>(499 << 6));
+    m.main_write16(0x380a, 0);
+    m.main_write16(0x380c, static_cast<std::uint16_t>(1019 << 6));
+    m.main_write16(0x380e, 0x4000);
+    sys2::render(m, g, *frame, 0, 0);
+    CHECK(frame->pens[0] == 8);
+    m.main_write16(0x380a, 0x4000);
+    sys2::render(m, g, *frame, 0, 0);
+    CHECK(frame->pens[5] == 8);
+
 }
 
 void test_audio() {
@@ -922,6 +945,57 @@ void test_controls() {
     CHECK(pedal_travel(0.7, flat) == 0);              // uncalibrated: no throttle, not a stuck one
 }
 
+void test_movies_and_profiles() {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "qilin-movie-tests";
+    fs::remove_all(dir); fs::create_directories(dir);
+    const auto utf8 = (dir / fs::path(u8"session-é.qir")).u8string();
+    const std::string path(utf8.begin(), utf8.end());
+    std::array<std::uint8_t, 512> eeprom; eeprom.fill(0x37);
+    sys2::Inputs initial, chosen;
+    initial.in0 = 0x7fff; initial.adc[1] = 63;
+    {
+        qilin::movie::Writer writer;
+        CHECK(writer.open(path, eeprom, initial));
+        chosen = initial; chosen.leta[0] = 250; chosen.adc[1] = 12;
+        CHECK(writer.frame(1, chosen));
+        chosen.leta[0] = 5; chosen.in1 = 0xb0;
+        CHECK(writer.frame(2, chosen));
+        CHECK(writer.finish(3));
+    }
+    qilin::movie::Reader reader;
+    CHECK(reader.load(path) && !reader.interrupted() && reader.duration() == 3);
+    CHECK(reader.eeprom() == eeprom && !reader.version().empty());
+    sys2::Inputs got;
+    reader.apply(0, got); CHECK(got.in0 == 0x7fff && got.adc[1] == 63);
+    reader.apply(1, got); CHECK(got.leta[0] == 250 && got.adc[1] == 12);
+    reader.apply(2, got); CHECK(got.leta[0] == 5 && got.in1 == 0xb0);
+    { qilin::movie::Writer duplicate; CHECK(!duplicate.open(path, eeprom, initial)); }
+    CHECK(reader.load(path));   // exclusive creation preserved the original
+    const auto interrupted = (dir / "interrupted.qir").string();
+    { qilin::movie::Writer writer; CHECK(writer.open(interrupted, eeprom, initial)); CHECK(writer.frame(1, chosen)); }
+    CHECK(reader.load(interrupted) && reader.interrupted() && reader.duration() == 2);
+    { std::ofstream tail(interrupted, std::ios::binary | std::ios::app); tail << 'F' << "short"; }
+    CHECK(reader.load(interrupted) && reader.interrupted() && reader.duration() == 2);
+    const auto damaged = (dir / "damaged.qir").string();
+    fs::copy_file(fs::path(std::u8string(path.begin(), path.end())), damaged);
+    { std::fstream file(damaged, std::ios::binary | std::ios::in | std::ios::out); file.seekp(580); file.put('X'); }
+    CHECK(!reader.load(damaged) && reader.error().find("checksum") != std::string::npos);
+    const auto order = (dir / "order.qir").string();
+    { qilin::movie::Writer writer; CHECK(writer.open(order, eeprom, initial)); CHECK(!writer.frame(2, chosen)); }
+    CHECK(reader.load(order) && reader.interrupted());
+    qilin::profile::Profiler profiler;
+    using namespace std::chrono;
+    profiler.add(qilin::profile::Stage::video, milliseconds(1));
+    profiler.add(qilin::profile::Stage::video, milliseconds(2));
+    profiler.add(qilin::profile::Stage::video, milliseconds(3));
+    const auto report = (dir / "profile.txt").string();
+    CHECK(profiler.save(report, "test renderer"));
+    std::ifstream in(report); std::string text((std::istreambuf_iterator<char>(in)), {}); in.close();
+    CHECK(text.find("video_cpu\t3\t6.0000\t2.0000\t2.0000\t3.0000\t3.0000\t3") != std::string::npos);
+    fs::remove_all(dir);
+}
+
 void test_wav_clock() {
     namespace fs = std::filesystem;
     const auto path = (fs::temp_directory_path() / "qilin-clock-test.wav").string();
@@ -1102,6 +1176,7 @@ int main() {
     test_persistence();
     test_script();
     test_wav_clock();
+    test_movies_and_profiles();
     test_pokey_random();
     test_audio_worker();
     test_controls();

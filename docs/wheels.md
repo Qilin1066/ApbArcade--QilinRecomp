@@ -64,3 +64,12 @@ Version 0.18 remembers each bound wheel's entire control setup in `apb.ini`, key
 Old flat settings remain supported. Device GUIDs distinguish R5 and G920 setups; identical units sharing a GUID share a profile. The MOZA physical-angle setup still requires the user-supplied SDK and hardware prerequisites above. Profiles do not install drivers or change Pit House rotation limits.
 
 Losing window focus or minimising pauses game time, releases game controls, clears queued sound and suspends game haptic effects. Returning rebases the wheel instead of replaying background turns. A menu already open stays open. This is tested with virtual controls; physical R5/G920 verification remains outstanding.
+
+
+## Saving a controller report
+
+Open **F1 → Controls**, move the wheel through its intended range and press/release each pedal fully, then choose **Save controller diagnostics**. The notice gives the location of `controllers.txt`, beside `apb.ini`. Each export replaces that report atomically.
+
+The report includes the application/SDL version and platform; device GUID, vendor/product, serial and path; each axis's current and observed minimum/maximum readings since connection; steering mode, scale and bindings; pedal calibration; actual haptic status; and optional MOZA physical-angle minimum/maximum observed during the session. It is a local text file and is not uploaded automatically. Serial numbers and device paths are included, so review them before sharing publicly.
+
+For the R5, compare increasing physical-angle travel over several turns with the ordinary SDL axis: an axis reaching an endpoint alone does not distinguish a normal stop, a wrapping seam or clipping. For the G920, confirm the configured maximum angle matches G HUB, both endpoints are observed, and pedals span their calibrated range. A report aids diagnosis; it does not replace physical verification of steering and force feel.

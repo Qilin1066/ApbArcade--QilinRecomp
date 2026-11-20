@@ -50,9 +50,11 @@ public:
             else if (number > 1) invalid();
             else test_switch_ = number != 0;
         } else return false;
+        used_ = true;
         return true;
     }
 
+    [[nodiscard]] bool used() const { return used_; }
     [[nodiscard]] const std::string& error() const { return error_; }
 
     // Drives the machine's inputs from power-on: frame 0 now, each later one
@@ -90,6 +92,7 @@ public:
     }
 
 private:
+    bool used_ = false;
     std::string error_;
     std::vector<std::uint64_t> coins_;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> presses_;

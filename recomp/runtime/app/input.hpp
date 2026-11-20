@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+namespace qilin::profile { class Profiler; }
 namespace qilin::app {
 
 // Where a control comes from.
@@ -127,6 +128,8 @@ public:
     void configure();
 
     Settings settings;
+    profile::Profiler* profiler = nullptr;
+    [[nodiscard]] std::string diagnostics() const;
     bool test_switch = false;
     bool playing = true;    // false while the menu is open: the mouse is the menu's then
     void set_playing(bool playing);
@@ -141,6 +144,7 @@ public:
         int effect = -1;                    // the friction (or damper) effect running on it
         std::string force_status;
         std::string guid, name;
+        std::vector<int> axis_min, axis_max;
         SDL_JoystickType type = SDL_JOYSTICK_TYPE_UNKNOWN;
     };
     [[nodiscard]] const std::vector<Device>& devices() const noexcept { return devices_; }
@@ -185,7 +189,7 @@ private:
     controls::Rate stick_;
     MozaAngle moza_;
     std::string moza_path_;
-    std::optional<double> moza_degrees_;
+    std::optional<double> moza_degrees_, moza_min_, moza_max_;
     controls::AxisTravel measurement_;
     bool measuring_wheel_ = false;
     bool haptics_ready_ = false;

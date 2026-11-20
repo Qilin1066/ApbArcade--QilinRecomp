@@ -1,5 +1,6 @@
 #include "input.hpp"
 #include "persistence.hpp"
+#include "profile.hpp"
 
 #include <cstdio>
 #include "text.hpp"
@@ -331,6 +332,11 @@ void Input::add(SDL_JoystickID id) {
     const char* name = SDL_GetJoystickName(d.joystick);
     d.name = name ? name : "controller";
     d.type = SDL_GetJoystickType(d.joystick);
+    const int axes = SDL_GetNumJoystickAxes(d.joystick);
+    for (int axis = 0; axis < axes; ++axis) {
+        const int value = SDL_GetJoystickAxis(d.joystick, axis);
+        d.axis_min.push_back(value); d.axis_max.push_back(value);
+    }
     std::printf("apb: controller connected: %s (%s%s)\n", d.name.c_str(), type_name(d.type),
                 d.gamepad ? "; buttons and sticks as a gamepad" : "; raw axes and buttons only");
     std::fflush(stdout);
@@ -497,6 +503,10 @@ void Input::handle(const SDL_Event& e) {
     case SDL_EVENT_JOYSTICK_ADDED: add(e.jdevice.which); break;
     case SDL_EVENT_JOYSTICK_REMOVED: remove(e.jdevice.which); break;
     case SDL_EVENT_JOYSTICK_AXIS_MOTION:
+        for (auto& d : devices_) if (d.id == e.jaxis.which && e.jaxis.axis < d.axis_min.size()) {
+            d.axis_min[e.jaxis.axis] = std::min(d.axis_min[e.jaxis.axis], static_cast<int>(e.jaxis.value));
+            d.axis_max[e.jaxis.axis] = std::max(d.axis_max[e.jaxis.axis], static_cast<int>(e.jaxis.value));
+        }
         if (settings.steering == Steering::wheel && e.jaxis.axis == settings.wheel_axis.index) {
             const Device* d = find(settings.wheel_axis.device);
             if (d && d->id == e.jaxis.which) {
@@ -562,6 +572,7 @@ std::optional<Binding> Input::heard() {
 }
 
 void Input::apply(sys2::Inputs& in) {
+    profile::Scope measured(playing ? profiler : nullptr, profile::Stage::input);
     if (playing != was_playing_) set_playing(playing);
     if (resuming_) { reset_motion(); resuming_ = false; }
     if (measuring_wheel_) measurement_.observe(read(settings.wheel_axis));
@@ -667,6 +678,10 @@ void Input::apply(sys2::Inputs& in) {
     if (settings.steering == Steering::wheel) {
         if (settings.moza_angle) {
             moza_degrees_ = moza_.read();
+            if (moza_degrees_) {
+                moza_min_ = moza_min_ ? std::min(*moza_min_, *moza_degrees_) : *moza_degrees_;
+                moza_max_ = moza_max_ ? std::max(*moza_max_, *moza_degrees_) : *moza_degrees_;
+            }
             if (moza_degrees_ && live) counts += wheel_.update_degrees(*moza_degrees_);
             else wheel_.reset();
         } else if (!settings.wheel_axis.empty()) {
@@ -691,6 +706,40 @@ void Input::apply(sys2::Inputs& in) {
     }
     last_counts = counts;
     in.leta[0] = static_cast<std::uint8_t>(in.leta[0] + counts);
+}
+
+std::string Input::diagnostics() const {
+    std::ostringstream out;
+    out << "APB controller diagnostics " << QILIN_APP_VERSION << "\nPlatform: " << SDL_GetPlatform()
+        << "\nSDL version: " << SDL_GetVersion() << "\nFocused: " << focused_ << "  Playing: " << playing
+        << "\nSteering source: " << (settings.moza_angle ? "MOZA physical angle" : settings.steering == Steering::wheel ? "SDL wheel axis" : settings.steering == Steering::mouse ? "mouse/spinner" : "keys/gamepad")
+        << "\nWheel binding: " << settings.wheel_axis.describe()
+        << "\nRotation mode: " << (settings.moza_angle || settings.wheel.wrap ? "free/continuous" : "limited")
+        << "\nConfigured full axis travel (degrees): " << settings.wheel.rotation
+        << "\nEncoder counts per turn: " << settings.wheel.counts_per_turn
+        << "\nInvert: " << settings.wheel.invert << "  Friction percent: " << settings.friction
+        << "\nPedal binding: " << settings.pedal_axis.describe()
+        << "\nPedal calibration released/floored/deadzone: " << settings.pedal.released << " / " << settings.pedal.floored << " / " << settings.pedal.deadzone
+        << "\nMOZA status: " << moza_.status() << "\n";
+    if (moza_degrees_) out << "Last physical angle: " << *moza_degrees_ << " degrees\n";
+    if (moza_min_ && moza_max_) out << "Observed SDK angle min/max: " << *moza_min_ << " / " << *moza_max_ << " degrees\n";
+    out << "Supported MOZA SDK ABI: 1.0.1.8 Windows x64\n";
+    out << "Turn each wheel through its intended range and fully press/release pedals before exporting.\n"
+        << "SDL endpoints can mean a normal steering lock, wrap seam or clipping; this report does not prove unlimited hardware rotation.\n";
+    for (const auto& d : devices_) {
+        const char* serial = SDL_GetJoystickSerial(d.joystick);
+        const char* path = SDL_GetJoystickPath(d.joystick);
+        out << "\nDevice: " << d.name << "\nGUID: " << d.guid << "\nType: " << type_name(d.type)
+            << "\nVendor/product: " << SDL_GetJoystickVendor(d.joystick) << " / " << SDL_GetJoystickProduct(d.joystick)
+            << "\nSerial: " << (serial ? serial : "unavailable") << "\nPath: " << (path ? path : "unavailable")
+            << "\nButtons/hats: " << SDL_GetNumJoystickButtons(d.joystick) << " / " << SDL_GetNumJoystickHats(d.joystick)
+            << "\nForce status: " << (d.force_status.empty() ? "not active on this device" : d.force_status) << "\n";
+        for (std::size_t axis = 0; axis < d.axis_min.size(); ++axis)
+            out << "Axis " << axis << ": current=" << SDL_GetJoystickAxis(d.joystick, static_cast<int>(axis))
+                << " observed_min=" << d.axis_min[axis] << " observed_max=" << d.axis_max[axis]
+                << " reached_endpoint=" << (d.axis_min[axis] <= -32760 || d.axis_max[axis] >= 32760) << "\n";
+    }
+    return out.str();
 }
 
 }  // namespace qilin::app

@@ -468,6 +468,12 @@ int main(int argc, char** argv) {
     SDL_DetachVirtualJoystick(SDL_GetJoystickID(wheel));
     pump(input);
     CHECK(input.settings.wheel_axis.device == other_guid && input.settings.friction == 31);
+    SDL_SetJoystickVirtualAxis(other, 0, -32768); frame(input, in);
+    SDL_SetJoystickVirtualAxis(other, 0, 32767); frame(input, in);
+    const auto diagnostics = input.diagnostics();
+    CHECK(diagnostics.find("Another wheel") != std::string::npos);
+    CHECK(diagnostics.find("Friction percent: 31") != std::string::npos);
+    CHECK(diagnostics.find("observed_min=-32768 observed_max=32767 reached_endpoint=1") != std::string::npos);
     SDL_DetachVirtualJoystick(SDL_GetJoystickID(other));
     SDL_CloseJoystick(other);
     pump(input);

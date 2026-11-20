@@ -44,6 +44,7 @@
 #include "text.hpp"
 #include "menu.hpp"
 #include "persistence.hpp"
+#include "input_movie.hpp"
 #include "romset.hpp"
 #include "audio_worker.hpp"
 #include "audio_output.hpp"
@@ -78,6 +79,7 @@ struct Options {
     int gpu = -1;
     bool vsync = true;
     bool mute = false;
+    std::string record, replay, profile;
     std::uint64_t frames = 0;   // 0: until closed
 };
 
@@ -93,12 +95,16 @@ bool parse(int argc, char** argv, Options& o) {
         };
         if (flag == "--no-vsync") o.vsync = false;
         else if (flag == "--mute") o.mute = true;
+        else if (flag == "--record" || flag == "--replay" || flag == "--profile") {
+            if (i + 1 >= argc) return false;
+            (flag == "--record" ? o.record : flag == "--replay" ? o.replay : o.profile) = argv[++i];
+        }
         else if (flag == "--scale") { if (!number(o.scale)) return false; }
         else if (flag == "--gpu") { if (!number(o.gpu)) return false; }
         else if (flag == "--frames") { if (!number(o.frames)) return false; }
         else return false;
     }
-    return true;
+    return (o.record.empty() || o.replay.empty()) && (o.profile.empty() || (o.profile != o.record && o.profile != o.replay));
 }
 
 [[noreturn]] void fail(const std::string& message) {
@@ -176,6 +182,7 @@ int main(int argc, char** argv) {
     Options options;
     if (!parse(argc, argv, options)) {
         std::fprintf(stderr, "usage: apb [rom-dir] [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n"
+                             "           [--record FILE.qir | --replay FILE.qir] [--profile FILE]\n"
                              "  (no rom-dir: the folder used last time, else apb asks for it)\n");
         return 2;
     }
@@ -266,15 +273,26 @@ int main(int argc, char** argv) {
     if (!renderer) fail(error);
     SDL_SetWindowTitle(window, app::strf("APB  (%s)", renderer->device_name().c_str()).c_str());
 
+    auto profiler = options.profile.empty() ? nullptr : std::make_unique<profile::Profiler>();
+
     // The board, its saved EEPROM, the video and the scheduler.
     sys2::Machine machine(set->region(rom::Region::main_cpu), set->region(rom::Region::sound_cpu));
     const std::string nv = pref_path("eeprom.bin");
     persist::Eeprom eeprom(nv);
-    const auto loaded_eeprom = eeprom.load(machine.eeprom());
+    const auto loaded_eeprom = options.replay.empty() ? eeprom.load(machine.eeprom()) : persist::Eeprom::Loaded::fresh;
+    movie::Reader replay;
+    movie::Writer recording;
+    if (!options.replay.empty()) {
+        if (!replay.load(options.replay)) fail(replay.error());
+        machine.eeprom() = replay.eeprom();
+        replay.apply(0, machine.inputs);
+    }
+    if (!options.record.empty() && !recording.open(options.record, machine.eeprom(), machine.inputs)) fail(recording.error());
     if (loaded_eeprom == persist::Eeprom::Loaded::backup) std::fprintf(stderr, "apb: recovered EEPROM from backup\n");
     if (loaded_eeprom == persist::Eeprom::Loaded::invalid) std::fprintf(stderr, "apb: %s\n", eeprom.error().c_str());
     const sys2::Graphics graphics(*set);
     sys2::Video video(graphics);
+    video.profiler = profiler.get();
     machine.video_sink = &video;
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width) * height);
 
@@ -284,7 +302,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<sys2::AudioWorker> audio;
     if (!options.mute) {
         sound = std::make_unique<app::AudioOutput>();
-        audio = std::make_unique<sys2::AudioWorker>([&](std::span<const std::int16_t> pcm) { return sound->push(pcm); });
+        audio = std::make_unique<sys2::AudioWorker>([&](std::span<const std::int16_t> pcm) { return sound->push(pcm); }, profiler.get());
         machine.sound_sink = audio.get();
     }
 
@@ -292,6 +310,7 @@ int main(int argc, char** argv) {
     // (Pointers, so they go before the renderer and SDL do.)
     auto input_owner = std::make_unique<app::Input>();
     app::Input& input = *input_owner;
+    input.profiler = profiler.get();
     input.settings = saved;
     input.configure();
     input.set_focused((SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0);
@@ -303,6 +322,14 @@ int main(int argc, char** argv) {
     if (sound && !sound->ok()) menu.notify("Audio device unavailable; retrying automatically");
     if (loaded_eeprom == persist::Eeprom::Loaded::backup) menu.notify("Recovered high scores and audits from the EEPROM backup");
     if (loaded_eeprom == persist::Eeprom::Loaded::invalid) menu.notify(eeprom.error());
+    if (!options.replay.empty()) menu.notify(replay.interrupted() ? "Replaying validated inputs from an interrupted recording" : "Playing recorded inputs; controller input is ignored");
+    if (recording.active()) menu.notify("Recording this input session");
+    auto record_frame = [&](std::uint64_t frame) {
+        if (recording.active()) {
+            profile::Scope measured(profiler.get(), profile::Stage::recording);
+            if (!recording.frame(frame, machine.inputs)) menu.notify(recording.error());
+        }
+    };
     std::string save_notice;
     auto report_save_failure = [&] {
         if (save_notice != eeprom.error()) {
@@ -381,14 +408,19 @@ int main(int argc, char** argv) {
         }
         if (menu.quit_requested()) quit = true;
     };
-    // The controls change at the start of each vblank, on the cycle MAME's
-    // inputs would (and qilin_run's scripted ones do).
-    machine.on_vblank = [&](std::uint64_t) { input.apply(machine.inputs); };
+    // Replay changes at vblank. Live controls are sampled immediately after
+    // pumping SDL below, before the scheduler resumes either CPU.
+    machine.on_vblank = [&](std::uint64_t frame) {
+        if (!options.replay.empty()) replay.apply(frame, machine.inputs);
+    };
     scheduler.on_frame = [&](std::uint64_t frame) {
+        profile::FrameMark frame_profile(profiler.get());
         events();
-        if (!eeprom.poll(machine.eeprom(), SDL_GetTicks())) report_save_failure();
+        if (options.replay.empty()) input.apply(machine.inputs);
+        if (options.replay.empty() && !eeprom.poll(machine.eeprom(), SDL_GetTicks())) report_save_failure();
         if (quit) throw game::Stop{game::Stop::frames, "closed"};
         if (audio && machine.sound_sink) {
+            profile::Scope measured(profiler.get(), profile::Stage::audio_submit);
             machine.advance_speech(machine.sound_time);
             if (!audio->submit(machine.sound_time)) {
                 machine.sound_sink = nullptr;
@@ -396,7 +428,7 @@ int main(int argc, char** argv) {
                 menu.notify("Audio mixer failed; restart APB");
             }
         }
-        sys2::to_bgra(video.frame(), machine.palette(), pixels.data());
+        { profile::Scope measured(profiler.get(), profile::Stage::color); sys2::to_bgra(video.frame(), machine.palette(), pixels.data()); }
         // Locked to the display ("match the display"), presenting paces the
         // game; otherwise the board's clock does.
         double refresh = 0;
@@ -413,11 +445,12 @@ int main(int argc, char** argv) {
         }
         renderer->set_lock_to_display(repeats > 0);
         // The menu pauses the game: the same frame, the menu over it, until it closes.
-        if ((menu.is_open() || !input.focused()) && !eeprom.save(machine.eeprom())) report_save_failure();
+        if (options.replay.empty() && (menu.is_open() || !input.focused()) && !eeprom.save(machine.eeprom())) report_save_failure();
         if ((menu.is_open() || !input.focused()) && audio) {
             audio->drain();
             if (!sound->pause()) std::fprintf(stderr, "apb: audio pause: %s\n", SDL_GetError());
         }
+        const bool paused = menu.is_open() || !input.focused();
         while ((menu.is_open() || !input.focused()) && !quit) {
             if (input.focused()) {
                 renderer->write_back_buffer(pixels.data());
@@ -426,19 +459,21 @@ int main(int argc, char** argv) {
             }
             if (!input.focused() || !renderer->config().lock_to_display || !renderer->config().vsync) SDL_Delay(16);   // only a locked FIFO waits by itself
             events();
-            input.apply(machine.inputs);   // keeps the meters live; the cabinet's controls rest
+            if (options.replay.empty()) input.apply(machine.inputs);   // keeps the meters live; the cabinet's controls rest
             paced_from = frame;
             start = SDL_GetTicksNS();
         }
+        if (paused && profiler) profiler->reset_interval();
         if (quit) throw game::Stop{game::Stop::frames, "closed"};
-        renderer->write_back_buffer(pixels.data());
-        menu.frame();
+        { profile::Scope measured(profiler.get(), profile::Stage::upload); renderer->write_back_buffer(pixels.data()); }
+        { profile::Scope measured(profiler.get(), profile::Stage::ui); menu.frame(); }
         // Pace to the board's clock: frame n is due n frame-times after the
         // start. Falling more than a few frames behind restarts the count,
         // rather than racing to catch up.
         if (repeats > 0 && renderer->config().lock_to_display) {
-            renderer->present();
-            for (int i = 1; i < repeats; ++i) renderer->present_again();
+            { profile::Scope measured(profiler.get(), profile::Stage::present);
+              renderer->present();
+              for (int i = 1; i < repeats; ++i) renderer->present_again(); }
             const auto now = SDL_GetTicksNS();
             start = now;   // so the clock takes over smoothly if the lock ends
             paced_from = frame + 1;
@@ -458,26 +493,35 @@ int main(int argc, char** argv) {
                 lock_frames = 0;
                 lock_since = now;
             }
+            record_frame(frame);
             return;
         }
         const auto due = start + static_cast<std::uint64_t>(static_cast<double>(frame - paced_from) * frame_ns);
         const auto now = SDL_GetTicksNS();
-        if (now < due) SDL_DelayPrecise(due - now);
+        if (now < due) { profile::Scope measured(profiler.get(), profile::Stage::pacing); SDL_DelayPrecise(due - now); }
         else if (now - due > 5 * static_cast<std::uint64_t>(frame_ns)) {
             start = now;
             paced_from = frame;
         }
-        renderer->present();
+        { profile::Scope measured(profiler.get(), profile::Stage::present); renderer->present(); }
+        record_frame(frame);
     };
-    const auto stop = scheduler.run(options.frames ? options.frames : ~0ull);
+    const auto limit = options.frames ? options.frames : ~0ull;
+    const auto stop = scheduler.run(options.replay.empty() ? limit : std::min<std::uint64_t>(limit, replay.duration()));
+    if (recording.active() && !recording.finish(machine.frames())) std::fprintf(stderr, "apb: %s\n", recording.error().c_str());
 
-    if (!eeprom.save(machine.eeprom())) {
+    if (options.replay.empty() && !eeprom.save(machine.eeprom())) {
         report_save_failure();
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB: save failed", eeprom.error().c_str(), window);
     }
     machine.sound_sink = nullptr;
     audio.reset();   // join before destroying the playback stream
     sound.reset();
+    if (profiler) {
+        std::string profile_error;
+        if (!profiler->save(options.profile, renderer->device_name(), &profile_error))
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB: profile save failed", profile_error.c_str(), window);
+    }
     machine.on_vblank = nullptr;
     menu_owner.reset();
     if (!input.settings.save(settings_path)) std::fprintf(stderr, "apb: couldn't write the settings to %s\n", settings_path.c_str());

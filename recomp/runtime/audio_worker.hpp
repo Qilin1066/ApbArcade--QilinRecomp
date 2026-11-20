@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 
+namespace qilin::profile { class Profiler; }
 namespace qilin::sys2 {
 // One game-thread producer records exact chip events. A worker owns the
 // mixer and consumes bounded, ordered frame batches. No machine state is
@@ -16,7 +17,7 @@ namespace qilin::sys2 {
 class AudioWorker final : public Machine::SoundSink {
 public:
     using Output = std::function<bool(std::span<const std::int16_t>)>;
-    explicit AudioWorker(Output output);
+    explicit AudioWorker(Output output, profile::Profiler* profiler = nullptr);
     ~AudioWorker() override;
     bool submit(std::int64_t sound_time);
     bool drain();
@@ -43,6 +44,7 @@ private:
     std::atomic<bool> failed_{false};
     bool closing_ = false, busy_ = false;
     std::string error_;
+    profile::Profiler* profiler_ = nullptr;
     std::thread worker_;
 };
 } // namespace qilin::sys2

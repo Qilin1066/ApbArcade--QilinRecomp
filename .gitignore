@@ -22,3 +22,6 @@
 *.exe
 *.obj
 *.o
+
+# Local input recordings include player EEPROM and controller inputs.
+*.qir

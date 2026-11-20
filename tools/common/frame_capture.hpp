@@ -60,10 +60,12 @@ public:
     std::string hashes_path;
     // Draws every frame, as the game does (--draw: to measure what video costs).
     bool draw_all = false;
+    profile::Profiler* profiler = nullptr;
     bool attach(const rom::RomSet& set, sys2::Machine& machine) {
         if (wanted_.empty() && !draw_all && hashes_path.empty()) return true;
         graphics_ = std::make_unique<sys2::Graphics>(set);
         video_ = std::make_unique<sys2::Video>(*graphics_);
+        video_->profiler = profiler;
         std::vector<std::uint64_t> frames;
         for (const auto& w : wanted_) frames.push_back(w.frame);
         if (!draw_all && hashes_path.empty()) video_->draw_only(std::move(frames));

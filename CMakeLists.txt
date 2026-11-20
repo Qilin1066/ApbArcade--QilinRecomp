@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(ApbArcadeQilinRecomp VERSION 0.18.1 LANGUAGES C CXX)
+project(ApbArcadeQilinRecomp VERSION 0.19.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -74,15 +74,21 @@ target_compile_features(qilin_tms5220 PUBLIC cxx_std_17)
 add_library(qilin_board STATIC recomp/runtime/system2_machine.cpp recomp/runtime/system2_speech.cpp)
 target_link_libraries(qilin_board PUBLIC qilin_runtime qilin_tms5220 PRIVATE qilin_warnings)
 # Sound as MAME makes it: ymfm's YM2151 (vendored, unmodified), the POKEYs, the mixer.
+add_library(qilin_input_movie STATIC recomp/runtime/input_movie.cpp)
+target_link_libraries(qilin_input_movie PUBLIC qilin_board PRIVATE qilin_warnings)
+target_compile_definitions(qilin_input_movie PRIVATE QILIN_MOVIE_VERSION="${PROJECT_VERSION}")
+
 add_library(qilin_ymfm STATIC third_party/ymfm/ymfm_opm.cpp)
 target_include_directories(qilin_ymfm SYSTEM PUBLIC third_party/ymfm)
 target_compile_features(qilin_ymfm PUBLIC cxx_std_14)
 find_package(Threads REQUIRED)
+add_library(qilin_profile STATIC recomp/runtime/profile.cpp)
+target_link_libraries(qilin_profile PUBLIC qilin_runtime qilin_persistence Threads::Threads PRIVATE qilin_warnings)
 add_library(qilin_audio STATIC recomp/runtime/system2_audio.cpp recomp/runtime/audio_worker.cpp)
-target_link_libraries(qilin_audio PUBLIC qilin_board Threads::Threads PRIVATE qilin_ymfm qilin_warnings)
+target_link_libraries(qilin_audio PUBLIC qilin_board qilin_profile Threads::Threads PRIVATE qilin_ymfm qilin_warnings)
 # Video as MAME draws it, from the board's RAM: the CPU reference renderer.
 add_library(qilin_video STATIC recomp/runtime/system2_video.cpp)
-target_link_libraries(qilin_video PUBLIC qilin_board qilin_core PRIVATE qilin_warnings)
+target_link_libraries(qilin_video PUBLIC qilin_board qilin_core qilin_profile PRIVATE qilin_warnings)
 
 # ---- Recompiler core ----
 # The 6502 lifter's instruction bodies are MAME's microcode: om6502.lst is
@@ -116,7 +122,7 @@ qilin_tool(qilin)
 # ---- Tests (no game files needed) ----
 enable_testing()
 add_executable(qilin_tests recomp/tests/tests.cpp)
-target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qilin_persistence qilin_warnings)
+target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qilin_persistence qilin_input_movie qilin_warnings)
 target_include_directories(qilin_tests PRIVATE recomp/runtime/app tools/common)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
@@ -185,6 +191,10 @@ add_test(NAME qilin_audio_trace_check COMMAND "${CMAKE_COMMAND}"
     "-DPROGRAM=$<TARGET_FILE:qilin_audio_trace>"
     "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/audio-trace-check/$<CONFIG>"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/audio_trace.cmake")
+
+add_executable(qilin_video_trace tools/video_trace/video_trace.cpp)
+target_link_libraries(qilin_video_trace PRIVATE qilin_video qilin_gfx qilin_warnings)
+qilin_tool(qilin_video_trace)
 
 # ---- Reference run: the game on MAME's CPU cores and the board model (needs your ROMs) ----
 add_executable(qilin_refrun tools/refrun/refrun.cpp)
@@ -299,7 +309,8 @@ if(SDL3_FOUND)
     # The controls (any wheel, pedals, gamepads, mice) and the settings menu.
     add_library(qilin_app STATIC recomp/runtime/app/audio_output.cpp recomp/runtime/app/input.cpp recomp/runtime/app/menu.cpp recomp/runtime/app/moza.cpp)
     target_include_directories(qilin_app PUBLIC recomp/runtime/app)
-    target_link_libraries(qilin_app PUBLIC qilin_board qilin_gfx qilin_imgui qilin_persistence SDL3::SDL3 PRIVATE qilin_warnings)
+    target_compile_definitions(qilin_app PRIVATE QILIN_APP_VERSION="${PROJECT_VERSION}")
+    target_link_libraries(qilin_app PUBLIC qilin_board qilin_gfx qilin_imgui qilin_persistence qilin_input_movie qilin_profile SDL3::SDL3 PRIVATE qilin_warnings)
     # The controls on SDL's virtual joysticks: a wheel and pedals (no window or device needed).
     add_executable(qilin_input_tests recomp/runtime/app/input_tests.cpp)
     target_link_libraries(qilin_input_tests PRIVATE qilin_app qilin_warnings)
@@ -330,7 +341,7 @@ if(QILIN_PLAYER_KIT)
     add_library(qilin_kit_main OBJECT recomp/runtime/app/apb.cpp recomp/runtime/game/game.cpp)
     target_include_directories(qilin_kit_main PRIVATE recomp/runtime/game)
     target_link_libraries(qilin_kit_main PRIVATE qilin_app qilin_core qilin_video qilin_audio qilin_gfx qilin_board SDL3::SDL3 qilin_warnings)
-    set(kit_libraries qilin_app qilin_core qilin_video qilin_audio qilin_persistence qilin_gfx qilin_imgui qilin_volk qilin_board qilin_tms5220 qilin_ymfm SDL3-static)
+    set(kit_libraries qilin_app qilin_core qilin_video qilin_audio qilin_persistence qilin_input_movie qilin_profile qilin_gfx qilin_imgui qilin_volk qilin_board qilin_tms5220 qilin_ymfm SDL3-static)
     set(kit_archive "${CMAKE_BINARY_DIR}/libapb_kit.a")
     set(mri "CREATE ${kit_archive}\n")
     foreach(library IN LISTS kit_libraries)
@@ -383,7 +394,7 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
 
     add_executable(qilin_run tools/run/run.cpp)
     target_include_directories(qilin_run PRIVATE tools/common)
-    target_link_libraries(qilin_run PRIVATE qilin_game qilin_core qilin_video qilin_audio qilin_gfx qilin_warnings)
+    target_link_libraries(qilin_run PRIVATE qilin_game qilin_core qilin_video qilin_audio qilin_input_movie qilin_gfx qilin_warnings)
     qilin_tool(qilin_run)
     # In-between frames, a prototype: renders a run with frames drawn between the game's, to a video (needs ffmpeg).
     add_executable(qilin_tween tools/tween/tween.cpp)
@@ -415,6 +426,17 @@ if(QILIN_ROM_DIR)
     get_filename_component(QILIN_ROM_DIR_ABSOLUTE "${QILIN_ROM_DIR}" ABSOLUTE)
     if(NOT IS_DIRECTORY "${QILIN_ROM_DIR_ABSOLUTE}")
         message(FATAL_ERROR "QILIN_ROM_DIR is not a directory: ${QILIN_ROM_DIR_ABSOLUTE}")
+    endif()
+    add_test(NAME qilin_movie_parity COMMAND "${CMAKE_COMMAND}"
+        "-DNATIVE=$<TARGET_FILE:qilin_run>" "-DROM_DIR=${QILIN_ROM_DIR_ABSOLUTE}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/movie-parity/$<CONFIG>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/movie_parity.cmake")
+    set_tests_properties(qilin_movie_parity PROPERTIES LABELS "rom;parity" TIMEOUT 600)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME qilin_video_trace_check COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/video_trace_check.py" "$<TARGET_FILE:qilin_video_trace>"
+            "${QILIN_ROM_DIR_ABSOLUTE}" "${CMAKE_CURRENT_BINARY_DIR}/video-trace-check/$<CONFIG>")
+        set_tests_properties(qilin_video_trace_check PROPERTIES LABELS "rom" TIMEOUT 120)
     endif()
     add_test(NAME qilin_audio_parity
         COMMAND "${CMAKE_COMMAND}"

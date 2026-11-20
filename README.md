@@ -166,6 +166,10 @@ WAV exports convert the fractional chip rate (55,930.39453125 Hz) to the file's 
 
 Sound mixing runs on a worker with ordered chip events and bounded buffering. Playback prebuffers two frames, refills after starvation, clears queued sound on pause, and smoothly adjusts playback rate by at most 2% to follow device/display clock drift. It no longer discards whole frames of sound when the playback queue fills. These changes preserve the chip mix: `qilin_run --wav FILE --audio-threaded 1` exercises the same worker for offline comparison.
 
+The player and headless runner support `--record session.qir` and `--replay session.qir` for reproducible cabinet inputs, with initial EEPROM and checksums. Replay preserves personal high-score saves. See [input recordings](docs/input-movies.md). Use `--profile performance.txt` to measure simulation, audio and frame pacing; see [profiling](docs/profiling.md). Controls → **Save controller diagnostics** exports device ranges and the MOZA angle status for hardware testing; see [wheel setup](docs/wheels.md#saving-a-controller-report).
+
+The independent MAME harness now replays captured per-band graphics state through `qilin_video_trace`: all five sampled pictures match exactly when given the same state. Independently running the complete games still produces timing differences; see [the measured checks and limitations](docs/independent-mame.md).
+
 `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs (`--look crt:1152x1536` as a window that size would show them, through a look), `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound. `qilin_tween` (a prototype, needs ffmpeg) renders a stretch of a run with frames drawn between the game's, beside the game as it is, to a video.
 
 ## Layout

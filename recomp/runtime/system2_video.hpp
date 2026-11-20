@@ -12,6 +12,7 @@
 // game will draw through the Vulkan renderer; this defines what it must match.
 
 #include "romset.hpp"
+#include "profile.hpp"
 #include "system2_machine.hpp"
 
 #include <array>
@@ -47,6 +48,15 @@ struct Frame {
     std::array<std::uint16_t, width * height> pens{};
 };
 
+// A captured render view excludes CPU execution and board-event scheduling.
+using VideoPages = std::array<std::array<std::uint16_t, 0x1000>, 3>;
+struct RenderView {
+    const VideoPages& pages;
+    int scroll_x, scroll_y;
+    std::array<unsigned, 2> banks;
+};
+void render(const RenderView& view, const Graphics& graphics, Frame& frame, int first, int last);
+
 // Draws scanlines [first, last] of a frame from the board as it is now.
 void render(const Machine& machine, const Graphics& graphics, Frame& frame, int first, int last);
 
@@ -56,6 +66,7 @@ void render(const Machine& machine, const Graphics& graphics, Frame& frame, int 
 class Video final : public Machine::VideoSink {
 public:
     explicit Video(const Graphics& graphics) : graphics_(graphics) {}
+    profile::Profiler* profiler = nullptr;
 
     void draw_through(const Machine& machine, int scanline) override;
     void vblank(const Machine& machine) override;
