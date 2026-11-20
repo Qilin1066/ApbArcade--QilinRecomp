@@ -11,7 +11,11 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Added
+- **Optional gameplay regression tests using local ROMs** (`QILIN_ROM_DIR`, `ctest -L parity`): compare all 6,000 frame-colour hashes of attract mode, a credited game, a seeded random player and self-test between the lifted CPUs and MAME's reference cores on the shared board/video models. The credited game inserts two coins after startup, presses the real siren input and acknowledges the briefing. Missing or truncated output, runner failures and the first different frame fail the test; logs and hashes stay in the build directory. No game data is distributed, and the default tests still need no ROMs.
+
 ### Fixed
+- **The primary button did nothing** (gamepad A, Z / Left Ctrl and the first saved button binding). It used Paperboy's IN0 bit 7 (`0x80`), which APB marks unused. It now drives APB's siren/start on bit 3 (`0x08`); fire stays on bit 1 (`0x02`), and X / Space / C remain an alternate siren. The menu and README name the actions. The random player now uses the same corrected mapping. The virtual-controller regression fails on the old mapping; a ROM run confirms the siren starts a credited game and dismisses its briefing.
 - **Malformed saved controls could cause invalid memory reads or broken steering.** Bindings now require whole integer indices, valid scancodes and supported axis/hat directions; keyboard reads also check SDL's array bounds. Numeric settings reject non-finite, overflowing and partially parsed values and keep their defaults instead. Regression tests cover damaged settings alongside the existing settings round-trip and virtual-controller tests.
 
 ## [0.17.0] - 2026-11-20

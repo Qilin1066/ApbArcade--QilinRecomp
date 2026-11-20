@@ -15,7 +15,10 @@ namespace qilin::app {
 
 namespace {
 
-constexpr std::array<std::uint16_t, 3> in0_bits{0x0080, 0x0002, 0x0008};   // buttons 1-3 on IN0, active low
+// APB overrides Paperboy's button pins: bit 7 is unused, bit 3 is
+// siren/start, bit 1 is fire. Keep the third slot as a siren alternative
+// so existing Space/C, gamepad X and saved bindings still work.
+constexpr std::array<std::uint16_t, 3> in0_bits{0x0008, 0x0002, 0x0008};
 constexpr std::array<std::uint8_t, 3> in1_bits{0x40, 0x80, 0x20};          // left coin, right coin, service coin on IN1
 
 double axis_of(SDL_Joystick* j, int axis) {
@@ -485,7 +488,7 @@ void Input::apply(sys2::Inputs& in) {
                                         read(settings.buttons[static_cast<int>(b)]) > 0.5; };
     const bool live = playing;   // while the menu is open, the cabinet's controls rest
 
-    // IN0, active low: buttons 1-3, the self-test switch.
+    // IN0, active low: siren/start, fire and the self-test switch.
     unsigned in0 = 0xffff;
     const bool b1 = key[SDL_SCANCODE_LCTRL] || key[SDL_SCANCODE_Z] || pad(SDL_GAMEPAD_BUTTON_SOUTH) || bound(Button::one);
     const bool b2 = key[SDL_SCANCODE_LALT] || key[SDL_SCANCODE_X] || pad(SDL_GAMEPAD_BUTTON_EAST) || bound(Button::two);

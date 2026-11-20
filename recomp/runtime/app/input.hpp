@@ -38,9 +38,10 @@ struct Binding {
     [[nodiscard]] std::string describe() const;          // for the menu
 };
 
-// The buttons the cabinet has (MAME's apb inputs), in the order the menu lists them.
+// Action bindings in menu/save-file order; the first and third both drive
+// APB's siren/start, the second drives fire.
 enum class Button { one, two, three, coin_left, coin_right, service, count };
-inline constexpr std::array<const char*, 6> button_names{"Button 1", "Button 2", "Button 3",
+inline constexpr std::array<const char*, 6> button_names{"Siren / start", "Fire", "Siren (alternate)",
                                                          "Coin, left slot", "Coin, right slot", "Service coin"};
 inline constexpr std::array<const char*, 6> button_keys{"button1", "button2", "button3", "coin_left", "coin_right", "service"};
 

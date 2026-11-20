@@ -25,8 +25,9 @@ public:
             coin_until_ = frame + 3;
             next_coin_ = frame + 2400 + next() % 2400;
         }
-        // Buttons 1-3 (IN0 0x80, 0x02, 0x08): each pressed or released for 5-90 frames.
-        static constexpr std::uint16_t masks[3] = {0x0080, 0x0002, 0x0008};
+        // The app's siren/start, fire and alternate siren bindings, each
+        // pressed or released for 5-90 frames (APB leaves IN0 bit 7 unused).
+        static constexpr std::uint16_t masks[3] = {0x0008, 0x0002, 0x0008};
         for (int b = 0; b < 3; ++b) {
             if (frame >= button_until_[b]) {
                 button_down_[b] = next() % 3 == 0;

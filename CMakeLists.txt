@@ -383,3 +383,27 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
         message(STATUS "apb: not built (no SDL3 found and QILIN_FETCH_SDL3 is OFF)")
     endif()
 endif()
+
+# Optional end-to-end checks using the player's local ROMs. No game data,
+# lifted code or expected frames are stored in the source tree or CI.
+set(QILIN_ROM_DIR "" CACHE PATH "Local rev 7 ROM directory for native/reference gameplay tests")
+if(QILIN_ROM_DIR)
+    if(NOT TARGET qilin_run)
+        message(FATAL_ERROR "QILIN_ROM_DIR requires both QILIN_GEN_DIR and QILIN_SOUND_GEN_DIR; lift both CPUs first")
+    endif()
+    get_filename_component(QILIN_ROM_DIR_ABSOLUTE "${QILIN_ROM_DIR}" ABSOLUTE)
+    if(NOT IS_DIRECTORY "${QILIN_ROM_DIR_ABSOLUTE}")
+        message(FATAL_ERROR "QILIN_ROM_DIR is not a directory: ${QILIN_ROM_DIR_ABSOLUTE}")
+    endif()
+    foreach(scenario attract credited monkey selftest)
+        add_test(NAME qilin_game_parity_${scenario}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DNATIVE=$<TARGET_FILE:qilin_run>"
+                "-DREFERENCE=$<TARGET_FILE:qilin_refrun>"
+                "-DROM_DIR=${QILIN_ROM_DIR_ABSOLUTE}"
+                "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/game-parity/$<CONFIG>/${scenario}"
+                "-DSCENARIO=${scenario}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/game_parity.cmake")
+        set_tests_properties(qilin_game_parity_${scenario} PROPERTIES LABELS "rom;parity" TIMEOUT 600)
+    endforeach()
+endif()

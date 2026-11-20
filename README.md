@@ -88,6 +88,18 @@ cmake --build build --target qilin_sound_difftest
 build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--only 5066]
 ```
 
+### Gameplay regression checks with your ROMs
+
+After lifting both CPUs, enable the optional native/reference tests with your local ROM folder:
+
+```sh
+cmake -S . -B build -DQILIN_GEN_DIR="$PWD/gen" -DQILIN_SOUND_GEN_DIR="$PWD/gen-sound" -DQILIN_ROM_DIR="/path/to/APB ROMs"
+cmake --build build --target qilin_run qilin_refrun --config Release --parallel
+ctest --test-dir build -C Release -L parity --output-on-failure
+```
+
+Each test compares 6,000 frames (about 100 seconds of game time) between the lifted game and MAME's CPU cores: attract mode, a credited game with the pedal and steering held, a repeatable random player, and the self-test menus. It fails on a runner error, missing or incomplete output, or the first differing frame. Logs and hashes stay under `build/game-parity/`. Both runs use this project's board and CPU video renderer; this checks CPU recompilation and scheduling, and does not independently validate the board, sound or Vulkan output against MAME itself. No window or Vulkan driver is needed. Leave `QILIN_ROM_DIR` empty for the usual tests without ROMs.
+
 ### Playing it
 
 **On Windows, the download (nothing to install).** Each release has `APB-QilinRecomp-<version>-windows-x64.zip` (about 80 MB; GitHub builds it, `.github/workflows/player-kit.yml`). Unpack it and double-click **`Play APB.bat`**: the first time it asks for your ROM folder and builds the game from it, a couple of minutes, with the compiler inside the download (LLVM-MinGW: Clang, free and open source); after that it starts the game at once. The download has everything but the game's own code, prebuilt: the recompiler, the runtime, SDL3, the menu. The code made from the ROMs is made on the player's PC, from their own copy, and never distributed. See `tools/player-kit/` (`package.sh` builds the download on Linux; `play.ps1` is what Play runs).
@@ -119,7 +131,8 @@ build/apb ["D:/APB Arcade Project"] [--scale N] [--no-vsync] [--gpu N] [--mute]
 |---|---|---|
 | Steering wheel | Left / Right | left stick |
 | Gas pedal | Up | right trigger |
-| Button 1 / 2 / 3 (MAME's numbering) | Left Ctrl or Z / Left Alt or X / Space or C | A / B / X |
+| Siren / start | Left Ctrl or Z; Space or C also work | A; X also works |
+| Fire | Left Alt or X | B |
 | Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
 | Self-test switch | F2 (toggles) | |
 | Settings menu (pauses the game) | F1 or Escape | Start or Guide |

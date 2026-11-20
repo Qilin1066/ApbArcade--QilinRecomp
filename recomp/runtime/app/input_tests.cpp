@@ -119,7 +119,7 @@ int main() {
     frame(input, in);
     CHECK(in.adc[1] == 0);                        // floored
 
-    // A wheel button bound to button 1 (IN0 bit 7, active low).
+    // A wheel button bound to siren/start (APB IN0 bit 3, active low).
     input.listen(app::Input::Listen::button);
     SDL_SetJoystickVirtualButton(wheel, 3, true);
     frame(input, in);
@@ -127,10 +127,10 @@ int main() {
     CHECK(button && button->kind == app::Binding::Kind::button && button->index == 3);
     if (button) input.settings.buttons[0] = *button;
     frame(input, in);
-    CHECK((in.in0 & 0x0080) == 0);
+    CHECK((in.in0 & 0x0088) == 0x0080);   // siren low, the unused Paperboy pin stays high
     SDL_SetJoystickVirtualButton(wheel, 3, false);
     frame(input, in);
-    CHECK((in.in0 & 0x0080) != 0);
+    CHECK((in.in0 & 0x0008) != 0);
 
     // The settings file keeps all of it.
     const auto path = (std::filesystem::temp_directory_path() / "apb_input_test.ini").string();
@@ -219,10 +219,10 @@ int main() {
     input.playing = false;
     SDL_SetJoystickVirtualButton(wheel, 3, true);
     frame(input, in);
-    CHECK((in.in0 & 0x0080) != 0 && in.adc[1] == 0x3f);
+    CHECK((in.in0 & 0x0008) != 0 && in.adc[1] == 0x3f);
 
     // A gamepad plugged in while running (an Xbox controller, say), with the
-    // default settings: A is button 1, Back a coin, the right trigger the
+    // default settings: A is siren/start, Back a coin, the right trigger the
     // gas, the left stick the steering, with nothing set up.
     input.settings = app::Settings{};
     input.configure();
@@ -232,18 +232,27 @@ int main() {
     frame(input, in);
     CHECK(input.devices().size() == 3 && input.devices().back().gamepad != nullptr);
     frame(input, in);
-    CHECK((in.in0 & 0x0080) != 0 && (in.in1 & 0x40) != 0);
+    CHECK((in.in0 & 0x0008) != 0 && (in.in1 & 0x40) != 0);
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, true);
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, true);
     frame(input, in);
-    CHECK((in.in0 & 0x0080) == 0 && (in.in1 & 0x40) == 0);
+    CHECK((in.in0 & 0x008a) == 0x0082 && (in.in1 & 0x40) == 0);
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, false);
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, false);
+    // B fires on APB's bit 1; X remains the alternate siren on bit 3.
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_EAST, true);
+    frame(input, in);
+    CHECK((in.in0 & 0x008a) == 0x0088);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_EAST, false);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_WEST, true);
+    frame(input, in);
+    CHECK((in.in0 & 0x008a) == 0x0082);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_WEST, false);
     SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767);
     SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 32767);
     const std::uint8_t dial = in.leta[0];
     for (int i = 0; i < 10; ++i) frame(input, in);
-    CHECK((in.in0 & 0x0080) != 0 && in.adc[1] == 0);   // the gas floored (APB's ADC reads 0 there)
+    CHECK((in.in0 & 0x0008) != 0 && in.adc[1] == 0);   // the gas floored (APB's ADC reads 0 there)
     CHECK(static_cast<std::uint8_t>(in.leta[0] - dial) == 30);   // turning right: 3 counts a frame, fully over
     // Half way over: (0.5 - 0.15) / 0.85 squared, 17% of full speed: 5 counts in 10 frames, not 15.
     SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 16384);

@@ -9,9 +9,9 @@
 // Controls (keyboard; gamepads, wheels, pedals and mice too):
 //   Left / Right       steering wheel          (left stick; a wheel; a mouse or spinner)
 //   Up                 gas pedal               (right trigger; a pedal)
-//   Left Ctrl or Z     button 1                (A / south)
-//   Left Alt or X      button 2                (B / east)
-//   Space or C         button 3                (X / west)
+//   Left Ctrl or Z     siren / start           (A / south)
+//   Left Alt or X      fire                    (B / east)
+//   Space or C         siren (alternate)       (X / west)
 //   5, 6               coin slots 1 and 2      (Back)
 //   9                  service coin
 //   F2                 the self-test switch (on/off)

@@ -7,7 +7,7 @@
 //                [--frame-out FRAME:FILE]... [--frame-hashes FILE] [--monkey SEED] [--test-switch 1] [--executed-out FILE] [--reads-out FILE]
 //
 // --coin closes the left coin switch for 3 frames; --press pulls the IN0
-// bits in MASK (hex, active low: 0080 and 0040 are buttons 1 and 2) low for
+// bits in MASK (hex, active low: 0008 siren/start, 0002 fire) low for
 // 10 frames; --pedal holds ADC1 (APB's gas pedal) at VALUE; --steer turns the
 // LETA0 dial by VALUE counts every frame.
 //
