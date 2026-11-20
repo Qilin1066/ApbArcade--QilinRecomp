@@ -35,3 +35,20 @@ Sequential Release runs of 6,000 seeded frames, without frame hashing or input r
 | CPUs, video and threaded audio | 0.565 ms |
 
 The final run's simulation p95 was 0.855 ms; audio-worker batches averaged 0.193 ms. The board frame period is 16.64 ms. This runner has ample simulation headroom; the numbers do not establish performance on a particular PC, GPU, wheel or display. On the target machine, capture normal gameplay with its actual display mode and controllers and inspect frame intervals alongside presentation waits before choosing an optimisation.
+
+
+## Actual-machine capture
+
+The Windows download includes **Check controls and performance.bat**. It builds/updates the player through the normal launcher and creates a fresh folder under `Hardware checks`. Complete its checklist, play for at least two minutes and quit normally. The folder contains `performance.txt`, `controllers.txt`, `inputs.qir`, stdout/stderr logs and the checklist. Each run gets a unique folder; repeat separately with the R5 and G920. No report is uploaded automatically. Fill in the driver/firmware versions and observations that software cannot infer.
+
+For a source build:
+
+```sh
+apb /path/to/roms --record session.qir --profile performance.txt --controller-report controllers.txt
+```
+
+The profile/report context includes actual GPU/display/window/vsync/display-lock/effect settings, logical CPUs and RAM, game frames/presents, validation errors and observed audio queue counters. These describe the configuration at exit; note any setting changes in the checklist. The audio counters track stream open attempts, submitted stereo frames, observed empty queues after playback starts, the last/peak observed queued source bytes and the current frequency ratio in parts per million. An observed empty source queue is evidence for investigation, not a measurement of an audible acoustic dropout.
+
+Reports now count intervals above 25 and 50 ms and retain the longest 32, with the game frame at the end of each interval and the simulation wall time inside that gap. Compare that frame during input replay to distinguish a repeatable game workload from presentation, USB/driver or OS stalls. Pauses reset interval measurement. These thresholds flag long gaps around this game's 16.64 ms period, not a universal display-latency standard. Recording itself adds I/O; it has a separate timing stage. A follow-up replay with profiling but no new recording can help isolate that overhead.
+
+The development measurements above establish simulation headroom, not a result on the user's GTX 1080 Ti, display or physical wheel. Those require the actual-machine report and observations. Do not interpret mock-driver or virtual-wheel tests as hardware certification.

@@ -176,8 +176,8 @@ int main(int argc, char** argv) {
     game::Scheduler scheduler(machine);
     scheduler.quantum = quantum;
     // The controls change at each vblank (script.attach), as in qilin_refrun.
-    scheduler.on_frame = [&](std::uint64_t) {
-        profile::FrameMark frame_profile(profiler.get());
+    scheduler.on_frame = [&](std::uint64_t frame) {
+        profile::FrameMark frame_profile(profiler.get(), frame);
         capture.poll(machine);
         if (worker || audio) machine.advance_speech(machine.sound_time);
         if (worker && !worker->submit(machine.sound_time)) throw game::Stop{game::Stop::frames, "audio worker failed"};

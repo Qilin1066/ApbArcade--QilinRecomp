@@ -2,8 +2,8 @@ APB QilinRecomp for Windows (64-bit)
 ==================================
 
 APB (Atari Games, 1987), recompiled to run natively: the arcade board's two
-processors' programs translated into C++ and compiled for your PC, played
-exactly as on MAME's own processor cores, frame for frame.
+processors' programs translated into C++ and compiled for your PC, checked against MAME's processor cores on the shared board model. Independent
+full-game MAME timing differences remain under investigation.
 
 No game data is included. You need your own copy of the APB rev 7 ROM set
 (MAME's "apb": 36 files).
@@ -29,8 +29,9 @@ Needs: Windows 10 or 11, 64-bit, and a graphics driver with Vulkan 1.3
 Controls
 --------
 Keyboard: arrows steer and accelerate; Left Ctrl, Left Alt, Space are the
-cabinet's buttons 1-3; 5 inserts a coin. Gamepad: left stick steers, right
-trigger accelerates, A/B/X are the buttons, View inserts a coin.
+siren/start, fire and alternate siren; 5 inserts a coin. Gamepad: left stick
+steers, right trigger accelerates, A starts/sirens, B fires, X is alternate
+siren, View inserts a coin.
 
 F1 or Esc (gamepad: Menu): the settings menu: wheels, pedals, buttons, the
 picture (presets, size, a CRT look, smoothed pixel art), full screen.
@@ -51,3 +52,19 @@ work\               made when building: the recompiled code (from your ROMs)
 LICENSES\           the licences of everything included
 
 Source, changes and issues: https://github.com/Qilin1066/ApbArcade-QilinRecomp
+
+
+Checking a wheel and performance
+-------------------------------
+Double-click "Check controls and performance.bat". It builds the game if needed,
+then starts a normal session with input recording, performance timings and an
+automatic controller report. Follow the checklist printed in the window: use
+one wheel setup, check pedals/buttons, full turns or steering endpoints,
+pause/Alt-Tab/reconnection, then play for two minutes and quit normally.
+
+A new folder under "Hardware checks" opens with performance.txt, controllers.txt,
+inputs.qir, logs and checklist.txt. Fill in the observations and driver/firmware
+versions. No files are uploaded automatically. The controller report includes
+serials/device paths; the recording includes starting EEPROM (high scores and
+game settings), but no ROMs. Physical wheel behaviour and display latency need
+this actual-machine check; software tests alone cannot certify them.

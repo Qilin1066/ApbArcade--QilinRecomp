@@ -229,6 +229,7 @@ private:
     void main_write(std::uint16_t address, std::uint16_t data, std::uint16_t mask);
     void sound_reset_w(std::uint8_t data);
     void apply_pending_enable();
+    void advance_adc(std::int64_t now);
 
     std::span<const std::uint8_t> main_rom_;    // MAME's "maincpu" region, 0x90000 bytes
     std::span<const std::uint8_t> sound_rom_;   // MAME's "audiocpu" region, 0x10000 bytes
@@ -245,6 +246,9 @@ private:
     int playfield_scroll_y_ = 0;
     int pending_scroll_y_ = -1;   // loaded at line 0
     std::uint8_t adc_channel_ = 0;
+    std::uint8_t adc_result_ = 0xff;
+    unsigned adc_phase_ = 0;   // idle, start, ready, running (ADC0809 at 625 kHz)
+    std::int64_t next_adc_event_ = std::numeric_limits<std::int64_t>::max();
 
     // Between the CPUs.
     Latch soundlatch_;   // main -> sound: its pending flag is the 6502's NMI

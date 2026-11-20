@@ -38,6 +38,7 @@
 // The game stops with a message when it can't go on: the watchdog, or
 // control reaching code the lifter never saw (which would be a bug).
 
+#include "command_line.hpp"
 #include "game.hpp"
 #include "gfx.hpp"
 #include "input.hpp"
@@ -63,6 +64,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <optional>
+#include <sstream>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -79,7 +81,7 @@ struct Options {
     int gpu = -1;
     bool vsync = true;
     bool mute = false;
-    std::string record, replay, profile;
+    std::string record, replay, profile, controller_report;
     std::uint64_t frames = 0;   // 0: until closed
 };
 
@@ -95,16 +97,17 @@ bool parse(int argc, char** argv, Options& o) {
         };
         if (flag == "--no-vsync") o.vsync = false;
         else if (flag == "--mute") o.mute = true;
-        else if (flag == "--record" || flag == "--replay" || flag == "--profile") {
+        else if (flag == "--record" || flag == "--replay" || flag == "--profile" || flag == "--controller-report") {
             if (i + 1 >= argc) return false;
-            (flag == "--record" ? o.record : flag == "--replay" ? o.replay : o.profile) = argv[++i];
+            (flag == "--record" ? o.record : flag == "--replay" ? o.replay : flag == "--profile" ? o.profile : o.controller_report) = argv[++i];
         }
         else if (flag == "--scale") { if (!number(o.scale)) return false; }
         else if (flag == "--gpu") { if (!number(o.gpu)) return false; }
         else if (flag == "--frames") { if (!number(o.frames)) return false; }
         else return false;
     }
-    return (o.record.empty() || o.replay.empty()) && (o.profile.empty() || (o.profile != o.record && o.profile != o.replay));
+    return (o.record.empty() || o.replay.empty()) && (o.profile.empty() || (o.profile != o.record && o.profile != o.replay)) &&
+           (o.controller_report.empty() || (o.controller_report != o.profile && o.controller_report != o.record && o.controller_report != o.replay));
 }
 
 [[noreturn]] void fail(const std::string& message) {
@@ -179,10 +182,13 @@ std::string pref_path(const char* file) {
 } // namespace
 
 int main(int argc, char** argv) {
+    const CommandLine command_line(argc, argv);
+    argc = command_line.count(); argv = command_line.values();
     Options options;
     if (!parse(argc, argv, options)) {
         std::fprintf(stderr, "usage: apb [rom-dir] [--scale N] [--no-vsync] [--gpu N] [--frames N] [--mute]\n"
                              "           [--record FILE.qir | --replay FILE.qir] [--profile FILE]\n"
+                             "           [--controller-report FILE]\n"
                              "  (no rom-dir: the folder used last time, else apb asks for it)\n");
         return 2;
     }
@@ -204,7 +210,8 @@ int main(int argc, char** argv) {
     // The ROMs: the folder given, else the one used last time, else ask (and
     // ask again while the folder chosen doesn't hold a verified set).
     std::string rom_dir = options.rom_dir ? options.rom_dir : saved.rom_dir;
-    auto set = rom::RomSet::load(rom_dir.empty() ? std::filesystem::path(".") : std::filesystem::path(rom_dir));
+    auto rom_path = [](const std::string& text) { return std::filesystem::path(std::u8string(text.begin(), text.end())); };
+    auto set = rom::RomSet::load(rom_path(rom_dir.empty() ? "." : rom_dir));
     if (!set && options.rom_dir) fail(set.error());   // given on the command line: say what's wrong with it
     std::string why;
     if (!set) why = rom_dir.empty() ? "Where are your APB ROMs?" : "The ROMs in " + rom_dir + " aren't a complete rev 7 set: " + short_error(set.error());
@@ -215,7 +222,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         rom_dir = *folder;
-        set = rom::RomSet::load(rom_dir);
+        set = rom::RomSet::load(rom_path(rom_dir));
         if (!set) why = "The ROMs in " + rom_dir + " aren't a complete rev 7 set: " + short_error(set.error());
     }
     if (rom_dir != saved.rom_dir) {
@@ -414,7 +421,7 @@ int main(int argc, char** argv) {
         if (!options.replay.empty()) replay.apply(frame, machine.inputs);
     };
     scheduler.on_frame = [&](std::uint64_t frame) {
-        profile::FrameMark frame_profile(profiler.get());
+        profile::FrameMark frame_profile(profiler.get(), frame);
         events();
         if (options.replay.empty()) input.apply(machine.inputs);
         if (options.replay.empty() && !eeprom.poll(machine.eeprom(), SDL_GetTicks())) report_save_failure();
@@ -516,12 +523,35 @@ int main(int argc, char** argv) {
     }
     machine.sound_sink = nullptr;
     audio.reset();   // join before destroying the playback stream
-    sound.reset();
+    std::ostringstream context;
+    const auto active_display = SDL_GetDisplayForWindow(window);
+    const char* monitor = SDL_GetDisplayName(active_display);
+    const auto mode = SDL_GetCurrentDisplayMode(active_display);
+    int final_width = 0, final_height = 0;
+    SDL_GetWindowSizeInPixels(window, &final_width, &final_height);
+    const auto& actual = renderer->config();
+    context << "GPU: " << renderer->device_name() << "\nPlatform: " << SDL_GetPlatform()
+            << "\nLogical CPUs / RAM MiB: " << SDL_GetNumLogicalCPUCores() << " / " << SDL_GetSystemRAM()
+            << "\nDisplay: " << (monitor ? monitor : "unknown") << "\nRefresh Hz: " << (mode ? mode->refresh_rate : 0)
+            << "\nWindow pixels: " << final_width << 'x' << final_height
+            << "\nVsync / display lock / repeats: " << actual.vsync << " / " << actual.lock_to_display << " / " << lock_repeats
+            << "\nEffect / scaling: " << static_cast<int>(actual.effect) << " / " << static_cast<int>(actual.scaling)
+            << "\nGame frames / presents: " << machine.frames() << " / " << renderer->frames_presented()
+            << "\nVulkan validation errors: " << renderer->validation_errors()
+            << "\nRecording enabled: " << !options.record.empty() << "\n";
+    if (sound) context << sound->diagnostics();
+    else context << "Audio: disabled\n";
     if (profiler) {
         std::string profile_error;
-        if (!profiler->save(options.profile, renderer->device_name(), &profile_error))
+        if (!profiler->save(options.profile, context.str(), &profile_error))
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB: profile save failed", profile_error.c_str(), window);
     }
+    if (!options.controller_report.empty()) {
+        std::string report_error;
+        if (!persist::replace(options.controller_report, input.diagnostics() + "\n" + context.str(), &report_error))
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB: controller report save failed", report_error.c_str(), window);
+    }
+    sound.reset();
     machine.on_vblank = nullptr;
     menu_owner.reset();
     if (!input.settings.save(settings_path)) std::fprintf(stderr, "apb: couldn't write the settings to %s\n", settings_path.c_str());

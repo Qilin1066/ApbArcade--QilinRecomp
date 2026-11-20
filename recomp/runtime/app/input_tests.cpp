@@ -499,6 +499,9 @@ int main(int argc, char** argv) {
         output.request_reopen();   // the same path as a device reconnect event
         for (int i = 0; i < 3; ++i) CHECK(output.push(pcm));
         CHECK(output.ok() && output.state() == app::AudioOutput::State::playing);
+        const auto audio_report = output.diagnostics();
+        CHECK(audio_report.find("Audio open attempts: 3\n") != std::string::npos);
+        CHECK(audio_report.find("Audio submitted stereo frames: 21436\n") != std::string::npos);
         CHECK(output.pause());
     }
     SDL_QuitSubSystem(SDL_INIT_AUDIO);

@@ -126,8 +126,15 @@ def main():
     p.add_argument('--frames', default='600,1500,2100,3000,4500', help='MAME frame numbers')
     p.add_argument('--boot-offset', type=int, default=4, help='Native boot finishes this many frames earlier')
     p.add_argument('--audio-window', default='14.5:20', help='Native WAV seconds spanning two coin sounds')
+    p.add_argument('--interleave-probe', type=int, default=0,
+                   help='Diagnostic only: insert MAME timer boundaries every N main cycles (0 keeps original scheduling)')
+    p.add_argument('--native-quantum', type=int, default=64, help='Diagnostic native scheduler quantum (default 64)')
     args = p.parse_args()
     mame, native, roms, out = [x.resolve() for x in (args.mame, args.native, args.rom_dir, args.out)]
+    if not 0 <= args.interleave_probe <= 166400:
+        raise ValueError('Interleave probe must be 0..166400 main cycles')
+    if not 1 <= args.native_quantum <= 166400:
+        raise ValueError('Native quantum must be 1..166400 main cycles')
     video_trace = (args.video_trace or native.with_name('qilin_video_trace' + native.suffix)).resolve()
     if not video_trace.is_file():
         raise ValueError('Build qilin_video_trace, or specify --video-trace')
@@ -216,6 +223,15 @@ emu.register_frame_done(function()
  controls(n+1)
  if n>={max(frames)+5} then video_capture.finish(); trace:write(string.format('# end %d\\n',at())); trace:close(); inputs:close(); schedule:close(); m:exit() end
 end,'frame')
+-- Explicit diagnostic mode: this changes scheduler boundaries, not device RAM.
+-- Finish before exit so MAME has no outstanding coroutine at shutdown.
+if {args.interleave_probe}>0 then
+ apb_quantum_probe=coroutine.create(function()
+  local delay=emu.attotime.from_ticks({args.interleave_probe},10000000)
+  while s:frame_number()<{max(frames)+4} do emu.wait(delay) end
+ end)
+ assert(coroutine.resume(apb_quantum_probe))
+end
 video_capture.run()
 '''
     script = out / 'capture.lua'
@@ -230,12 +246,15 @@ video_capture.run()
     run(command, out / 'mame.log', env)
     command = [native, roms, '--frames', str(max(frames)+2), '--pedal', '63',
                '--coin', '900', '--coin', '930', '--press', '8:3100', '--press', '8:4000',
-               '--wav', out / 'native.wav', '--audio-threaded', '1',
+               '--wav', out / 'native.wav', '--audio-threaded', '1', '--quantum', str(args.native_quantum),
                '--io-trace', out / 'native-io.trace', '--input-trace', out / 'native-input.trace']
     for frame in frames:
         command += ['--frame-out', f'{frame-offset}:{out}/native-{frame}.png']
     run(command, out / 'native.log')
     result = {'mame_version': version, 'boot_offset': offset, 'scenario': 'two coins, start and acknowledge briefing; released pedal, stationary wheel', 'images': []}
+    result['interleave_probe_main_cycles'] = args.interleave_probe
+    result['original_mame_scheduling'] = args.interleave_probe == 0
+    result['native_quantum_main_cycles'] = args.native_quantum
     for frame in frames:
         # pixels() is host-endian 0x00RRGGBB before cabinet orientation.
         raw = np.fromfile(out / f'mame-{frame}.rgb32', dtype=np.uint32)

@@ -100,3 +100,30 @@ The video replay covers 35 scanline bands across those five pictures. This valid
 In the measured startup, the first sound-side read of zero occurs at main cycle **87,476,505**, while the main CPU's saved local clock is already **87,489,948**: **13,443 cycles (1.3443 ms) ahead**. Its next command write, `0x09`, occurs at **87,491,151**. The native board's first zero read and next command are approximately **87,476,459** and **87,477,753**, separated by about **129.4 µs**, compared with MAME's **1.4646 ms**. This directly supports CPU interleave as a cause of the early startup response delay. It does not establish the cause of every later difference or claim that either software scheduler exactly reproduces physical hardware.
 
 The relevant independent implementation is MAME 0.264's [CPU scheduler](https://github.com/mamedev/mame/blob/mame0264/src/emu/schedule.cpp) and [System 2 board/latch synchronisation](https://github.com/mamedev/mame/blob/mame0264/src/mame/atari/atarisy2.cpp), including its temporary 200 µs perfect-quantum request for a pending sound command. The probe uses existing saved CPU clocks and memory taps; it introduces no additional timers or memory writes. Keep full-game timing investigation separate from the already passing same-state renderer/chip checks and shared-board CPU parity.
+
+
+## Version 0.20.0: ADC fidelity and controlled interleave experiments
+
+The native ADC used to return the live selected input immediately. Original MAME's [ADC0808/0809 implementation](https://github.com/mamedev/mame/blob/mame0264/src/devices/machine/adc0808.cpp), clocked at 625 kHz by the board, instead starts with SAR `0xFF`, enters conversion-start/ready phases and samples after two ADC clocks (32 main cycles). It samples again after a further 64 clocks (1,056 cycles from the strobe), then holds that result. Channels 4–7 have unconnected callbacks and return `0xFF`, not inputs 0–3. A new strobe restarts conversion. The native model now follows those phases, including event deadlines, rather than returning a live pedal or aliasing unused channels.
+
+`tools/check/mame_adc.lua` is an isolated probe for original MAME 0.264. Run it with autoboot delay zero, fresh configuration/NVRAM and the same ROM setup as above; require `ADC probe passed` in the log and no Lua errors. It deliberately writes an ADC selection and synthetic pedal values at startup and exits, so it must not be loaded into the normal full-game capture. Original MAME returned `0xFFFF` initially and at cycle 31, `0xFF11` at cycle 33, still `0xFF11` at 1,055, `0xFF17` at 1,057 after the pedal changed, and `0xFFFF` for disconnected channel 5. Native unit tests cover the exact 32/1,056 boundaries, result holding, restart and byte lanes.
+
+Fresh default full-game capture with the ADC correction: differing RGB pixels **0, 0, 3,038, 52,846, 25**, coin correlation **0.769452** and overall exit **1**. One picture improved, while audio correlation fell slightly; this independent failure is retained. All five same-state graphics replays remain exact. Native chip-trace replay is byte-identical and original-MAME long-window chip replay correlations remain **0.999182 / 0.999196**. All 24,000 shared-board CPU frame hashes, the audio-worker comparison and the 6,000-frame input movie replay still match.
+
+For an explicitly different scheduling experiment:
+
+```sh
+python tools/check/mame_compare.py --mame /path/to/mame --native build/qilin_run \
+  --rom-dir /path/to/roms --out build/interleave-64 \
+  --interleave-probe 64 --boot-offset 0
+```
+
+`--interleave-probe N` adds Lua timer boundaries every N main cycles to original MAME. It changes scheduler interleave without changing game memory or replacing device/CPU models. `--native-quantum N` separately changes the native scheduler's slice limit. These are diagnostic controls, not gameplay settings. Their values and `original_mame_scheduling` are recorded in every report; zero probe/64 native is the unchanged default. An experimental pass would not be an unmodified-scheduler baseline pass. All original pixel/audio criteria remain unchanged.
+
+| Experiment | First sound read: main CPU ahead | First differing sound-command index | Coin correlation |
+| --- | --- | --- | --- |
+| Original MAME, native 64, four-frame offset | 13,443 cycles | 7 | 0.769452 |
+| MAME 64-cycle timer probe, native 64, zero offset | 45 cycles | 37 | 0.851184 |
+| MAME 16-cycle timer probe, native 16, zero offset | 18 cycles | 79 | 0.806632 |
+
+The 64-cycle experiment sampled frames 600, 1500, 2100, 3000 and 4500; the 16-cycle experiment used 600 and 1500 and a shorter audio capture. Neither experiment passes overall. Finer interleave removes most of the early scheduler delay and postpones differing command values, but correlation does not improve monotonically. These results support an interleave contribution while leaving later divergence unresolved; they do not justify increasing the normal player's quantum or claiming physical-board cycle accuracy.

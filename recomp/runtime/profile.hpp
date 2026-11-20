@@ -12,7 +12,7 @@ class Profiler {
 public:
     using Clock = std::chrono::steady_clock;
     void add(Stage stage, Clock::duration duration);
-    void begin_frame(Clock::time_point now);
+    void begin_frame(Clock::time_point now, std::uint64_t frame = 0);
     void end_frame(Clock::time_point now) { returned_ = now; }
     void reset_interval() { began_ = {}; returned_ = {}; }
     bool save(const std::string& path, const std::string& context, std::string* error = nullptr) const;
@@ -26,6 +26,9 @@ private:
     mutable std::mutex mutex_;
     std::array<Stats, static_cast<std::size_t>(Stage::count)> stats_;
     Clock::time_point began_{}, returned_{}; // main-thread frame boundaries only
+    struct Stall { std::uint64_t frame; std::int64_t interval_ns, simulation_ns; };
+    std::vector<Stall> stalls_; // the 32 longest intervals above 25 ms
+    std::uint64_t slow_intervals_ = 0, severe_intervals_ = 0;
 };
 class Scope {
 public:
@@ -40,7 +43,7 @@ private:
 };
 class FrameMark {
 public:
-    explicit FrameMark(Profiler* profiler) : profiler_(profiler) { if (profiler_) profiler_->begin_frame(Profiler::Clock::now()); }
+    explicit FrameMark(Profiler* profiler, std::uint64_t frame = 0) : profiler_(profiler) { if (profiler_) profiler_->begin_frame(Profiler::Clock::now(), frame); }
     ~FrameMark() { if (profiler_) profiler_->end_frame(Profiler::Clock::now()); }
     FrameMark(const FrameMark&) = delete;
     FrameMark& operator=(const FrameMark&) = delete;

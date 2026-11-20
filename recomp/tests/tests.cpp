@@ -517,6 +517,39 @@ void test_cfg_routine_inside_gap() {
 // drive, the delayed interrupt enable, the 32V and VBLANK interrupts, the
 // sound IRQ (not while the 6502 is held in reset), the watchdog, sound-side
 // mirrors and main-side byte lanes.
+void test_adc_timing() {
+    const std::vector<std::uint8_t> main_rom(0x90000), sound_rom(0x10000);
+    sys2::Machine machine(main_rom, sound_rom);
+    auto read = [&](std::int64_t cycle) {
+        machine.main_time = cycle;
+        machine.run_events(cycle);
+        return machine.main_read16(0x1400);
+    };
+    machine.inputs.adc[1] = 17;
+    CHECK(read(0) == 0xffff);  // no conversion, even with a connected pedal
+    machine.main_write8(0x1482, 0);
+    CHECK(machine.next_event() == 16);
+    CHECK(read(15) == 0xffff);
+    CHECK(read(16) == 0xffff);
+    CHECK(read(31) == 0xffff);
+    CHECK(read(32) == 0xff11); // two ADC clocks before sampling
+    machine.inputs.adc[1] = 23;
+    CHECK(read(1055) == 0xff11);
+    CHECK(read(1056) == 0xff17); // sample again after 64 more ADC clocks
+    machine.inputs.adc[1] = 41;
+    CHECK(read(2000) == 0xff17); // hold result while idle
+    machine.main_write8(0x148a, 0); // disconnected channel 5 must not alias 1
+    CHECK(read(2031) == 0xff17);
+    CHECK(read(2032) == 0xffff);
+    machine.main_write8(0x1482, 0); // restart an in-progress conversion
+    CHECK(read(2063) == 0xffff);
+    CHECK(read(2064) == 0xff29);
+    machine.main_write8(0x1481, 0); // unconnected high data lane cannot strobe
+    machine.inputs.adc[1] = 52;
+    CHECK(read(2096) == 0xff29);
+    CHECK(read(3088) == 0xff34);
+}
+
 void test_machine() {
     static_assert(sys2::sound_cycles_at(80000000LL * 500000) == 14318181LL * 500000);
     static_assert(sys2::sound_cycles_at(-80000000LL * 500000) == -14318181LL * 500000);
@@ -993,6 +1026,21 @@ void test_movies_and_profiles() {
     CHECK(profiler.save(report, "test renderer"));
     std::ifstream in(report); std::string text((std::istreambuf_iterator<char>(in)), {}); in.close();
     CHECK(text.find("video_cpu\t3\t6.0000\t2.0000\t2.0000\t3.0000\t3.0000\t3") != std::string::npos);
+    const auto base = qilin::profile::Profiler::Clock::time_point{} + seconds(1);
+    profiler.begin_frame(base, 40);
+    profiler.end_frame(base + milliseconds(1));
+    profiler.begin_frame(base + milliseconds(20), 41);
+    profiler.end_frame(base + milliseconds(25));
+    profiler.begin_frame(base + milliseconds(50), 42);
+    profiler.end_frame(base + milliseconds(55));
+    profiler.begin_frame(base + milliseconds(130), 43);
+    profiler.reset_interval(); // a long menu pause must not become a stall
+    profiler.begin_frame(base + seconds(10), 44);
+    CHECK(profiler.save(report, "stalls"));
+    std::ifstream stall_report(report); text.assign(std::istreambuf_iterator<char>(stall_report), {}); stall_report.close();
+    CHECK(text.find("Frame intervals above 25 / 50 ms: 2 / 1") != std::string::npos);
+    CHECK(text.find("43\t80.0000\t75.0000") != std::string::npos);
+    CHECK(text.find("42\t30.0000\t25.0000") != std::string::npos);
     fs::remove_all(dir);
 }
 
@@ -1193,6 +1241,7 @@ int main() {
     test_cfg_table_over_guess();
     test_cfg_routine_inside_gap();
     test_machine();
+    test_adc_timing();
     test_video();
     test_audio();
     test_speech();

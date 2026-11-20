@@ -25,3 +25,6 @@
 
 # Local input recordings include player EEPROM and controller inputs.
 *.qir
+
+# Local wheel/display reports and recorded hardware sessions
+Hardware checks/

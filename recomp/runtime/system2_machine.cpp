@@ -101,7 +101,8 @@ std::uint16_t Machine::main_read_io(std::uint16_t address) {
         return palette_.read_word(address);
     case Area::adc:
         // The ADC0809's result, on the low lane; nothing drives the high one.
-        return input(static_cast<std::uint16_t>(0xff00 | inputs.adc[adc_channel_ & 3]));
+        advance_adc(main_time);
+        return input(static_cast<std::uint16_t>(0xff00 | adc_result_));
     case Area::in0_watchdog:
         return input(static_cast<std::uint16_t>((inputs.in0 & ~0x0030) | (mainlatch_.pending ? 0x0010 : 0) |
                                           (soundlatch_.pending ? 0x0020 : 0)));
@@ -152,7 +153,12 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         bank_[(address >> 1) & 1] = select_rom_bank(data);
         break;
     case Area::adc_start:
-        if (low) adc_channel_ = static_cast<std::uint8_t>((address >> 1) & 7);
+        if (low) {
+            advance_adc(main_time);
+            adc_channel_ = static_cast<std::uint8_t>((address >> 1) & 7);
+            adc_phase_ = 1;
+            next_adc_event_ = main_time + 16;  // 10 MHz / 625 kHz
+        }
         break;
     case Area::int0_ack:
         if (low) p2portrd_ = false;
@@ -341,7 +347,27 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
 // ---- Events ---------------------------------------------------------------
 
 std::int64_t Machine::next_event() const noexcept {
-    return std::min({next_scanline_event_, next_sound_irq_, watchdog_deadline_});
+    return std::min({next_scanline_event_, next_sound_irq_, watchdog_deadline_, next_adc_event_});
+}
+
+void Machine::advance_adc(std::int64_t now) {
+    while (adc_phase_ && next_adc_event_ <= now) {
+        if (adc_phase_ == 1) {
+            adc_phase_ = 2;
+            next_adc_event_ += 16;
+        } else {
+            // MAME samples the SAR both at the start and end of conversion.
+            // Unconnected channels 4..7 read high, rather than aliasing 0..3.
+            adc_result_ = adc_channel_ < inputs.adc.size() ? inputs.adc[adc_channel_] : 0xff;
+            if (adc_phase_ == 2) {
+                adc_phase_ = 3;
+                next_adc_event_ += 64 * 16;
+            } else {
+                adc_phase_ = 0;
+                next_adc_event_ = std::numeric_limits<std::int64_t>::max();
+            }
+        }
+    }
 }
 
 void Machine::apply_pending_enable() {
@@ -357,7 +383,9 @@ void Machine::run_events(std::int64_t now) {
     for (;;) {
         const auto t = next_event();
         if (t > now) break;
-        if (t == next_scanline_event_) {
+        if (t == next_adc_event_) {
+            advance_adc(t);
+        } else if (t == next_scanline_event_) {
             const auto line = static_cast<unsigned>(((t + cycles_per_frame - raster_origin) % cycles_per_frame) / cycles_per_scanline);
             scanline_int_ = (interrupt_enable_ & 4) != 0;   // the 32V interrupt, every 64 lines
             speech_.advance(t);   // keeps the speech samples coming between accesses

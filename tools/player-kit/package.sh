@@ -30,6 +30,7 @@ cmake --install "$build" --component player --prefix "$pkg"
 cp "$NINJA_WINDOWS/ninja.exe" "$pkg/kit/"
 cp "$root/tools/player-kit/play.ps1" "$pkg/kit/"
 cp "$root/tools/player-kit/Play APB.bat" "$pkg/"
+cp "$root/tools/player-kit/Check controls and performance.bat" "$pkg/"
 sed 's/$/\r/' "$root/tools/player-kit/README.txt" > "$pkg/README.txt"
 printf '%s\n' "$version" > "$pkg/kit/VERSION"
 

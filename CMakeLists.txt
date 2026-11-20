@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(ApbArcadeQilinRecomp VERSION 0.19.0 LANGUAGES C CXX)
+project(ApbArcadeQilinRecomp VERSION 0.20.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -126,6 +126,21 @@ target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qil
 target_include_directories(qilin_tests PRIVATE recomp/runtime/app tools/common)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
+if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
+    find_program(QILIN_POWERSHELL NAMES pwsh powershell)
+    if(QILIN_POWERSHELL)
+        add_executable(qilin_launcher_stub tools/check/launcher_stub.cpp)
+        target_include_directories(qilin_launcher_stub PRIVATE recomp/runtime)
+        target_link_libraries(qilin_launcher_stub PRIVATE qilin_warnings shell32)
+        add_test(NAME qilin_launcher_check COMMAND "${QILIN_POWERSHELL}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/launcher_check.ps1"
+            -Stub "$<TARGET_FILE:qilin_launcher_stub>"
+            -Launcher "${CMAKE_CURRENT_SOURCE_DIR}/tools/player-kit/play.ps1"
+            -Out "${CMAKE_CURRENT_BINARY_DIR}/launcher-check/$<CONFIG>")
+        set_tests_properties(qilin_launcher_check PROPERTIES TIMEOUT 60)
+    endif()
+endif()
+
 
 # ---- Reference: MAME's T-11 core and disassembler (BSD-3-Clause), for checks only ----
 add_library(qilin_mame_t11 STATIC third_party/mame-t11/t11_reference.cpp third_party/mame-t11/t11dasm.cpp)
@@ -316,6 +331,7 @@ if(SDL3_FOUND)
     target_link_libraries(qilin_input_tests PRIVATE qilin_app qilin_warnings)
     qilin_tool(qilin_input_tests)
     if(WIN32)
+        target_link_libraries(qilin_app PUBLIC shell32)
         # Exercise the optional SDK's real DLL loader without MOZA hardware
         # or proprietary binaries. Both MSVC and the player kit use this ABI.
         add_library(qilin_mock_moza SHARED recomp/runtime/app/mock_moza.cpp recomp/runtime/app/mock_moza.def)

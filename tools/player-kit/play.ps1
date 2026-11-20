@@ -6,13 +6,14 @@
 # them, and they're linked with the prebuilt rest into APB.exe. Then, and
 # every time after, it starts APB.exe.
 #
-#   play.ps1 [-Rebuild] [-BuildOnly]
+#   play.ps1 [-Rebuild] [-BuildOnly] [-HardwareCheck]
 #
 # -Rebuild builds again even if APB.exe is up to date; -BuildOnly doesn't
 # start the game afterwards.
 param(
     [switch]$Rebuild,
-    [switch]$BuildOnly
+    [switch]$BuildOnly,
+    [switch]$HardwareCheck
 )
 $ErrorActionPreference = "Stop"
 trap {
@@ -46,10 +47,67 @@ function Read-Kit([string]$exe, [string[]]$arguments) {
     return @{ text = $text; code = $code }
 }
 
+# The same launch path after a build and on subsequent starts.
+function Start-APB([string]$roms = "") {
+    $gameArguments = @()
+    if ($roms) { $gameArguments += "`"$roms`"" }
+    if (-not $HardwareCheck) {
+        if ($gameArguments.Count) { Start-Process -FilePath $game -ArgumentList $gameArguments -WorkingDirectory $top }
+        else { Start-Process -FilePath $game -WorkingDirectory $top }
+        return
+    }
+    $session = (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $reports = Join-Path (Join-Path $top "Hardware checks") $session
+    New-Item -ItemType Directory -Path $reports | Out-Null
+    $instructions = @"
+APB hardware check - kit $kitVersion
+
+1. Test one wheel setup per run. Open F1 / Controls and select your saved setup.
+2. R5: turn several full turns each way. Check the physical-angle reading keeps
+   tracking beyond the ordinary joystick endpoints. Note Pit House and firmware.
+   G920: match the maximum angle to G HUB (usually 900 degrees), turn both ways,
+   and check held-at-lock steering if enabled. Note G HUB and firmware.
+3. Fully press/release the pedal. Test siren/start, fire and coin bindings.
+4. Open F1, turn the wheel, then resume. Confirm no unwanted steering jump.
+   Repeat with Alt-Tab. Check reconnect behaviour while the wheel is stationary.
+5. Play for at least two minutes using your normal display settings. Note any
+   stutters, sound gaps or unexpected force feel, and approximately when they occur.
+6. Quit APB normally. Reports and the input recording are saved in this folder.
+
+Fill these in, then return the folder's files for analysis:
+Wheel model:
+Driver / Pit House / G HUB version:
+Firmware:
+Display refresh / connection:
+Continuous R5 angle or G920 endpoints correct:
+Pedal / buttons correct:
+Pause / Alt-Tab / reconnect correct:
+Force feel:
+Stutters or sound gaps and approximate time:
+
+controllers.txt includes device serials and paths. Review before sharing publicly.
+inputs.qir includes starting high scores/settings and board inputs, but no ROMs.
+Recording I/O is timed separately in performance.txt. This is an actual hardware
+run, not an automated certification of wheel support or input-to-photon latency.
+"@
+    Set-Content -LiteralPath (Join-Path $reports "checklist.txt") -Value $instructions -Encoding UTF8
+    foreach ($option in @(@("--record", "inputs.qir"), @("--profile", "performance.txt"), @("--controller-report", "controllers.txt"))) {
+        $gameArguments += $option[0]
+        $gameArguments += "`"$(Join-Path $reports $option[1])`""
+    }
+    Write-Host "Hardware check: $reports" -ForegroundColor Cyan
+    Write-Host $instructions
+    $process = Start-Process -FilePath $game -ArgumentList $gameArguments -WorkingDirectory $top -Wait -PassThru `
+        -RedirectStandardOutput (Join-Path $reports "stdout.txt") -RedirectStandardError (Join-Path $reports "stderr.txt")
+    Write-Host "Reports saved: $reports" -ForegroundColor Green
+    if ($onWindows -and -not $env:CI) { Start-Process -FilePath "explorer.exe" -ArgumentList "`"$reports`"" }
+    if ($process.ExitCode -ne 0) { throw "APB exited with code $($process.ExitCode); see stderr.txt in $reports" }
+}
+
 # Up to date: just play.
 $built = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
 if (-not $Rebuild -and (Test-Path $game) -and $built -eq $kitVersion) {
-    if (-not $BuildOnly) { Start-Process -FilePath $game -WorkingDirectory $top }
+    if (-not $BuildOnly) { Start-APB }
     exit 0
 }
 
@@ -133,6 +191,6 @@ Write-Host ""
 Write-Host "Built: $game" -ForegroundColor Green
 if (-not $BuildOnly) {
     Write-Host "Starting APB..."
-    Start-Process -FilePath $game -ArgumentList "`"$romDir`"" -WorkingDirectory $top
+    Start-APB $romDir
 }
 exit 0

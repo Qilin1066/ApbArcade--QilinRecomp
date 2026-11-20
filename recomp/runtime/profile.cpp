@@ -21,8 +21,21 @@ void Profiler::add(Stage stage, Clock::duration duration) {
         if (index < capacity) stat.samples[static_cast<std::size_t>(index)] = ns;
     }
 }
-void Profiler::begin_frame(Clock::time_point now) {
-    if (began_ != Clock::time_point{}) add(Stage::interval, now - began_);
+void Profiler::begin_frame(Clock::time_point now, std::uint64_t frame) {
+    if (began_ != Clock::time_point{}) {
+        const auto interval = now - began_;
+        add(Stage::interval, interval);
+        if (interval > std::chrono::milliseconds(25)) {
+            std::lock_guard lock(mutex_);
+            ++slow_intervals_;
+            if (interval > std::chrono::milliseconds(50)) ++severe_intervals_;
+            const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(interval).count();
+            const auto simulation = returned_ == Clock::time_point{} ? 0 : std::chrono::duration_cast<std::chrono::nanoseconds>(now - returned_).count();
+            stalls_.push_back({frame, ns, simulation});
+            std::sort(stalls_.begin(), stalls_.end(), [](const Stall& a, const Stall& b) { return a.interval_ns > b.interval_ns; });
+            if (stalls_.size() > 32) stalls_.resize(32);
+        }
+    }
     if (returned_ != Clock::time_point{}) add(Stage::simulation, now - returned_);
     began_ = now;
 }
@@ -45,6 +58,11 @@ bool Profiler::save(const std::string& path, const std::string& context, std::st
             << '\t' << sample[(sample.size() - 1) / 2] / 1e6 << '\t' << sample[(sample.size() * 95 + 99) / 100 - 1] / 1e6
             << '\t' << stat.maximum / 1e6 << '\t' << sample.size() << '\n';
     }
+    out << "\nFrame intervals above 25 / 50 ms: " << slow_intervals_ << " / " << severe_intervals_
+        << "\nLongest intervals above 25 ms (up to 32; frame is the callback ending the interval):\n"
+        << "frame\tinterval_ms\tsimulation_ms\n";
+    for (const auto& stall : stalls_)
+        out << stall.frame << '\t' << stall.interval_ns / 1e6 << '\t' << stall.simulation_ns / 1e6 << '\n';
     return persist::replace(path, out.str(), error);
 }
 } // namespace qilin::profile

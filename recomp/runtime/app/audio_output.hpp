@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <atomic>
 #include <span>
+#include <string>
 
 namespace qilin::app {
 // Owned by the audio worker during play. Call pause only after draining
@@ -20,12 +21,16 @@ public:
     void request_reopen() { reopen_.store(true); }
     bool push(std::span<const std::int16_t> samples);
     bool pause();
+    // Snapshot counters without touching the worker-owned SDL stream.
+    [[nodiscard]] std::string diagnostics() const;
 private:
     void open();
     void unavailable();
     bool queue(std::span<const std::int16_t> samples);
     std::atomic<State> state_{State::unavailable};
     std::atomic<bool> reopen_{false};
+    std::atomic<std::uint64_t> open_attempts_{0}, starvations_{0}, submitted_frames_{0}, queue_peak_{0};
+    std::atomic<int> last_queued_{0}, frequency_ppm_{1000000};
     Uint64 retry_at_ = 0;
     SDL_AudioStream* stream_ = nullptr;
     bool started_ = false;

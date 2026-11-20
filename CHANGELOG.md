@@ -11,6 +11,19 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-20
+
+### Fixed
+- **Windows player command-line paths used the active legacy code page.** Convert the original UTF-16 command line to the runtime's UTF-8 convention before parsing, so Unicode recording/report paths work. The real-process Windows launcher test uses the same conversion and a folder with spaces and a non-ASCII character.
+- **ADC0809 reads bypassed conversion and result holding.** Match the original MAME device's 625 kHz conversion phases: initial `0xFF`, first sample 32 main cycles after the start strobe, a second sample at 1,056 cycles, held data between conversions, restart on a new strobe and disconnected channels 4–7 reading high rather than aliasing pedals. An isolated original-MAME probe confirms the boundaries; unit tests cover those phases, restart and the high byte lane. All four 6,000-frame shared-board CPU parity scenarios still pass. This corrects a board-model gap, not the full independent timing divergence.
+- **The Windows download's README overstated independent equivalence and described obsolete button names.** Clarify shared-board CPU parity versus the still-failing standalone-MAME comparison, and document siren/start and fire correctly.
+
+### Added
+- **One-click Windows hardware check** (`Check controls and performance.bat`). Reuse the normal first-build/update path, then capture an input movie, timings, an automatic controller report and process logs in a unique session folder. Include an R5/G920, pedal, buttons, pause/focus/reconnection and gameplay checklist with places for actual driver/firmware versions and observations. This prepares real-machine verification; no physical wheel or display test is claimed. Windows CI tests real child-process argument quoting with spaces/Unicode and independent session folders, without ROMs or drivers.
+- **`apb --controller-report FILE`** saves wheel diagnostics automatically on exit. Reports and profiles now include the actual GPU, display refresh, window size, vsync/display-lock state, effect/scaling mode, frame/presentation counts, validation errors and audio queue/open/starvation counters. Snapshot audio counters are thread-safe; virtual-audio tests check reconnect and sample totals.
+- **Frame-stall records** in performance reports: count intervals above 25/50 ms and keep the 32 longest, including the game frame and intervening simulation time. Exclude paused intervals and retain exact aggregate counts even when percentile sampling is bounded. Synthetic timings test both recorded stalls and pause exclusion.
+- **Explicit scheduler isolation experiment** in the independent MAME harness: `--interleave-probe N` inserts timer boundaries every N main cycles in MAME, and `--native-quantum N` sets the diagnostic native quantum. Defaults retain original MAME scheduling and 64 native cycles; reports clearly label the experimental boundaries. At 64 cycles the first observed main-CPU lead falls from 13,443 to 45 cycles and the first differing command is postponed from index 7 to 37; at 16/16 it is postponed to 79. Residual full-game differences remain. Fresh default baseline pixel counts are 0, 0, 3,038, 52,846, 25 and coin correlation is 0.769452, below the unchanged threshold. All five same-state graphics replays still match exactly, and isolated chip replay remains above 0.999 on its long window.
+
 ## [0.19.0] - 2026-11-20
 
 ### Added
