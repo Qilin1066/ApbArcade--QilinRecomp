@@ -1,7 +1,7 @@
 EXPORTS
-    "?installMozaSDK@moza@@YAXXZ"=mock_install
-    "?removeMozaSDK@moza@@YAXXZ"=mock_remove
-    "?getHIDData@moza@@YAPEBUHIDData@@AEAW4ERRORCODE@@@Z"=mock_read
+    ?installMozaSDK@moza@@YAXXZ=mock_install
+    ?removeMozaSDK@moza@@YAXXZ=mock_remove
+    ?getHIDData@moza@@YAPEBUHIDData@@AEAW4ERRORCODE@@@Z=mock_read
     mock_set_angle
     mock_set_error
     mock_installs
