@@ -17,10 +17,11 @@ bool MozaAngle::open(const std::string& path) {
     remove_ = reinterpret_cast<Lifecycle>(SDL_LoadFunction(module_, "?removeMozaSDK@moza@@YAXXZ"));
     read_ = reinterpret_cast<Read>(SDL_LoadFunction(module_, "?getHIDData@moza@@YAPEBUHIDData@@AEAW4ERRORCODE@@@Z"));
     if (!install || !remove_ || !read_) {
+        const std::string loader_error = SDL_GetError();
         // No lifecycle function has been called, so do not call remove.
         remove_ = nullptr;
         close();
-        status_ = "Unsupported MOZA DLL: use MSVC2022-64 SDK 1.0.1.8";
+        status_ = "Unsupported MOZA DLL: use MSVC2022-64 SDK 1.0.1.8 (" + loader_error + ")";
         return false;
     }
     install();

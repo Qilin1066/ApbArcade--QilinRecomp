@@ -355,6 +355,8 @@ int main(int argc, char** argv) {
                 set_angle(72000);
                 input.configure();
                 frame(input, in);
+                if (installs() != 1 || input.last_counts != 0)
+                    std::fprintf(stderr, "MOZA mock connection: %s; installs=%d, counts=%d\n", input.moza_status().c_str(), installs(), input.last_counts);
                 CHECK(installs() == 1 && input.last_counts == 0);
                 set_angle(72360);
                 frame(input, in);

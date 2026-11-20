@@ -295,6 +295,10 @@ if(SDL3_FOUND)
         # Exercise the optional SDK's real DLL loader without MOZA hardware
         # or proprietary binaries. Both MSVC and the player kit use this ABI.
         add_library(qilin_mock_moza SHARED recomp/runtime/app/mock_moza.cpp recomp/runtime/app/mock_moza.def)
+        if(MSVC)
+            add_custom_command(TARGET qilin_mock_moza POST_BUILD
+                COMMAND "${CMAKE_LINKER}" /dump /exports "$<TARGET_FILE:qilin_mock_moza>" VERBATIM)
+        endif()
         add_dependencies(qilin_input_tests qilin_mock_moza)
         add_test(NAME qilin_input_tests COMMAND qilin_input_tests "$<TARGET_FILE:qilin_mock_moza>")
     else()
