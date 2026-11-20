@@ -556,7 +556,7 @@ void Menu::game_tab() {
     ImGui::Checkbox("Self-test switch (the cabinet's test mode; F2)", &input_.test_switch);
     ImGui::Separator();
     ImGui::Text("Settings file: %s", path_.c_str());
-    ImGui::TextDisabled("APB (Atari Games, 1987), recompiled by ApbArcade-QilinComp. Menu: Dear ImGui (MIT).");
+    ImGui::TextDisabled("APB (Atari Games, 1987), recompiled by ApbArcade-QilinRecomp. Menu: Dear ImGui (MIT).");
     ImGui::Separator();
     if (ImGui::Button("Quit the game")) quit_ = true;
 }

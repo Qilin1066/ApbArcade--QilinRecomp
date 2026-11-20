@@ -1,6 +1,6 @@
-# ApbArcade-QilinComp
+# ApbArcade-QilinRecomp
 
-A static recompilation of **APB — All Points Bulletin** (Atari Games, 1987, Atari System 2 arcade hardware) into portable C++23 with a Vulkan 1.3 renderer, aimed at 64-bit Windows, Linux and macOS, on x86-64 or ARM64. It follows the requirements and scope of [GBTGhoulies-Qilincomp](https://github.com/Qilin1066/GBTGhoulies-Qilincomp): efficiency first, with a Raspberry Pi 4–class board as the reference for typical low-end hardware, not a floor; anything with a Vulkan 1.3 driver is in scope, Macs included through MoltenVK.
+A static recompilation of **APB — All Points Bulletin** (Atari Games, 1987, Atari System 2 arcade hardware) into portable C++23 with a Vulkan 1.3 renderer, aimed at 64-bit Windows, Linux and macOS, on x86-64 or ARM64. It follows the requirements and scope of [GBTGhoulies-QilinRecomp](https://github.com/Qilin1066/GBTGhoulies-QilinRecomp): efficiency first, with a Raspberry Pi 4–class board as the reference for typical low-end hardware, not a floor; anything with a Vulkan 1.3 driver is in scope, Macs included through MoltenVK.
 
 > **No game data is included, and none ever will be.** You need your own copy of the rev 7 ROM set (MAME's `apb`). The tools read it from a directory you give them. `.gitignore` keeps ROMs, and anything generated from them, out of the repo.
 
@@ -14,7 +14,7 @@ Roadmap step 2, **CPU coverage**, is in progress.
 | Reference CPU: MAME's T-11 core, vendored unmodified behind a traced bus | ✅ |
 | T-11 decoder (full instruction set, cycle counts, MAME-format disassembly) | ✅ agrees with MAME on all 65,536 opcode words: text, length, cycles and traps |
 | Board models: memory map, ROM banks, Slapstic 110, palette, interrupt latches, watchdog, sound latches | ✅ each checked against MAME's definitions |
-| Renderer: Vulkan 1.3 (shared with GBTGhoulies-Qilincomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
+| Renderer: Vulkan 1.3 (shared with GBTGhoulies-QilinRecomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
 | Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 27,947 instructions in 805 functions, found with no seeds, across the fixed ROM and all 12 code banks: 78% of the fixed ROM and 66% of the code banks are code |
 | Lifter (`qilin lift`): one C++ function per guest function, registers and flags in locals, MAME's bus order and cycle counts, native calls with checked returns | ✅ all 805 functions (30,209 instructions, shared code counted per function) |
 | Differential test against MAME's T-11 core: registers, flags, cycles and every bus access in order | ✅ game functions: 6,440 trials, 5,018 matching runs, 0 mismatches; every instruction form (in CI): 148,992 trials, 146,125 matching runs, 0 mismatches |
@@ -90,7 +90,7 @@ build/qilin_sound_difftest "D:/APB Arcade Project" [--trials N] [--seed S] [--on
 
 ### Playing it
 
-**On Windows, the download (nothing to install).** Each release has `APB-QilinComp-<version>-windows-x64.zip` (about 80 MB; GitHub builds it, `.github/workflows/player-kit.yml`). Unpack it and double-click **`Play APB.bat`**: the first time it asks for your ROM folder and builds the game from it, a couple of minutes, with the compiler inside the download (LLVM-MinGW: Clang, free and open source); after that it starts the game at once. The download has everything but the game's own code, prebuilt: the recompiler, the runtime, SDL3, the menu. The code made from the ROMs is made on the player's PC, from their own copy, and never distributed. See `tools/player-kit/` (`package.sh` builds the download on Linux; `play.ps1` is what Play runs).
+**On Windows, the download (nothing to install).** Each release has `APB-QilinRecomp-<version>-windows-x64.zip` (about 80 MB; GitHub builds it, `.github/workflows/player-kit.yml`). Unpack it and double-click **`Play APB.bat`**: the first time it asks for your ROM folder and builds the game from it, a couple of minutes, with the compiler inside the download (LLVM-MinGW: Clang, free and open source); after that it starts the game at once. The download has everything but the game's own code, prebuilt: the recompiler, the runtime, SDL3, the menu. The code made from the ROMs is made on the player's PC, from their own copy, and never distributed. See `tools/player-kit/` (`package.sh` builds the download on Linux; `play.ps1` is what Play runs).
 
 **On Windows, from the source, double-click.** With Visual Studio 2022 (17.10 or newer, the free Community edition, with "Desktop development with C++") and Git installed, in the project's folder:
 
@@ -148,7 +148,7 @@ Settings are saved to `apb.ini`, and the EEPROM (high scores, audits, the game's
 | `recomp/tests/` | Unit tests; they need no game files |
 | `tools/check/` | Checks against MAME: both decoders on every opcode; both lifters on every instruction form |
 | `tools/difftest/`, `tools/difftest6502/` | Differential tests: lifted game functions against MAME's T-11 and 6502 cores |
-| `third_party/` | Vendored: the Vulkan headers and volk (as in GBTGhoulies-Qilincomp), and MAME's T-11 and 6502 cores (the reference CPUs). See `third_party/README.md` |
+| `third_party/` | Vendored: the Vulkan headers and volk (as in GBTGhoulies-QilinRecomp), and MAME's T-11 and 6502 cores (the reference CPUs). See `third_party/README.md` |
 | `docs/` | Design targets, the board, the recompiler's status, naming |
 
 ## Design targets (short version)

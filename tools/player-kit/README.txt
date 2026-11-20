@@ -1,4 +1,4 @@
-APB QilinComp for Windows (64-bit)
+APB QilinRecomp for Windows (64-bit)
 ==================================
 
 APB (Atari Games, 1987), recompiled to run natively: the arcade board's two
@@ -50,4 +50,4 @@ kit\ninja.exe       Ninja, which drives the compiler
 work\               made when building: the recompiled code (from your ROMs)
 LICENSES\           the licences of everything included
 
-Source, changes and issues: https://github.com/Qilin1066/ApbArcade-QilinComp
+Source, changes and issues: https://github.com/Qilin1066/ApbArcade-QilinRecomp

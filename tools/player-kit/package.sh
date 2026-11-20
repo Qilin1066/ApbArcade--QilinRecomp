@@ -2,8 +2,8 @@
 # Builds the Windows download: tools/player-kit/package.sh <version> <out.zip>
 #
 # Cross-compiles on Linux with llvm-mingw, then lays out:
-#   APB-QilinComp/Play APB.bat, README.txt, LICENSES/
-#   APB-QilinComp/kit/  qilin.exe, lib/libapb_kit.a, include/, kit.ninja,
+#   APB-QilinRecomp/Play APB.bat, README.txt, LICENSES/
+#   APB-QilinRecomp/kit/  qilin.exe, lib/libapb_kit.a, include/, kit.ninja,
 #                       play.ps1, ninja.exe, toolchain/ (llvm-mingw, trimmed), VERSION
 # Nothing in it is made from ROMs: the player's PC lifts their own ROMs and
 # compiles that code with the bundled compiler (play.ps1).
@@ -19,7 +19,7 @@ out=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 root=$(cd "$(dirname "$0")/../.." && pwd)
 build=${BUILD_DIR:-$root/build-player-kit}
 stage=$(mktemp -d)
-pkg="$stage/APB-QilinComp"
+pkg="$stage/APB-QilinRecomp"
 
 cmake -S "$root" -B "$build" -DCMAKE_TOOLCHAIN_FILE="$root/tools/player-kit/mingw-cross.cmake" \
       -DCMAKE_BUILD_TYPE=Release -DQILIN_PLAYER_KIT=ON -DQILIN_WERROR=ON
@@ -51,6 +51,6 @@ done
 cp "$root/third_party/README.md" "$lic/third-party.md"
 
 rm -f "$out"
-(cd "$stage" && zip -q -r -9 "$out" APB-QilinComp)
+(cd "$stage" && zip -q -r -9 "$out" APB-QilinRecomp)
 rm -rf "$stage"
 echo "Packaged $out ($(du -h "$out" | cut -f1))"

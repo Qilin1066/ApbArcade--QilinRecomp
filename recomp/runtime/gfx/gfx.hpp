@@ -1,6 +1,6 @@
 // The renderer: Vulkan 1.3, and only Vulkan (docs/roadmap-and-design-targets.md).
 //
-// Shared with GBTGhoulies-Qilincomp, less depth and stencil: System 2 video
+// Shared with GBTGhoulies-QilinRecomp, less depth and stencil: System 2 video
 // is 2D (playfield, motion objects and alphanumerics over one palette).
 // Frames are rendered into the renderer's own images, so a frame can be read
 // back, saved or scaled whether or not there's a window; presenting to a

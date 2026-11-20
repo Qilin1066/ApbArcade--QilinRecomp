@@ -2,7 +2,7 @@
 // copyright-holders:Aaron Giles
 /*** DEC T-11 core from MAME, outside MAME's device framework ******************
 
-    The reference CPU for ApbArcade-QilinComp's tests. The instruction
+    The reference CPU for ApbArcade-QilinRecomp's tests. The instruction
     implementations are MAME's own t11ops.hxx and t11table.hxx, unmodified.
     This class keeps the member names those files use; its declarations are
     copied from MAME's t11.h, and t11_reference.cpp adapts the parts of
