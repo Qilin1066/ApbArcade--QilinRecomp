@@ -2,9 +2,22 @@
 
 APB reads a free-spinning optical encoder, not the wheel's position relative to a centre. The runtime sends movement to the cabinet's wrapping LETA counter, with 160 counts per physical revolution by default. Turning back sends movement back; holding a continuous wheel still does nothing.
 
-## Choose the input the driver actually supplies
+## Main wheel settings
 
-| Input in the Controls page | Use | Behaviour |
+Choose **Wheel behaviour** according to how the wheel is configured:
+
+| Behaviour | Main settings | Typical use |
+|---|---|---|
+| Free rotation / direct drive | Sensitivity, reverse direction and friction; no maximum-angle field | An R5 configured for free rotation, or another continuous wheel/encoder |
+| Limited rotation / belt or gear driven | Maximum angle in degrees, sensitivity, reverse direction, friction and optional held-at-stop steering | A G920, a belt-driven wheel, or a direct-drive base configured with software stops |
+
+**Maximum angle** means total travel from the left stop to the right stop: **900° is 450° each way**. Enter the same total range used by the wheel driver, or choose a preset. It calibrates the game's input; it does not change the base's hardware/driver limits. The R5 and G920 quick setups select the appropriate behaviour and input source. Existing settings files keep their previous behaviour.
+
+## Advanced input and calibration
+
+Input-source selection and one-turn measurement are under **Advanced wheel input**. Free rotation offers the MOZA physical-angle source or a wrapping joystick axis. The wrapping source's **Degrees per reported axis cycle** is a conversion scale, not a maximum rotation angle.
+
+| Input | Use | Behaviour |
 |---|---|---|
 | Limited axis | G920, or any wheel with a finite reported range | Differences in angle, scaled by the driver's rotation range. Optional held-at-lock steering lets a stopped wheel keep turning the cabinet dial. |
 | Continuous wrapping axis | An encoder/driver that rolls from one end of its reported axis to the other | Accumulates each SDL motion event and unwraps the seam. No held-at-lock steering. Set the degrees represented by one complete axis cycle, or measure one turn. |
@@ -16,7 +29,7 @@ Physical freedom to turn and the input available to software are different. Open
 
 1. Run the **SDK-enabled MOZA Pit House build required by MOZA's SDK documentation**; an ordinary Pit House installation is not proof that its SDK service is available. Obtain the appropriate build through MOZA's SDK/support channels if needed. Configure the base for the free rotation you want and turn off the driver's mechanical centring/spring for the cabinet feel. The game does not modify global Pit House settings or manufacture rotation beyond a driver-imposed stop.
 2. Obtain the official [MOZA Racing SDK](https://mozaracing.com/pages/sdk) (the [download inspected for this implementation](https://cdn.gudsen.vip/simulation_game/rs21repository/installer/MOZA_SDK.zip) includes version **1.0.1.8**). Copy **`MOZA_SDK/1.0.1.8/MSVC2022-64/bin/MOZA_SDK.dll`** beside `apb.exe` / `APB.exe`. The DLL is supplied by MOZA, not this project. The supported interface is that SDK version's Windows x64 ABI; the optional reader also works with the LLVM-MinGW player build without linking MOZA's C++ import library.
-3. Open F1 → Controls → Wheel and select **MOZA R5 (physical angle)**. Select the base in **Wheel device for force feedback** (or use **Find it** and turn the wheel). The device selector works even if the joystick axis is already clipped and cannot move. Binding the base also excludes its axes from gamepad defaults.
+3. Open F1 → Controls → Wheel and select **MOZA R5 (free rotation)**. Select the base in **Wheel device** (or use **Find it** and turn the wheel). The device selector works even if the joystick axis is already clipped and cannot move. Binding the base also excludes its axes from gamepad defaults. SDK details and connection retry are under **Advanced wheel input**.
 4. Check the connection status and **Physical angle** reading. Pit House/SDK startup can take a few seconds. Turn several revolutions each way: the physical angle must keep tracking beyond the ordinary joystick meter's endpoints. An unavailable angle leaves wheel steering at rest and reports the problem; it does not silently fall back to the clipped axis. **Retry MOZA connection** retries a missing DLL or reinitialises the SDK connection. A custom DLL location can be saved as `moza_sdk` in `apb.ini`.
 5. Set sensitivity to taste, starting at 160 counts per turn. Bind siren/start and fire to the desired wheel buttons, and calibrate the gas pedal separately. Pedals can be on the base's device or a separate USB device.
 
@@ -25,7 +38,7 @@ This backend calls only SDK install, remove and HID-data reading. It copies `HID
 ## Logitech G920
 
 1. Set the wheel's operating range to **900°** in Logitech G HUB and use a linear steering response. Disable the driver's centring spring for the free-wheel cabinet feel; the gears still have their physical resistance and endpoints.
-2. F1 → Controls → Wheel → **Find it**, then **Logitech G920 (900 degrees)**. This selects a limited axis and enables held-at-lock steering near either endpoint.
+2. F1 → Controls → Wheel → **Find it**, then **Logitech G920 (900 degrees)**. This selects **Limited rotation / belt or gear driven**, sets **Maximum angle** to 900° and enables held-at-stop steering near either endpoint.
 3. With that option on, turn toward a stop and hold it to keep the cabinet dial turning; move off the stop to stop the added turning. The zone and rate are adjustable. This is an adaptation for a wheel with endpoints, not physically unlimited rotation.
 4. Calibrate the accelerator with **Set up a pedal**: start released, press fully, release and press Done. Reversed axes and separate pedal devices are supported. Bind the cabinet actions to the desired wheel buttons.
 
