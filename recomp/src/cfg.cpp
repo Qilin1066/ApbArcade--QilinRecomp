@@ -610,7 +610,7 @@ bool Program::resolve_tables() {
                 const bool ok = !operand_words_.contains(t) && (nodes_.contains(t) || plausible_code(t, false, &conflict));
                 const Loc blocked = operand_words_.contains(t) ? t : conflict;
                 if (!ok && !range.top() && operand_words_.contains(blocked)) {
-                    for (const std::uint16_t back : {2, 4}) {
+                    for (const std::uint16_t back : std::array<std::uint16_t, 2>{2, 4}) {
                         const Loc owner{static_cast<std::uint16_t>(blocked.pc - back), blocked.bank};
                         const auto o = nodes_.find(owner);
                         if (o != nodes_.end() && o->second.insn.legal && o->second.insn.words > back / 2) blocking_.insert(owner);

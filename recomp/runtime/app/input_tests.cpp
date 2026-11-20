@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -100,7 +101,7 @@ int main() {
     SDL_SetJoystickVirtualAxis(wheel, 0, 32767);
     input.listen(app::Input::Listen::pedal);
     frame(input, in);
-    for (const Sint16 v : {16000, 0, -32768, 0, 32767}) {   // pressed to the floor and back up
+    for (const Sint16 v : std::array<Sint16, 5>{16000, 0, -32768, 0, 32767}) {   // pressed to the floor and back up
         SDL_SetJoystickVirtualAxis(pedals, 0, v);
         frame(input, in);
     }
