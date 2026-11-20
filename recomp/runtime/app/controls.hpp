@@ -6,8 +6,8 @@
 // count that wraps (MAME's IPT_DIAL): the game sees how far the wheel turned,
 // never where it is. A PC wheel reports where it is, as an axis across its
 // rotation range. So the dial is driven by how far the axis moves each frame,
-// scaled to counts per turn of the wheel. On a direct-drive wheel with no
-// stop (a Moza R5 with its range opened up) that is the whole story. A wheel
+// scaled to counts per turn of the wheel. Continuous axes must be unwrapped;
+// a driver that clips its axis needs an actual-angle source instead. A wheel
 // that stops at a lock (a Logitech G920 at 900 degrees) can't go on turning,
 // so past an edge near each lock the dial keeps turning on its own while
 // the wheel is held there, faster the harder into the lock: the player turns
@@ -27,23 +27,52 @@ struct WheelSettings {
     double edge = 0.92;             // past this fraction of the way to a lock, holding turns the dial on its own...
     double edge_rate = 6;           // ...at up to this many counts a frame, at the lock
     bool invert = false;
+    bool wrap = false;             // axis wraps from +1 to -1; rotation is the degrees in one full axis period
+};
+
+// Tracks signed travel, including crossings of a continuous axis's seam.
+// Sampling each input event avoids losing whole turns between game frames.
+class AxisTravel {
+public:
+    void reset(bool wrap) { wrap_ = wrap; last_.reset(); travel_ = 0; }
+    double observe(double axis) {
+        axis = std::clamp(axis, -1.0, 1.0);
+        double delta = last_ ? axis - *last_ : 0;
+        if (wrap_) {
+            if (delta > 1) delta -= 2;
+            else if (delta < -1) delta += 2;
+        }
+        last_ = axis;
+        travel_ += delta;
+        return delta;
+    }
+    [[nodiscard]] double travel() const { return travel_; }
+private:
+    bool wrap_ = false;
+    std::optional<double> last_;
+    double travel_ = 0;
 };
 
 // One wheel axis to dial counts, a frame at a time.
 class Wheel {
 public:
-    explicit Wheel(const WheelSettings& settings = {}) : s_(settings) {}
-    void configure(const WheelSettings& settings) { s_ = settings; }
-    void reset() { last_.reset(); carry_ = 0; }
+    explicit Wheel(const WheelSettings& settings = {}) : s_(settings) { reset(); }
+    void configure(const WheelSettings& settings) { s_ = settings; reset(); }
+    void reset() { motion_.reset(s_.wrap); last_degrees_.reset(); carry_ = 0; }
+
+    // Called for each SDL axis event, not just the last position each frame.
+    void observe(double axis) {
+        const double delta = motion_.observe(s_.invert ? -axis : axis);
+        carry_ += delta * 0.5 * s_.rotation / 360.0 * s_.counts_per_turn;
+    }
 
     // 'axis' is the wheel's position, -1 (left lock) to 1 (right lock).
     // Returns the counts to add to the dial this frame (positive: right).
     int update(double axis) {
+        observe(axis);
         axis = std::clamp(s_.invert ? -axis : axis, -1.0, 1.0);
         double counts = 0;
-        if (last_) counts += (axis - *last_) * 0.5 * s_.rotation / 360.0 * s_.counts_per_turn;
-        last_ = axis;
-        if (s_.edge < 1 && std::abs(axis) > s_.edge) {
+        if (!s_.wrap && s_.edge < 1 && std::abs(axis) > s_.edge) {
             // edge < 1 here; the floor only keeps MSVC (C4723) from seeing a 0 divisor where a test sets edge to 1.
             const double into = (std::abs(axis) - s_.edge) / std::max(1 - s_.edge, 1e-9);
             counts += std::copysign(s_.edge_rate * std::min(into, 1.0), axis);
@@ -51,15 +80,30 @@ public:
         return take(counts);
     }
 
+    // A physical angle in degrees (MOZA SDK), independent of a clipped SDL
+    // axis. No lock simulation or finite rotation range is involved.
+    int update_degrees(double degrees) {
+        if (!std::isfinite(degrees)) { reset(); return 0; }
+        degrees = s_.invert ? -degrees : degrees;
+        const double delta = last_degrees_ ? degrees - *last_degrees_ : 0;
+        last_degrees_ = degrees;
+        // Recentring/reconnecting a driver can reset its turn counter.
+        // Ten turns in one game frame is beyond a physical player's input;
+        // rebase that discontinuity rather than injecting it into the game.
+        if (!std::isfinite(delta) || std::abs(delta) > 3600) { carry_ = 0; return 0; }
+        return take(delta / 360.0 * s_.counts_per_turn);
+    }
+
 private:
     int take(double counts) {
         carry_ += counts;
-        const double whole = std::trunc(carry_);
+        const double whole = std::trunc(carry_ + std::copysign(1e-9, carry_));
         carry_ -= whole;
         return static_cast<int>(whole);
     }
     WheelSettings s_;
-    std::optional<double> last_;
+    AxisTravel motion_;
+    std::optional<double> last_degrees_;
     double carry_ = 0;   // fractions of a count, kept so slow turns aren't lost
 };
 
@@ -70,6 +114,7 @@ private:
 // which are only ever on or off, ask for a fraction of the speed directly.
 class Rate {
 public:
+    void reset() { carry_ = 0; }
     double deadzone = 0.15;
     double counts_at_full = 3;
     double curve = 2;

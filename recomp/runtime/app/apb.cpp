@@ -52,6 +52,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -134,7 +135,7 @@ std::optional<std::string> pick_rom_folder(const std::string& why, const std::st
     int chosen = 0;
     if (!SDL_ShowMessageBox(&box, &chosen) || chosen != 1) return std::nullopt;
     struct Pick {
-        bool done = false;
+        std::atomic<bool> done{false};
         std::optional<std::string> folder;
         std::string error;
     } pick;
@@ -143,10 +144,10 @@ std::optional<std::string> pick_rom_folder(const std::string& why, const std::st
             auto* p = static_cast<Pick*>(user);
             if (!list) p->error = SDL_GetError();
             else if (list[0]) p->folder = list[0];
-            p->done = true;
+            p->done.store(true, std::memory_order_release);
         },
         &pick, nullptr, start.empty() ? nullptr : start.c_str(), false);
-    while (!pick.done) {   // the dialog may answer on another thread, or need events pumped
+    while (!pick.done.load(std::memory_order_acquire)) {   // the dialog may answer on another thread, or need events pumped
         SDL_PumpEvents();
         SDL_Delay(10);
     }

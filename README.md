@@ -6,7 +6,7 @@ A static recompilation of **APB — All Points Bulletin** (Atari Games, 1987, At
 
 ## Status
 
-Roadmap step 2, **CPU coverage**, is in progress.
+The recompiled game runs; current work focuses on controls, device validation and reliable play at original settings. Real wheel hardware and end-to-end completion remain to be verified.
 
 | Piece | State |
 |---|---|
@@ -140,12 +140,15 @@ build/apb ["D:/APB Arcade Project"] [--scale N] [--no-vsync] [--gpu N] [--mute]
 
 **Wheels, pedals, spinners.** The settings menu sets them up; nothing is needed for the keyboard or a gamepad. APB's cabinet wheel spins freely and the game counts how far it turns, so a PC wheel drives it by how far its angle moves each frame:
 
-- **Direct-drive wheels** (a Moza R5, say): pick *Wheel*, press *Find it* and turn the wheel. Set *Rotation* to what the wheel's own software uses (Moza Pit House, Logitech G HUB, ...), or press *Measure* and turn it one full turn. Open the wheel's range up as far as its software allows and it plays like the cabinet's.
-- **Wheels that stop at a lock** (a Logitech G920 at 900 degrees): the same, and *Keep turning while the wheel is held at its lock* lets you hold it against the lock to keep turning, faster the harder into it.
-- **Force feedback**: no centring spring (the cabinet's wheel has none) and an adjustable friction, so it doesn't spin on by itself.
+- **MOZA R5:** the *MOZA R5 (physical angle)* setup reads physical degrees through the optional Windows x64 MOZA SDK 1.0.1.8 DLL, independently of a joystick axis that may clip. It needs the user's DLL and Pit House; no proprietary SDK is bundled. Check the physical-angle meter through several turns. Actual R5 hardware remains unverified.
+- **Logitech G920:** *Find it*, then *Logitech G920 (900 degrees)*, matching 900° in G HUB. Held-at-lock steering lets you keep turning the cabinet dial when the wheel reaches a stop.
+- **Continuous wrapping axes:** select that input type and set/measure degrees per axis cycle. Every SDL motion event is counted, including seam crossings and complete turns between game frames. This mode cannot recover movement from an axis that clips.
+- **Force feedback:** SDL haptics is initialised explicitly, with passive friction/damping and autocentre disabled where supported. The menu reports whether the effect actually started; driver-side centring may need turning off separately.
 - **Pedals** (often a separate USB device): *Set up a pedal*, press it to the floor and let it go, *Done*. Pedals that rest at either end of their axis both work.
 - **Buttons**: any button, key, hat or axis on any device can be added to each cabinet button and coin.
 - **Mouse or spinner**: steers by how far it moves.
+
+See [wheel setup and verification](docs/wheels.md) for the two wheel setups, SDK installation, continuous rotation, calibration and what still needs testing on hardware.
 
 **Display.** The menu's Display page: presets (*Original*, *Arcade monitor*, *Smooth*), full screen, which display, the picture's size (whole multiples, the sharpest; fit, keeping its shape; or filling the window), its look (plain pixels, smooth or sharp; smoothed pixel art; or a CRT, with scanlines running down the screen as on the cabinet's upright monitor), vsync, the speed (exact: the cabinet's 60.1 Hz, the newest frame at each refresh; or matched to a display near 60 Hz or a multiple, every frame shown in turn, the game a fraction of a percent slow), and which graphics device (used from the next start). `--no-vsync` and `--gpu N` override the saved choices for one run. The game always runs at the cabinet's 60.1 frames a second.
 

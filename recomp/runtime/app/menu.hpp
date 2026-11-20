@@ -81,7 +81,6 @@ private:
     int listening_button_ = -1;             // which cabinet button is waiting for a press
     bool finding_wheel_ = false;            // or the wheel is being looked for
     bool measuring_ = false;                // measuring the wheel's rotation...
-    double measure_from_ = 0;               // ...from this reading
     bool sdl_backend_ = false;              // ImGui's SDL3 backend is up (shut down even if Vulkan's never was)
 };
 

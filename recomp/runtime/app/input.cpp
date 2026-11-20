@@ -168,6 +168,9 @@ bool Settings::load(const std::string& path) {
     wheel.edge = std::clamp(num("wheel_edge", wheel.edge), 0.5, 1.0);
     wheel.edge_rate = std::clamp(num("wheel_edge_rate", wheel.edge_rate), 0.0, 32.0);
     wheel.invert = num("wheel_invert", 0) != 0;
+    wheel.wrap = num("wheel_wrap", 0) != 0;
+    moza_angle = num("moza_angle", 0) != 0;
+    moza_sdk = std::string(get("moza_sdk"));
     pedal_axis = binding("pedal_axis");
     pedal.released = num("pedal_released", pedal.released);
     pedal.floored = num("pedal_floored", pedal.floored);
@@ -205,6 +208,7 @@ bool Settings::save(const std::string& path) const {
     binding("wheel_axis", wheel_axis);
     out << strf("wheel_rotation = %.9g\nwheel_counts_per_turn = %.9g\nwheel_edge = %.9g\nwheel_edge_rate = %.9g\nwheel_invert = %d\n",
                 wheel.rotation, wheel.counts_per_turn, wheel.edge, wheel.edge_rate, wheel.invert ? 1 : 0);
+    out << "wheel_wrap = " << (wheel.wrap ? 1 : 0) << "\nmoza_angle = " << (moza_angle ? 1 : 0) << "\nmoza_sdk = " << moza_sdk << '\n';
     binding("pedal_axis", pedal_axis);
     out << strf("pedal_released = %.9g\npedal_floored = %.9g\npedal_deadzone = %.9g\n", pedal.released, pedal.floored, pedal.deadzone);
     out << strf("mouse_counts = %.9g\nstick_speed = %.9g\nstick_curve = %.9g\nfriction = %d\n", mouse_counts, stick_speed, stick_curve, friction);
@@ -221,6 +225,9 @@ bool Settings::save(const std::string& path) const {
 // ---- Devices ----------------------------------------------------------------
 
 Input::Input() {
+    // SDL_INIT_GAMEPAD does not initialise force feedback. A wheel can
+    // steer without haptics, so a haptic driver failure is non-fatal.
+    haptics_ready_ = SDL_InitSubSystem(SDL_INIT_HAPTIC);
     int count = 0;
     if (SDL_JoystickID* ids = SDL_GetJoysticks(&count)) {
         for (int i = 0; i < count; ++i) add(ids[i]);
@@ -237,6 +244,7 @@ Input::~Input() {
         if (d.gamepad) SDL_CloseGamepad(d.gamepad);
         if (d.joystick) SDL_CloseJoystick(d.joystick);
     }
+    if (haptics_ready_) SDL_QuitSubSystem(SDL_INIT_HAPTIC);
 }
 
 const char* Input::type_name(SDL_JoystickType type) {
@@ -284,13 +292,18 @@ void Input::add(SDL_JoystickID id) {
                 d.gamepad ? "; buttons and sticks as a gamepad" : "; raw axes and buttons only");
     std::fflush(stdout);
     devices_.push_back(std::move(d));
+    if (devices_.back().guid == settings.wheel_axis.device) reset_motion();
     start_force(devices_.back());
 }
 
 void Input::remove(SDL_JoystickID id) {
     const auto it = std::ranges::find_if(devices_, [&](const Device& d) { return d.id == id; });
     if (it == devices_.end()) return;
-    if (it->haptic) SDL_CloseHaptic(it->haptic);
+    if (it->guid == settings.wheel_axis.device) reset_motion();
+    if (it->haptic) {
+        SDL_StopHapticEffects(it->haptic);
+        SDL_CloseHaptic(it->haptic);
+    }
     if (it->gamepad) SDL_CloseGamepad(it->gamepad);
     SDL_CloseJoystick(it->joystick);
     std::printf("apb: controller disconnected: %s\n", it->name.c_str());
@@ -310,19 +323,25 @@ void Input::start_force(Device& d) {
             d.haptic = nullptr;
             d.effect = -1;
         }
+        d.force_status.clear();
         return;
     }
+    if (!haptics_ready_) { d.force_status = "Force feedback unavailable: SDL haptics could not start"; return; }
     if (!d.haptic) d.haptic = SDL_OpenHapticFromJoystick(d.joystick);
-    if (!d.haptic) return;
+    if (!d.haptic) { d.force_status = std::string("Force feedback unavailable: ") + SDL_GetError(); return; }
     const Uint32 features = SDL_GetHapticFeatures(d.haptic);
-    if (features & SDL_HAPTIC_AUTOCENTER) SDL_SetHapticAutocenter(d.haptic, 0);
+    const bool no_centre = !(features & SDL_HAPTIC_AUTOCENTER) || SDL_SetHapticAutocenter(d.haptic, 0);
     if (features & SDL_HAPTIC_GAIN) SDL_SetHapticGain(d.haptic, 100);
     const Uint16 type = (features & SDL_HAPTIC_FRICTION) ? SDL_HAPTIC_FRICTION : (features & SDL_HAPTIC_DAMPER) ? SDL_HAPTIC_DAMPER : 0;
     if (d.effect >= 0) {
         SDL_DestroyHapticEffect(d.haptic, d.effect);
         d.effect = -1;
     }
-    if (!type || settings.friction <= 0) return;
+    if (!type || settings.friction <= 0) {
+        d.force_status = settings.friction <= 0 ? "Game friction is off" : "This driver offers neither friction nor damping";
+        if (!no_centre) d.force_status += "; could not turn off driver centring";
+        return;
+    }
     SDL_HapticEffect effect{};
     effect.condition.type = type;
     effect.condition.direction.type = SDL_HAPTIC_CARTESIAN;
@@ -335,16 +354,53 @@ void Input::start_force(Device& d) {
         effect.condition.right_coeff[i] = effect.condition.left_coeff[i] = coeff;
     }
     d.effect = SDL_CreateHapticEffect(d.haptic, &effect);
-    if (d.effect >= 0) SDL_RunHapticEffect(d.haptic, d.effect, 1);
+    if (d.effect >= 0 && SDL_RunHapticEffect(d.haptic, d.effect, 1)) {
+        d.force_status = type == SDL_HAPTIC_FRICTION ? "Friction active" : "Damping active (driver has no friction effect)";
+    } else {
+        d.force_status = std::string("Force effect could not start: ") + SDL_GetError();
+    }
+    if (!no_centre) d.force_status += "; could not turn off driver centring";
 }
 
 void Input::configure() {
-    controls::WheelSettings w = settings.wheel;
-    wheel_.configure(w);
-    wheel_.reset();
+    wheel_.configure(settings.wheel);
     stick_.counts_at_full = settings.stick_speed;
     stick_.curve = settings.stick_curve;
+    const bool want_moza = settings.steering == Steering::wheel && settings.moza_angle;
+    const char* base = SDL_GetBasePath();
+    const std::string path = settings.moza_sdk.empty() ? std::string(base ? base : "") + "MOZA_SDK.dll" : settings.moza_sdk;
+    if (want_moza && (path != moza_path_ || !moza_.is_open())) {
+        moza_.open(path);
+        moza_path_ = path;
+    } else if (!want_moza) {
+        moza_.close();
+        moza_path_.clear();
+    }
+    reset_motion();
     for (auto& d : devices_) start_force(d);
+}
+
+void Input::reset_motion() {
+    wheel_.reset();
+    stick_.reset();
+    mouse_dx_ = mouse_carry_ = 0;
+    pedal_ = 0;
+    moza_degrees_.reset();
+    if (settings.steering == Steering::wheel && !settings.moza_angle)
+        if (const Device* d = find(settings.wheel_axis.device)) wheel_.observe(axis_of(d->joystick, settings.wheel_axis.index));
+}
+
+void Input::set_playing(bool value) {
+    resuming_ = value && !was_playing_;
+    playing = value;
+    was_playing_ = value;
+    reset_motion();
+}
+
+void Input::begin_wheel_measurement() {
+    measurement_.reset(settings.wheel.wrap);
+    measurement_.observe(read(settings.wheel_axis));
+    measuring_wheel_ = true;
 }
 
 // ---- Reading ----------------------------------------------------------------
@@ -376,6 +432,16 @@ void Input::handle(const SDL_Event& e) {
     switch (e.type) {
     case SDL_EVENT_JOYSTICK_ADDED: add(e.jdevice.which); break;
     case SDL_EVENT_JOYSTICK_REMOVED: remove(e.jdevice.which); break;
+    case SDL_EVENT_JOYSTICK_AXIS_MOTION:
+        if (settings.steering == Steering::wheel && e.jaxis.axis == settings.wheel_axis.index) {
+            const Device* d = find(settings.wheel_axis.device);
+            if (d && d->id == e.jaxis.which) {
+                const double axis = e.jaxis.value < 0 ? e.jaxis.value / 32768.0 : e.jaxis.value / 32767.0;
+                if (playing && !resuming_ && !settings.moza_angle) wheel_.observe(axis);
+                if (measuring_wheel_) measurement_.observe(axis);
+            }
+        }
+        break;
     case SDL_EVENT_MOUSE_MOTION:
         if (playing) mouse_dx_ += e.motion.xrel;
         break;
@@ -432,6 +498,9 @@ std::optional<Binding> Input::heard() {
 }
 
 void Input::apply(sys2::Inputs& in) {
+    if (playing != was_playing_) set_playing(playing);
+    if (resuming_) { reset_motion(); resuming_ = false; }
+    if (measuring_wheel_) measurement_.observe(read(settings.wheel_axis));
     // Listening: the axis that has moved furthest from where it was.
     if (listen_ == Listen::wheel || listen_ == Listen::pedal || listen_ == Listen::button) {
         double best = 0;
@@ -531,9 +600,16 @@ void Input::apply(sys2::Inputs& in) {
             if (std::abs(x) > std::abs(stick)) stick = x;
         }
     int counts = keys != 0 ? stick_.update_linear(keys) : stick_.update(stick);
-    if (settings.steering == Steering::wheel && !settings.wheel_axis.empty()) {
-        if (const Device* d = find(settings.wheel_axis.device)) counts += wheel_.update(axis_of(d->joystick, settings.wheel_axis.index));
-        else wheel_.reset();   // unplugged: when it's back, its first reading only says where it is
+    if (settings.steering == Steering::wheel) {
+        if (settings.moza_angle) {
+            moza_degrees_ = moza_.read();
+            if (moza_degrees_ && live) counts += wheel_.update_degrees(*moza_degrees_);
+            else wheel_.reset();
+        } else if (!settings.wheel_axis.empty()) {
+            if (const Device* d = find(settings.wheel_axis.device); d && live)
+                counts += wheel_.update(axis_of(d->joystick, settings.wheel_axis.index));
+            else wheel_.reset();   // unplugged/paused: resume with a fresh baseline
+        }
     }
     if (settings.steering == Steering::mouse) {
         mouse_carry_ += mouse_dx_ * settings.mouse_counts;
@@ -542,7 +618,13 @@ void Input::apply(sys2::Inputs& in) {
         counts += static_cast<int>(whole);
     }
     mouse_dx_ = 0;
-    if (!live) counts = 0;
+    if (!live) {
+        counts = 0;
+        wheel_.reset();
+        stick_.reset();
+        mouse_carry_ = 0;
+        pedal_ = 0;
+    }
     last_counts = counts;
     in.leta[0] = static_cast<std::uint8_t>(in.leta[0] + counts);
 }

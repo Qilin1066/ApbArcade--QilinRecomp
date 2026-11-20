@@ -5,7 +5,7 @@ The requirements and scope are those of GBTGhoulies-QilinRecomp, applied to an a
 **Guiding principle: efficiency and reliability come first.** Every design choice is judged on whether it makes the game cheaper to run on low-end hardware and whether it fails loudly and predictably instead of silently misbehaving.
 
 ## Targets
-- **Game:** *APB — All Points Bulletin* (Atari Games, 1987), the rev 7 ROM set (MAME `apb`). The board is Atari System 2: a DEC T-11 main CPU at 10 MHz, a 6502 sound CPU at 1.79 MHz, a YM2151, two POKEYs, a TMS5220 for speech, Slapstic 137412-110 video-memory banking, and a portrait (ROT270) 512 × 384 raster. Controls are a steering wheel and pedals, read through an ADC0809.
+- **Game:** *APB — All Points Bulletin* (Atari Games, 1987), the rev 7 ROM set (MAME `apb`). The board is Atari System 2: a DEC T-11 main CPU at 10 MHz, a 6502 sound CPU at 1.79 MHz, a YM2151, two POKEYs, a TMS5220 for speech, Slapstic 137412-110 video-memory banking, and a portrait (ROT270) 512 × 384 raster. The steering wheel is a free-spinning LETA encoder; the gas pedal is read through an ADC0809.
 - **Platforms:** 64-bit Windows, Linux and macOS (Intel and Apple Silicon), on x86-64 or ARM64, with Vulkan. See *Hardware scope* below.
 - **Language:** **C++23** throughout (recompiler, generated code and runtime). Minimum compilers: GCC 14, Clang 19, Xcode 16, Visual Studio 2022 17.10.
 - **Graphics API:** **Vulkan 1.3, and only Vulkan**, with only the optional features and limits that Mesa's v3dv driver on a Pi 4 provides, so one render path works everywhere (MoltenVK on macOS). See *Vulkan baseline* below.

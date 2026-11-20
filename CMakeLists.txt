@@ -284,14 +284,22 @@ if(SDL3_FOUND)
         target_compile_options(qilin_imgui PRIVATE -w)
     endif()
     # The controls (any wheel, pedals, gamepads, mice) and the settings menu.
-    add_library(qilin_app STATIC recomp/runtime/app/input.cpp recomp/runtime/app/menu.cpp)
+    add_library(qilin_app STATIC recomp/runtime/app/input.cpp recomp/runtime/app/menu.cpp recomp/runtime/app/moza.cpp)
     target_include_directories(qilin_app PUBLIC recomp/runtime/app)
     target_link_libraries(qilin_app PUBLIC qilin_board qilin_gfx qilin_imgui SDL3::SDL3 PRIVATE qilin_warnings)
     # The controls on SDL's virtual joysticks: a wheel and pedals (no window or device needed).
     add_executable(qilin_input_tests recomp/runtime/app/input_tests.cpp)
     target_link_libraries(qilin_input_tests PRIVATE qilin_app qilin_warnings)
     qilin_tool(qilin_input_tests)
-    add_test(NAME qilin_input_tests COMMAND qilin_input_tests)
+    if(WIN32)
+        # Exercise the optional SDK's real DLL loader without MOZA hardware
+        # or proprietary binaries. Both MSVC and the player kit use this ABI.
+        add_library(qilin_mock_moza SHARED recomp/runtime/app/mock_moza.cpp recomp/runtime/app/mock_moza.def)
+        add_dependencies(qilin_input_tests qilin_mock_moza)
+        add_test(NAME qilin_input_tests COMMAND qilin_input_tests "$<TARGET_FILE:qilin_mock_moza>")
+    else()
+        add_test(NAME qilin_input_tests COMMAND qilin_input_tests)
+    endif()
 endif()
 
 # ---- The player kit: everything apb needs but the code lifted from the ROMs ----

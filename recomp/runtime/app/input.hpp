@@ -9,6 +9,7 @@
 // A binding names a device by its GUID, so it survives replugging.
 
 #include "controls.hpp"
+#include "moza.hpp"
 #include "gfx.hpp"
 #include "system2_machine.hpp"
 
@@ -85,6 +86,8 @@ struct Settings {
     Steering steering = Steering::keys_and_pad;
     Binding wheel_axis;
     controls::WheelSettings wheel;
+    bool moza_angle = false;          // physical degrees from the optional Windows MOZA SDK
+    std::string moza_sdk;             // empty: MOZA_SDK.dll beside the executable
     Binding pedal_axis;
     controls::PedalSettings pedal;
     double mouse_counts = 0.25;        // dial counts per pixel the mouse (or spinner) moves
@@ -119,6 +122,7 @@ public:
     Settings settings;
     bool test_switch = false;
     bool playing = true;    // false while the menu is open: the mouse is the menu's then
+    void set_playing(bool playing);
 
     struct Device {
         SDL_JoystickID id = 0;
@@ -126,6 +130,7 @@ public:
         SDL_Gamepad* gamepad = nullptr;     // also a gamepad SDL knows
         SDL_Haptic* haptic = nullptr;       // force feedback, if it has it
         int effect = -1;                    // the friction (or damper) effect running on it
+        std::string force_status;
         std::string guid, name;
         SDL_JoystickType type = SDL_JOYSTICK_TYPE_UNKNOWN;
     };
@@ -134,6 +139,12 @@ public:
 
     // A binding's current reading: an axis -1..1, a button or key 0 or 1.
     [[nodiscard]] double read(const Binding& b) const;
+    [[nodiscard]] const std::string& moza_status() const { return moza_.status(); }
+    [[nodiscard]] std::optional<double> moza_degrees() const { return moza_degrees_; }
+    void retry_moza() { moza_.close(); configure(); }
+    void begin_wheel_measurement();
+    void end_wheel_measurement() { measuring_wheel_ = false; }
+    [[nodiscard]] double measured_wheel_travel() const { return measurement_.travel(); }
 
     // Listening for the player to show which control they mean.
     enum class Listen { none, button, wheel, pedal };
@@ -156,11 +167,20 @@ private:
     void add(SDL_JoystickID id);
     void remove(SDL_JoystickID id);
     void start_force(Device& d);
+    void reset_motion();
     void baseline();
 
     std::vector<Device> devices_;
     controls::Wheel wheel_;
     controls::Rate stick_;
+    MozaAngle moza_;
+    std::string moza_path_;
+    std::optional<double> moza_degrees_;
+    controls::AxisTravel measurement_;
+    bool measuring_wheel_ = false;
+    bool haptics_ready_ = false;
+    bool was_playing_ = true;
+    bool resuming_ = false;
     double mouse_dx_ = 0, mouse_carry_ = 0;
     int pedal_ = 0;   // the keys' and trigger's pedal, 0..0x3f, moved 8 a frame
 

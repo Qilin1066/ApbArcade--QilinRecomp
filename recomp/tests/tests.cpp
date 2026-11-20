@@ -18,6 +18,7 @@
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -839,6 +840,52 @@ void test_controls() {
     Wheel inverted({900, 160, 1.0, 0, true});
     inverted.update(0);
     CHECK(inverted.update(0.1) < 0);
+    // A continuous axis crossing its seam keeps the same direction, and
+    // holding near that seam must never invoke the limited-wheel edge spin.
+    Wheel continuous({360, 160, 0.9, 6, false, true});
+    continuous.update(0.75);
+    CHECK(continuous.update(-0.75) == 40);
+    CHECK(continuous.update(-0.95) == -16);
+    CHECK(continuous.update(-0.95) == 0);
+    // Three complete turns between frames: all input events count even
+    // though the last position is identical to the first.
+    continuous.reset();
+    continuous.update(0);
+    for (int i = 1; i <= 48; ++i) {
+        double axis = std::fmod(i / 8.0, 2.0);
+        if (axis >= 1) axis -= 2;
+        continuous.observe(axis);
+    }
+    CHECK(continuous.update(0) == 480);
+    Wheel reversed_wrap({360, 160, 1.0, 0, true, true});
+    reversed_wrap.update(0.75);
+    CHECK(reversed_wrap.update(-0.75) == -40);
+    // A G920 has real endpoints: a large move must not be mistaken for a seam.
+    Wheel bounded({900, 160, 1.0, 0, false});
+    bounded.update(0.9);
+    CHECK(bounded.update(-0.9) == -360);
+    // A physical-angle provider has no finite SDL axis range. Its first
+    // reading/reconnection is a baseline, including a large turn count.
+    Wheel physical;
+    CHECK(physical.update_degrees(36000) == 0);
+    CHECK(physical.update_degrees(36360) == 160);
+    CHECK(physical.update_degrees(36000) == -160);
+    CHECK(physical.update_degrees(std::numeric_limits<double>::quiet_NaN()) == 0);
+    CHECK(physical.update_degrees(-72000) == 0);
+    CHECK(physical.update_degrees(-71640) == 160);
+    physical.reset();
+    CHECK(physical.update_degrees(0) == 0);
+    // Measuring one full turn works even when it ends on its starting
+    // reading: signed travel includes the seam, rather than end minus start.
+    AxisTravel measured;
+    measured.reset(true);
+    measured.observe(0);
+    for (int i = 1; i <= 16; ++i) {
+        double axis = std::fmod(i / 8.0, 2.0);
+        if (axis >= 1) axis -= 2;
+        measured.observe(axis);
+    }
+    CHECK(measured.travel() == 2 && 720 / measured.travel() == 360);
     // A stick: nothing inside the dead zone, the full rate (3) at full
     // deflection, and the curve: half way over is (0.35 / 0.85)^2 = 17% of it,
     // 5 counts in 10 frames. Straight (curve 1), 41%: 12. Keys: as asked.

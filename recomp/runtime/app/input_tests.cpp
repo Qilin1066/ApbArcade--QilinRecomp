@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <limits>
 
 namespace {
 
@@ -37,16 +38,21 @@ SDL_Joystick* attach(const char* name, SDL_JoystickType type, int axes, int butt
 }
 
 // Pumps SDL as a frame would, then applies the controls.
-void frame(qilin::app::Input& input, qilin::sys2::Inputs& in) {
+void pump(qilin::app::Input& input) {
     SDL_UpdateJoysticks();
     SDL_Event e;
     while (SDL_PollEvent(&e)) input.handle(e);
+}
+void frame(qilin::app::Input& input, qilin::sys2::Inputs& in) {
+    pump(input);
     input.apply(in);
 }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     using namespace qilin;
     if (!SDL_Init(SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS)) {
         std::fprintf(stderr, "SDL: %s\n", SDL_GetError());
@@ -59,8 +65,13 @@ int main() {
     SDL_SetJoystickVirtualAxis(pedals, 1, -32768);
     SDL_SetJoystickVirtualAxis(pedals, 2, -32768);
 
+    // A missing haptic driver must not prevent steering. Where the driver
+    // can initialise, Input must own its own balanced subsystem reference.
+    const bool can_init_haptics = SDL_InitSubSystem(SDL_INIT_HAPTIC);
+    if (can_init_haptics) SDL_QuitSubSystem(SDL_INIT_HAPTIC);
     auto owner = std::make_unique<app::Input>();   // closed before SDL_Quit
     app::Input& input = *owner;
+    if (can_init_haptics) CHECK((SDL_WasInit(SDL_INIT_HAPTIC) & SDL_INIT_HAPTIC) != 0);
     sys2::Inputs in;
     frame(input, in);
     CHECK(input.devices().size() == 2);
@@ -97,8 +108,55 @@ int main() {
     frame(input, in);
     CHECK(static_cast<std::uint8_t>(in.leta[0] - at_lock) == 6);
 
+    // A wrapping wheel makes three turns in a single game frame, ending
+    // at its initial axis position. Sampling only that position loses them.
+    input.settings.wheel = {360, 160, 0.9, 6, false, true};
+    SDL_SetJoystickVirtualAxis(wheel, 0, 0);
+    frame(input, in);
+    input.configure();
+    for (int i = 1; i <= 48; ++i) {
+        double axis = std::fmod(i / 8.0, 2.0);
+        if (axis >= 1) axis -= 2;
+        SDL_SetJoystickVirtualAxis(wheel, 0, static_cast<Sint16>(axis * (axis < 0 ? 32768 : 32767)));
+        pump(input);   // several device reports, no cabinet frame yet
+    }
+    input.apply(in);
+    CHECK(input.last_counts >= 479 && input.last_counts <= 480);
+    frame(input, in);
+    CHECK(input.last_counts == 0);
+
+    // Calibration continues through the seam while paused; resuming must
+    // not transfer any of those menu movements to the cabinet's dial.
+    input.set_playing(false);
+    input.begin_wheel_measurement();
+    for (int i = 1; i <= 16; ++i) {
+        double axis = std::fmod(i / 8.0, 2.0);
+        if (axis >= 1) axis -= 2;
+        SDL_SetJoystickVirtualAxis(wheel, 0, static_cast<Sint16>(axis * (axis < 0 ? 32768 : 32767)));
+        pump(input);
+    }
+    input.apply(in);
+    CHECK(std::abs(input.measured_wheel_travel() - 2.0) < 1e-6);
+    CHECK(input.last_counts == 0);
+    input.end_wheel_measurement();
+    // Events already queued during the pause must be discarded on resume,
+    // including a full turn that ends on the same reading.
+    for (int i = 1; i <= 16; ++i) {
+        double axis = std::fmod(i / 8.0, 2.0);
+        if (axis >= 1) axis -= 2;
+        SDL_SetJoystickVirtualAxis(wheel, 0, static_cast<Sint16>(axis * (axis < 0 ? 32768 : 32767)));
+        SDL_UpdateJoysticks();   // queue reports, deliberately do not handle them yet
+    }
+    input.set_playing(true);
+    frame(input, in);
+    CHECK(input.last_counts == 0);
+    input.settings.wheel = {900, 160, 0.92, 6, false};
+    input.configure();
+    CHECK(!input.devices().front().force_status.empty());
+
     // Setting up the pedal: the axis that moves furthest, its rest and floor.
     SDL_SetJoystickVirtualAxis(wheel, 0, 32767);
+    frame(input, in);   // settle the wheel before taking the pedal's baseline
     input.listen(app::Input::Listen::pedal);
     frame(input, in);
     for (const Sint16 v : std::array<Sint16, 5>{16000, 0, -32768, 0, 32767}) {   // pressed to the floor and back up
@@ -136,11 +194,15 @@ int main() {
     const auto path = (std::filesystem::temp_directory_path() / "apb_input_test.ini").string();
     input.settings.display = {gfx::Scaling::stretch, false, gfx::Effect::crt, 0.25f, 0.75f, false, true, true, "Monitor = 2", "Some GPU"};
     input.settings.rom_dir = "D:\\APB Arcade Project";
+    input.settings.wheel.wrap = true;
+    input.settings.moza_angle = true;
+    input.settings.moza_sdk = "D:\\Wheel tools\\MOZA_SDK.dll";
     CHECK(input.settings.save(path));
     app::Settings loaded;
     CHECK(loaded.load(path));
     CHECK(loaded.steering == app::Steering::wheel && loaded.wheel_axis.text() == input.settings.wheel_axis.text());
     CHECK(loaded.wheel_axis.name == "Test wheel");
+    CHECK(loaded.wheel.wrap && loaded.moza_angle && loaded.moza_sdk == input.settings.moza_sdk);
     CHECK(loaded.pedal_axis.text() == input.settings.pedal_axis.text() && std::abs(loaded.pedal.floored - far) < 1e-6);
     CHECK(loaded.buttons[0].text() == input.settings.buttons[0].text());
     CHECK(loaded.display.scaling == gfx::Scaling::stretch && !loaded.display.smooth && !loaded.display.vsync && loaded.display.fullscreen);
@@ -272,7 +334,81 @@ int main() {
     frame(input, in);
     CHECK(input.devices().size() == 2);
 
+#ifdef SDL_PLATFORM_WINDOWS
+    // Exercise the official SDK's Win64 export names on a test DLL, with
+    // no proprietary files or physical wheel in CI.
+    CHECK(argc == 2);
+    if (argc == 2) {
+        SDL_SharedObject* mock = SDL_LoadObject(argv[1]);
+        CHECK(mock != nullptr);
+        if (mock) {
+            const auto set_angle = reinterpret_cast<void (*)(float)>(SDL_LoadFunction(mock, "mock_set_angle"));
+            const auto set_error = reinterpret_cast<void (*)(int)>(SDL_LoadFunction(mock, "mock_set_error"));
+            const auto installs = reinterpret_cast<int (*)()>(SDL_LoadFunction(mock, "mock_installs"));
+            const auto removes = reinterpret_cast<int (*)()>(SDL_LoadFunction(mock, "mock_removes"));
+            CHECK(set_angle && set_error && installs && removes);
+            if (set_angle && set_error && installs && removes) {
+                input.settings.steering = app::Steering::wheel;
+                input.settings.wheel_axis = *heard;
+                input.settings.moza_angle = true;
+                input.settings.moza_sdk = argv[1];
+                set_angle(72000);
+                input.configure();
+                frame(input, in);
+                CHECK(installs() == 1 && input.last_counts == 0);
+                set_angle(72360);
+                frame(input, in);
+                CHECK(input.moza_degrees() == 72360 && input.last_counts == 160);
+                set_error(5);   // lost intermediate packets, current absolute angle is valid
+                set_angle(72720);
+                frame(input, in);
+                CHECK(input.moza_degrees() == 72720 && input.last_counts == 160);
+                set_error(2);   // disconnected: never reuse an old reading
+                frame(input, in);
+                CHECK(!input.moza_degrees() && input.last_counts == 0);
+                set_error(0);
+                set_angle(-72000);
+                frame(input, in);
+                CHECK(input.last_counts == 0);   // reconnect rebases
+                set_angle(-71640);
+                frame(input, in);
+                CHECK(input.last_counts == 160);
+                set_angle(std::numeric_limits<float>::quiet_NaN());
+                frame(input, in);
+                CHECK(!input.moza_degrees() && input.last_counts == 0);
+                input.settings.moza_angle = false;
+                input.configure();
+                CHECK(removes() == 1);
+            }
+            SDL_UnloadObject(mock);
+        }
+    }
+#else
+    app::MozaAngle unavailable;
+    CHECK(!unavailable.open("MOZA_SDK.dll") && !unavailable.read());
+#endif
+
+    // Disconnect and reconnect the same wheel between cabinet frames.
+    // The new position must not be interpreted as a steering movement.
+    input.settings = app::Settings{};
+    input.settings.steering = app::Steering::wheel;
+    input.settings.wheel_axis = *heard;
+    input.settings.wheel.edge = 1;
+    input.configure();
+    SDL_SetJoystickVirtualAxis(wheel, 0, 16000);
+    frame(input, in);
+    SDL_DetachVirtualJoystick(SDL_GetJoystickID(wheel));
+    SDL_CloseJoystick(wheel);
+    pump(input);
+    wheel = attach("Test wheel", SDL_JOYSTICK_TYPE_WHEEL, 1, 8);
+    CHECK(wheel != nullptr);
+    SDL_SetJoystickVirtualAxis(wheel, 0, -16000);
+    frame(input, in);
+    CHECK(input.devices().size() == 2);
+    CHECK(input.last_counts == 0);
+
     owner.reset();
+    CHECK((SDL_WasInit(SDL_INIT_HAPTIC) & SDL_INIT_HAPTIC) == 0);
     SDL_CloseJoystick(wheel);
     SDL_CloseJoystick(pedals);
     SDL_Quit();
