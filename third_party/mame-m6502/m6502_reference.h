@@ -15,6 +15,8 @@
     Beyond MAME's interface: step() (one instruction), set_state (to start
     from a native run's state) and elapsed() (within step(), the bus cycles
     so far: MAME's local time, which the board uses to time its chips).
+    dec_SP and inc_SP cast the new stack pointer to uint8_t, which MAME's
+    leave implicit (the same value; MSVC's /W4 /WX otherwise stops on it).
 
 *******************************************************************************/
 
@@ -124,8 +126,8 @@ protected:
 	static inline uint16_t set_l(uint16_t base, uint8_t val) { return (base & 0xff00) | val; }
 	static inline uint16_t set_h(uint16_t base, uint8_t val) { return (base & 0x00ff) | (val << 8); }
 
-	inline void dec_SP() { m_SP = set_l(m_SP, m_SP-1); }
-	inline void inc_SP() { m_SP = set_l(m_SP, m_SP+1); }
+	inline void dec_SP() { m_SP = set_l(m_SP, uint8_t(m_SP-1)); }
+	inline void inc_SP() { m_SP = set_l(m_SP, uint8_t(m_SP+1)); }
 
 	void do_adc_d(uint8_t val);
 	void do_adc_nd(uint8_t val);

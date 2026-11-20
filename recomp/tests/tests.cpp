@@ -501,7 +501,7 @@ void test_cfg_routine_inside_gap() {
     const auto& nodes = program.nodes();
     CHECK(nodes.contains(cfg::Loc{0x8026, 0}) && nodes.contains(cfg::Loc{0x8034, 0}));
     CHECK(program.gap_entries().contains(cfg::Loc{0x8020, 0}) && nodes.contains(cfg::Loc{0x8024, 0}));
-    for (const std::uint16_t data : {0x8010, 0x8012, 0x8014, 0x8016, 0x8030, 0x8032}) CHECK(!nodes.contains(cfg::Loc{data, 0}));
+    for (const std::uint16_t data : std::array<std::uint16_t, 6>{0x8010, 0x8012, 0x8014, 0x8016, 0x8030, 0x8032}) CHECK(!nodes.contains(cfg::Loc{data, 0}));
     for (const auto& f : program.findings()) CHECK(f.issue != cfg::Issue::overlap);
 }
 
