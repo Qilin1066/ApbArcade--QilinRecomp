@@ -11,6 +11,9 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-20
+The first release with a Windows download that needs nothing installed, and the first with CI green on every platform since 0.15.0 (Windows had failed unseen). Also: the looks, presets and speed options; controllers found in the background; the ROM folder remembered and asked for; one-step build scripts; stick steering with a curve; and cars no longer vanishing in play. The project is now ApbArcade-QilinRecomp.
+
 A soak test after all of the below: 24 random-player games of an hour each (216,000 frames, 24 hours of game time in all) run natively with no stop of any kind (watchdog, unlifted code, crash), and 4 of them identical to MAME's cores on every frame for the whole hour.
 
 ### Added
