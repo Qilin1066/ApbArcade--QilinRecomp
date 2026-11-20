@@ -4,6 +4,8 @@
 #include "text.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <charconv>
 #include <cstdlib>
 #include <cmath>
 #include <fstream>
@@ -30,8 +32,9 @@ std::string guid_of(SDL_JoystickID id) {
 double number(std::string_view text, double fallback) {
     const std::string s(text);
     char* end = nullptr;
+    errno = 0;
     const double v = std::strtod(s.c_str(), &end);
-    return end != s.c_str() ? v : fallback;
+    return end != s.c_str() && end == s.c_str() + s.size() && errno != ERANGE && std::isfinite(v) ? v : fallback;
 }
 
 }  // namespace
@@ -57,19 +60,35 @@ Binding Binding::parse(std::string_view text) {
         if (colon == std::string_view::npos) break;
         at = colon + 1;
     }
-    auto num = [&](std::size_t i) { return parts.size() > i ? static_cast<int>(number(parts[i], 0)) : 0; };
+    auto num = [&](std::size_t i) -> std::optional<int> {
+        if (parts.size() <= i) return std::nullopt;
+        int value = 0;
+        const auto part = parts[i];
+        const auto result = std::from_chars(part.data(), part.data() + part.size(), value);
+        if (result.ec != std::errc{} || result.ptr != part.data() + part.size()) return std::nullopt;
+        return value;
+    };
     if (parts[0] == "key" && parts.size() == 2) {
+        const auto index = num(1);
+        if (!index || *index <= SDL_SCANCODE_UNKNOWN || *index >= SDL_SCANCODE_COUNT) return {};
         b.kind = Kind::key;
-        b.index = num(1);
+        b.index = *index;
     } else if (parts[0] == "button" && parts.size() == 3) {
+        const auto index = num(2);
+        if (parts[1].empty() || !index || *index < 0) return {};
         b.kind = Kind::button;
         b.device = parts[1];
-        b.index = num(2);
+        b.index = *index;
     } else if ((parts[0] == "axis" || parts[0] == "hat") && parts.size() == 4) {
+        const auto index = num(2), value = num(3);
+        if (parts[1].empty() || !index || *index < 0 || !value) return {};
+        if (parts[0] == "axis") {
+            if (*value < -1 || *value > 1) return {};
+        } else if (*value != SDL_HAT_UP && *value != SDL_HAT_DOWN && *value != SDL_HAT_LEFT && *value != SDL_HAT_RIGHT) return {};
         b.kind = parts[0] == "axis" ? Kind::axis : Kind::hat;
         b.device = parts[1];
-        b.index = num(2);
-        b.value = num(3);
+        b.index = *index;
+        b.value = *value;
     }
     return b;
 }
@@ -330,8 +349,9 @@ void Input::configure() {
 double Input::read(const Binding& b) const {
     switch (b.kind) {
     case Binding::Kind::key: {
-        const bool* keys = SDL_GetKeyboardState(nullptr);
-        return keys[b.index] ? 1 : 0;
+        int count = 0;
+        const bool* keys = SDL_GetKeyboardState(&count);
+        return b.index >= 0 && b.index < count && keys[b.index] ? 1 : 0;
     }
     case Binding::Kind::button:
         if (const Device* d = find(b.device)) return SDL_GetJoystickButton(d->joystick, b.index) ? 1 : 0;

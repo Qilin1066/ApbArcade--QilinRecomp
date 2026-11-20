@@ -11,6 +11,9 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Fixed
+- **Malformed saved controls could cause invalid memory reads or broken steering.** Bindings now require whole integer indices, valid scancodes and supported axis/hat directions; keyboard reads also check SDL's array bounds. Numeric settings reject non-finite, overflowing and partially parsed values and keep their defaults instead. Regression tests cover damaged settings alongside the existing settings round-trip and virtual-controller tests.
+
 ## [0.17.0] - 2026-11-20
 The first release with a Windows download that needs nothing installed, and the first with CI green on every platform since 0.15.0 (Windows had failed unseen). Also: the looks, presets and speed options; controllers found in the background; the ROM folder remembered and asked for; one-step build scripts; stick steering with a curve; and cars no longer vanishing in play. The project is now ApbArcade-QilinRecomp.
 

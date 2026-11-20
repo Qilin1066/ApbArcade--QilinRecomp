@@ -154,6 +154,34 @@ int main() {
     }
     app::Settings from_old;
     CHECK(from_old.load(path) && from_old.stick_speed == 3 && from_old.stick_curve == 2);
+    // A damaged or hand-edited settings file must never supply invalid
+    // scancodes or non-finite values to the controls' arithmetic.
+    for (const char* bad : {"key:-1", "key:999999", "key:2147483648", "key:nan", "key:4junk", "key:4.5",
+                            "button:device:-1", "button::0", "axis:device:0:2", "hat:device:0:0"}) {
+        CHECK(app::Binding::parse(bad).empty());
+    }
+    CHECK(app::Binding::parse("key:4").index == 4);
+    CHECK(app::Binding::parse("axis:device:0:-1").value == -1);
+    CHECK(app::Binding::parse("hat:device:0:8").value == SDL_HAT_LEFT);
+    CHECK(input.read({app::Binding::Kind::key, {}, {}, -1, 0}) == 0);
+    CHECK(input.read({app::Binding::Kind::key, {}, {}, SDL_SCANCODE_COUNT, 0}) == 0);
+    {
+        std::ofstream damaged(path, std::ios::trunc);
+        damaged << "wheel_rotation = nan\nwheel_counts_per_turn = inf\nwheel_edge = 0.9junk\n"
+                   "mouse_counts = 1e9999\nstick_speed = 5junk\nstick_curve = nan\nfriction = nan\n"
+                   "pedal_released = -inf\npedal_floored = nan\ncrt_scanlines = nan\ncrt_mask = inf\n"
+                   "button1 = key:-1\n";
+    }
+    app::Settings recovered;
+    const app::Settings defaults;
+    CHECK(recovered.load(path));
+    CHECK(recovered.buttons[0].empty());
+    CHECK(recovered.wheel.rotation == defaults.wheel.rotation);
+    CHECK(recovered.wheel.counts_per_turn == defaults.wheel.counts_per_turn && recovered.wheel.edge == defaults.wheel.edge);
+    CHECK(recovered.mouse_counts == defaults.mouse_counts && recovered.stick_speed == defaults.stick_speed);
+    CHECK(recovered.stick_curve == defaults.stick_curve && recovered.friction == defaults.friction);
+    CHECK(recovered.pedal.released == defaults.pedal.released && recovered.pedal.floored == defaults.pedal.floored);
+    CHECK(recovered.display.scanlines == defaults.display.scanlines && recovered.display.mask == defaults.display.mask);
     CHECK(loaded.display.monitor == "Monitor = 2" && loaded.display.gpu == "Some GPU");
     CHECK(loaded.display.effect == gfx::Effect::crt && loaded.display.scanlines == 0.25f && loaded.display.mask == 0.75f);
     CHECK(app::Settings{}.display.scaling == gfx::Scaling::integer && app::Settings{}.display.vsync);
