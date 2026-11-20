@@ -44,7 +44,8 @@ public:
         if (last_) counts += (axis - *last_) * 0.5 * s_.rotation / 360.0 * s_.counts_per_turn;
         last_ = axis;
         if (s_.edge < 1 && std::abs(axis) > s_.edge) {
-            const double into = (std::abs(axis) - s_.edge) / (1 - s_.edge);
+            // edge < 1 here; the floor only keeps MSVC (C4723) from seeing a 0 divisor where a test sets edge to 1.
+            const double into = (std::abs(axis) - s_.edge) / std::max(1 - s_.edge, 1e-9);
             counts += std::copysign(s_.edge_rate * std::min(into, 1.0), axis);
         }
         return take(counts);
