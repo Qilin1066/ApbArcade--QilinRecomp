@@ -11,7 +11,15 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-21
+
+### Changed
+- **The settings menu is laid out as in the other QilinRecomp projects** (Punch-Out!!, Beat the Beat, Grabbed by the Ghoulies): "APB - settings (the game is paused)" with Close (Esc) and Quit the game at the top right of every page; Controls, Display and Game pages with Controllers, Steering, Gas pedal and Buttons and coins sections; *Back to the defaults*; a line of the shortcut keys; Window, Picture, Refresh rate and Graphics device sections; a Preset list; "Plain", "Smoothed pixel art" and "CRT television"; the CRT sliders in percent; *Look at the picture*; and an About section with the version, the settings file and the saves folder. The menu scales with the display (1.25x times its scale, as the others). Text wraps in APB's narrow upright window. No setting's meaning changed.
+- **Back + Start opens the menu on a controller** (Start alone closes it), as in the other recomps, instead of Start or Guide. Back is still coin 1, but counts as a coin only once it's been held for three frames (50 ms) without Start, so opening the menu doesn't drop a coin in. Checked in `qilin_input_tests`.
+- **Project licence: MIT** (`LICENSE`), as Beat the Beat's. The README's new Licence section lists what keeps its own licence (the vendored and fetched code) and that the game is Atari Games'.
+
 ### Added
+- **Frame times (F3)**, as in the other recomps: frames a second, the 1% and 0.1% lows over the last 20 s, the worst frame, the display's refresh and a graph of the last four seconds, top left. Kept in `apb.ini` (`performance_overlay`); also on the Display page. F3 and F11 can no longer be bound to a cabinet button.
 - **MAME-scheduling diagnostic mode** (`qilin_run --mame-scheduling 1`, and `mame_compare.py --mame-scheduling --boot-offset 0`). Port MAME 0.264's device scheduler, time arithmetic and every APB timer into the diagnostic runner only, so the recompiled CPUs take turns exactly as in standalone MAME. The standalone-MAME comparison now **passes** in this mode: all five sampled pictures identical, coin-window audio correlation 0.999919, identical sound commands, identical graphics replays. Scheduler logs match an instrumented MAME 0.264 line for line for 20 s of boot and 26 s of the scenario (`--mame-log`, `--mame-log-until`). `--mame-pixels 1` captures what MAME's Lua `pixels()` returns. The player keeps its own scheduler. See `docs/independent-mame.md`.
 - **MAME 0.264 switch in the reference 6502** (`mame0264`, off by default): live interrupt check at the end of prefetch and 0.264's BRK vector choice. The vendored core is from a newer MAME commit; the switch is used only by the diagnostic mode.
 

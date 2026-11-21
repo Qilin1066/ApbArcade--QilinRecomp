@@ -199,6 +199,7 @@ bool Settings::load(const std::string& path) {
     display.fullscreen = num("fullscreen", 0) != 0;
     display.monitor = std::string(get("monitor"));
     display.gpu = std::string(get("gpu"));
+    display.performance_overlay = num("performance_overlay", 0) != 0;
     rom_dir = std::string(get("rom_dir"));
     profiles.clear();
     for (const auto& [key, value] : kv) {
@@ -258,6 +259,7 @@ bool Settings::save(const std::string& path) const {
     const char* effect = display.effect == gfx::Effect::pixel_art ? "pixel_art" : display.effect == gfx::Effect::crt ? "crt" : "none";
     out << strf("effect = %s\ncrt_scanlines = %.9g\ncrt_mask = %.9g\n", effect, display.scanlines, display.mask);
     out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';
+    out << "performance_overlay = " << (display.performance_overlay ? 1 : 0) << '\n';
     out << "rom_dir = " << rom_dir << '\n';
     auto saved_profiles = profiles;
     if (steering == Steering::wheel && wheel_axis.device.size() == 32 && wheel_axis.device.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos)
@@ -520,9 +522,10 @@ void Input::handle(const SDL_Event& e) {
         if (playing) mouse_dx_ += e.motion.xrel;
         break;
     case SDL_EVENT_KEY_DOWN:
-        // Escape, F1 and F2 are the menu's and the test switch's, never a cabinet button.
+        // Escape, F1, F2, F3 and F11 are the program's (the menu, the test
+        // switch, frame times, full screen), never a cabinet button.
         if (listen_ == Listen::button && !e.key.repeat && e.key.scancode != SDL_SCANCODE_ESCAPE && e.key.scancode != SDL_SCANCODE_F1 &&
-            e.key.scancode != SDL_SCANCODE_F2) {
+            e.key.scancode != SDL_SCANCODE_F2 && e.key.scancode != SDL_SCANCODE_F3 && e.key.scancode != SDL_SCANCODE_F11) {
             heard_ = Binding{Binding::Kind::key, {}, {}, static_cast<int>(e.key.scancode), 0};
             listen_ = Listen::none;
         }
@@ -644,7 +647,15 @@ void Input::apply(sys2::Inputs& in) {
     in.in0 = static_cast<std::uint16_t>(in0);
     // IN1, active low: the coins and the service coin (the low bits are the board's own).
     unsigned in1 = 0xf0;
-    if (live && (key[SDL_SCANCODE_5] || pad(SDL_GAMEPAD_BUTTON_BACK) || bound(Button::coin_left))) in1 &= ~unsigned(in1_bits[0]);
+    if (pad(SDL_GAMEPAD_BUTTON_BACK)) {
+        if (pad(SDL_GAMEPAD_BUTTON_START)) back_with_start_ = true;
+        back_frames_ = std::min(back_frames_ + 1, 1000);
+    } else {
+        back_frames_ = 0;
+        back_with_start_ = false;
+    }
+    const bool back_coin = back_frames_ >= 3 && !back_with_start_;   // 3 frames: 50 ms, shorter than any press
+    if (live && (key[SDL_SCANCODE_5] || back_coin || bound(Button::coin_left))) in1 &= ~unsigned(in1_bits[0]);
     if (live && (key[SDL_SCANCODE_6] || bound(Button::coin_right))) in1 &= ~unsigned(in1_bits[1]);
     if (live && (key[SDL_SCANCODE_9] || bound(Button::service))) in1 &= ~unsigned(in1_bits[2]);
     in.in1 = static_cast<std::uint8_t>(in1);

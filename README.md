@@ -137,8 +137,11 @@ build/apb ["D:/APB Arcade Project"] [--scale N] [--no-vsync] [--gpu N] [--mute]
 | Fire | Left Alt or X | B |
 | Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
 | Self-test switch | F2 (toggles) | |
-| Settings menu (pauses the game) | F1 or Escape | Start or Guide |
-| Full screen (on/off) | Alt+Enter or F11 | |
+| Settings menu (pauses the game) | F1 or Escape | Back + Start (Start alone closes it) |
+| Frame times (on/off) | F3 | |
+| Full screen (on/off) | F11 or Alt+Enter | |
+
+The settings menu is laid out as in the other QilinRecomp projects (Punch-Out!!, Beat the Beat, Grabbed by the Ghoulies): Close and Quit at the top right, then Controls, Display and Game pages, with *Look at the picture* and an About section. Pressing Back with Start doesn't drop a coin in: Back counts as a coin once it's been held for three frames (50 ms) without Start.
 
 **Wheels, pedals, spinners.** The settings menu sets them up; nothing is needed for the keyboard or a gamepad. APB's cabinet wheel spins freely and the game counts how far it turns, so a PC wheel drives it by how far its angle moves each frame:
 
@@ -186,6 +189,15 @@ The independent MAME harness now replays captured per-band graphics state throug
 | `tools/difftest/`, `tools/difftest6502/` | Differential tests: lifted game functions against MAME's T-11 and 6502 cores |
 | `third_party/` | Vendored: the Vulkan headers and volk (as in GBTGhoulies-QilinRecomp), and MAME's T-11 and 6502 cores (the reference CPUs). See `third_party/README.md` |
 | `docs/` | Design targets, the board, the recompiler's status, naming |
+
+## Licence
+
+This project's own code and documentation are under the [MIT licence](LICENSE). Some things in or around it are not:
+
+- The vendored code in `third_party/` keeps its own licences: MAME's T-11, 6502 and TMS5220 cores and ymfm (BSD-3-Clause), Dear ImGui (MIT), volk (MIT) and the Vulkan headers (Apache-2.0 or MIT). The MAME scheduler port in `recomp/runtime/mame/` follows MAME's BSD-3-Clause. See `third_party/README.md`.
+- SDL3 (zlib), fetched by CMake at build time, and in the Windows download LLVM-MinGW and Ninja (Apache-2.0), keep theirs.
+
+The game itself is Atari Games' and is not covered by anything here: you need your own ROMs, and nothing built from them may be shared.
 
 ## Design targets (short version)
 

@@ -298,9 +298,28 @@ int main(int argc, char** argv) {
     CHECK((in.in0 & 0x0008) != 0 && (in.in1 & 0x40) != 0);
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, true);
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, true);
+    // Back is a coin from its third frame held (Back + Start is the menu's).
+    frame(input, in);
+    CHECK((in.in0 & 0x008a) == 0x0082 && (in.in1 & 0x40) != 0);
+    frame(input, in);
+    CHECK((in.in1 & 0x40) != 0);
     frame(input, in);
     CHECK((in.in0 & 0x008a) == 0x0082 && (in.in1 & 0x40) == 0);
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, false);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, false);
+    frame(input, in);
+    CHECK((in.in1 & 0x40) != 0);
+    // Back with Start (the settings menu): no coin, however long it's held.
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, true);
+    frame(input, in);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, true);
+    for (int i = 0; i < 5; ++i) {
+        frame(input, in);
+        CHECK((in.in1 & 0x40) != 0);
+    }
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, false);
+    frame(input, in);
+    CHECK((in.in1 & 0x40) != 0);   // still held from the menu's press: not a coin until let go
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, false);
     // B fires on APB's bit 1; X remains the alternate siren on bit 3.
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_EAST, true);

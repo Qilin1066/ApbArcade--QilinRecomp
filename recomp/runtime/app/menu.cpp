@@ -10,10 +10,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
+
+#ifndef QILIN_APP_VERSION
+#define QILIN_APP_VERSION "?"
+#endif
 
 namespace qilin::app {
 
 namespace {
+
+constexpr const char* hint_text = "F1 or Esc (controller: Back + Start): settings";
 
 // The window's format, which ImGui's pipeline info points at for as long as it lives.
 VkFormat window_format = VK_FORMAT_UNDEFINED;
@@ -67,8 +74,12 @@ Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::strin
     io.IniFilename = nullptr;   // the menu keeps no layout file; the settings file is apb's
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     ImGui::StyleColorsDark();
-    ImGui::GetStyle().ScaleAllSizes(1.25f);
+    // 1.25x, as the other recomps have it, times the display's own scale.
+    float dpi = SDL_GetWindowDisplayScale(window_);
+    if (!(dpi > 0.0f)) dpi = 1.0f;
+    ImGui::GetStyle().ScaleAllSizes(1.25f * dpi);
     ImGui::GetStyle().FontScaleMain = 1.25f;
+    ImGui::GetStyle().FontScaleDpi = dpi;
     if (!ImGui_ImplSDL3_InitForVulkan(window_)) return;
     sdl_backend_ = true;
 
@@ -92,6 +103,7 @@ Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::strin
     if (!ImGui_ImplVulkan_Init(&info)) return;
     ok_ = true;
     hint_until_ = SDL_GetTicks() + 8000;
+    std::fprintf(stderr, "apb: %s\n", hint_text);
     // Steering by mouse or spinner: it's captured while playing.
     SDL_SetWindowRelativeMouseMode(window_, input_.settings.steering == Steering::mouse);
 }
@@ -112,6 +124,7 @@ void Menu::set_open(bool open) {
     listening_button_ = -1;
     finding_wheel_ = false;
     measuring_ = false;
+    peek_ = close_asked_ = false;
     SDL_SetWindowRelativeMouseMode(window_, !open && input_.settings.steering == Steering::mouse);
     if (!open) save();   // closing the menu keeps what was set
 }
@@ -127,6 +140,14 @@ void Menu::handle(const SDL_Event& e) {
     case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: input_.settings.display.fullscreen = false; break;
     case SDL_EVENT_KEY_DOWN:
         if (e.key.repeat) break;
+        if (peek_) {   // looking at the picture: any key brings the menu back
+            peek_ = false;
+            break;
+        }
+        if (e.key.key == SDLK_F3) {   // the frame-time readout, kept in the settings
+            input_.settings.display.performance_overlay = !input_.settings.display.performance_overlay;
+            save();
+        }
         if (e.key.key == SDLK_F1) toggle();
         if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) {
             set_fullscreen(!input_.settings.display.fullscreen);
@@ -146,10 +167,23 @@ void Menu::handle(const SDL_Event& e) {
             }
         }
         break;
-    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-        // Start (the game has no use for it) or Guide; not Back, the gamepad's coin.
-        if (e.gbutton.button == SDL_GAMEPAD_BUTTON_START || e.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE) toggle();
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        peek_ = false;
         break;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+        if (peek_) {
+            peek_ = false;
+            break;
+        }
+        // Back and Start together, as in the other recomps (Back alone is
+        // coin 1; Input holds it back while Start is pressed with it); with
+        // the menu open, Start alone closes it too.
+        SDL_Gamepad* pad = SDL_GetGamepadFromID(e.gbutton.which);
+        const bool back = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
+        const bool start = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
+        if ((back && start) || (open_ && e.gbutton.button == SDL_GAMEPAD_BUTTON_START)) toggle();
+        break;
+    }
     default: break;
     }
 }
@@ -161,9 +195,18 @@ void Menu::notify(std::string text) {
 
 void Menu::frame() {
     const std::uint64_t now = SDL_GetTicks();
+    // Every shown frame's interval, for F3 (recorded whether it's showing or not).
+    const std::uint64_t ns = SDL_GetTicksNS();
+    if (last_frame_ns_ && !open_) {
+        frame_ms_[frame_next_] = static_cast<float>(static_cast<double>(ns - last_frame_ns_) / 1e6);
+        frame_next_ = (frame_next_ + 1) % frame_history;
+        frame_count_ = std::min(frame_count_ + 1, frame_history);
+    }
+    last_frame_ns_ = open_ ? 0 : ns;   // the paused menu's frames aren't the game's
     std::erase_if(notices_, [&](const Notice& n) { return n.until <= now; });
     const bool hint = !open_ && (now < hint_until_ || !notices_.empty());
-    if (!ok_ || (!open_ && !hint)) {
+    const bool times = !open_ && input_.settings.display.performance_overlay;
+    if (!ok_ || (!open_ && !hint && !times) || (open_ && peek_)) {
         if (drawing_) {
             renderer_.set_overlay({});
             drawing_ = false;
@@ -180,23 +223,39 @@ void Menu::frame() {
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     const ImGuiViewport* view = ImGui::GetMainViewport();
-    if (hint) {
-        ImGui::SetNextWindowPos(ImVec2(view->WorkPos.x + 12, view->WorkPos.y + view->WorkSize.y - 12), ImGuiCond_Always, ImVec2(0, 1));
-        ImGui::SetNextWindowBgAlpha(0.6f);
-        ImGui::Begin("hint", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
-                                          ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        for (const auto& n : notices_) ImGui::TextUnformatted(n.text.c_str());
-        if (now < hint_until_) ImGui::TextUnformatted("F1 or Esc (gamepad: Start or Menu): settings");
-        ImGui::End();
+    if (!open_) {
+        if (hint) {
+            ImGui::SetNextWindowPos(ImVec2(view->WorkPos.x + 12, view->WorkPos.y + view->WorkSize.y - 12), ImGuiCond_Always, ImVec2(0, 1));
+            ImGui::SetNextWindowBgAlpha(0.6f);
+            ImGui::Begin("##hint", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                                ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+            for (const auto& n : notices_) ImGui::TextUnformatted(n.text.c_str());
+            if (now < hint_until_) ImGui::TextUnformatted(hint_text);
+            ImGui::End();
+        }
+        if (times) draw_frame_times();
     } else {
         ImGui::SetNextWindowPos(view->WorkPos);
         ImGui::SetNextWindowSize(view->WorkSize);
         ImGui::SetNextWindowBgAlpha(0.88f);
-        ImGui::Begin("APB settings", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
-                                                  ImGuiWindowFlags_NoSavedSettings);
+        ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+        constexpr const char* title = "APB - settings (the game is paused)";
+        ImGui::TextUnformatted(title);
+        // Close and Quit, top right on every page, as in the other recomps
+        // (on a line of their own when the window is too narrow for both:
+        // APB's own window is upright, 384 pixels wide at 1x).
+        const ImGuiStyle& st = ImGui::GetStyle();
+        const float buttons = ImGui::CalcTextSize("Close (Esc)").x + ImGui::CalcTextSize("Quit the game").x + 4 * st.FramePadding.x + st.ItemSpacing.x;
+        const float width = ImGui::GetContentRegionAvail().x;
+        if (ImGui::CalcTextSize(title).x + st.ItemSpacing.x + buttons <= width) ImGui::SameLine(width - buttons + st.WindowPadding.x);
+        else ImGui::SetCursorPosX(std::max(st.WindowPadding.x, width - buttons + st.WindowPadding.x));
+        if (ImGui::Button("Close (Esc)")) close_asked_ = true;   // closed once the frame is built
+        ImGui::SameLine();
+        if (ImGui::Button("Quit the game")) quit_ = true;
+        ImGui::Separator();
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);   // sliders take half; their labels the rest
-        ImGui::TextDisabled("Paused. F1 or Esc to go back to the game; settings are saved when you do.");
-        if (ImGui::BeginTabBar("tabs")) {
+        ImGui::PushTextWrapPos(0.0f);   // APB's window is upright and narrow: text wraps
+        if (ImGui::BeginTabBar("pages")) {
             if (ImGui::BeginTabItem("Controls")) {
                 controls_tab();
                 ImGui::EndTabItem();
@@ -211,19 +270,68 @@ void Menu::frame() {
             }
             ImGui::EndTabBar();
         }
+        ImGui::PopTextWrapPos();
         ImGui::PopItemWidth();
         ImGui::End();
     }
     ImGui::Render();
+    if (close_asked_) {
+        close_asked_ = false;
+        set_open(false);   // saves; the frame already built is still drawn
+    }
+}
+
+// F3: how evenly frames reach the screen, top left, as in the other recomps.
+// The lows are the frame rates of the slowest 1% and 0.1% of frames over the
+// last 20 s.
+void Menu::draw_frame_times() {
+    const ImGuiViewport* view = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(view->WorkPos.x + 8.0f, view->WorkPos.y + 8.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##frame times", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                               ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    if (frame_count_ < 2) {
+        ImGui::TextUnformatted("frame times: waiting for frames");
+    } else {
+        std::vector<float> sorted;
+        sorted.reserve(frame_count_);
+        double total = 0;
+        for (std::size_t i = 0; i < frame_count_; ++i) {
+            const float ms = frame_ms_[(frame_next_ + frame_history - 1 - i) % frame_history];
+            sorted.push_back(ms);
+            total += ms;
+        }
+        std::ranges::sort(sorted, std::greater<>());
+        const double average = total / static_cast<double>(frame_count_);
+        const auto low = [&](double share) {   // the frame rate of the slowest share of frames
+            const auto n = std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(sorted.size()) * share));
+            double sum = 0;
+            for (std::size_t i = 0; i < n; ++i) sum += sorted[i];
+            return 1000.0 / (sum / static_cast<double>(n));
+        };
+        ImGui::Text("%.1f fps  %.2f ms", 1000.0 / average, average);
+        ImGui::Text("1%% low %.1f  0.1%% low %.1f", low(0.01), low(0.001));
+        ImGui::Text("worst %.1f ms", static_cast<double>(sorted.front()));
+        // The game makes 60.1 frames a second, as the cabinet did; "match the
+        // display" shows each one a whole number of times.
+        double hz = 0;
+        const int repeats = display_repeats(window_, input_.settings.display, &hz);
+        if (repeats > 1) ImGui::Text("display %.0f Hz: each frame shown %d times", hz, repeats);
+        else if (hz > 0) ImGui::Text("display %.0f Hz%s", hz, repeats == 1 ? ": locked" : "");
+        std::vector<float> recent(std::min<std::size_t>(frame_count_, 240));
+        for (std::size_t i = 0; i < recent.size(); ++i)
+            recent[recent.size() - 1 - i] = frame_ms_[(frame_next_ + frame_history - 1 - i) % frame_history];
+        ImGui::PlotLines("##ft", recent.data(), static_cast<int>(recent.size()), 0, nullptr, 0.0f, 50.0f, ImVec2(240.0f, 48.0f));
+    }
+    ImGui::End();
 }
 
 void Menu::controls_tab() {
-    if (ImGui::CollapsingHeader("Connected controllers", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (input_.devices().empty()) ImGui::TextDisabled("None: the keyboard only.");
-        for (const auto& d : input_.devices()) {
-            ImGui::BulletText("%s  (%s; %d axes, %d buttons%s)", d.name.c_str(), Input::type_name(d.type), SDL_GetNumJoystickAxes(d.joystick),
-                              SDL_GetNumJoystickButtons(d.joystick), SDL_IsJoystickHaptic(d.joystick) ? "; force feedback" : "");
-        }
+    ImGui::SeparatorText("Controllers");
+    if (input_.devices().empty()) ImGui::TextDisabled("None connected: the keyboard plays the cabinet.");
+    for (const auto& d : input_.devices()) {
+        ImGui::BulletText("%s  (%s; %d axes, %d buttons%s)", d.name.c_str(), Input::type_name(d.type), SDL_GetNumJoystickAxes(d.joystick),
+                          SDL_GetNumJoystickButtons(d.joystick), SDL_IsJoystickHaptic(d.joystick) ? "; force feedback" : "");
     }
     if (ImGui::Button("Save controller diagnostics")) {
         auto path = std::filesystem::path(std::u8string(path_.begin(), path_.end())).parent_path() / "controllers.txt";
@@ -237,7 +345,7 @@ void Menu::controls_tab() {
     pedal_section();
     buttons_section();
     ImGui::Separator();
-    if (ImGui::Button("Reset all controls to the defaults")) {
+    if (ImGui::Button("Back to the defaults")) {
         const DisplaySettings display = input_.settings.display;   // the display and the ROM folder aren't controls
         const std::string rom_dir = input_.settings.rom_dir;
         input_.settings = Settings{};
@@ -249,10 +357,12 @@ void Menu::controls_tab() {
         listening_button_ = -1;
         input_.configure();
     }
+    ImGui::TextDisabled("Escape, F1, F2, F3 and F11 are kept for the program.");
+    ImGui::TextDisabled("F1 or Esc (controller: Back + Start): this menu. F2: the self-test switch. F3: frame times. F11 or Alt+Enter: full screen.");
 }
 
 void Menu::steering_section() {
-    if (!ImGui::CollapsingHeader("Steering", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::SeparatorText("Steering");
     auto& s = input_.settings;
     ImGui::TextWrapped("APB's wheel spins freely: the game counts how far it turns, not where it is. The arrow keys and a "
                        "gamepad's left stick always steer too.");
@@ -455,7 +565,7 @@ void Menu::steering_section() {
 }
 
 void Menu::pedal_section() {
-    if (!ImGui::CollapsingHeader("Gas pedal", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::SeparatorText("Gas pedal");
     auto& s = input_.settings;
     ImGui::TextWrapped("The Up key and a gamepad's right trigger always work. A pedal (or any axis) can be added:");
     ImGui::Text("Pedal: %s", s.pedal_axis.describe().c_str());
@@ -495,7 +605,7 @@ void Menu::pedal_section() {
 }
 
 void Menu::buttons_section() {
-    if (!ImGui::CollapsingHeader("Buttons and coins", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::SeparatorText("Buttons and coins");
     auto& s = input_.settings;
     static constexpr const char* defaults[] = {"Left Ctrl, Z, gamepad A", "Left Alt, X, gamepad B", "Space, C, gamepad X",
                                                "5, gamepad Back", "6", "9"};
@@ -550,8 +660,9 @@ void Menu::display_tab() {
         renderer_.set_effect(d.effect, d.scanlines, d.mask);
         renderer_.set_vsync(d.vsync);
     };
+    ImGui::SeparatorText("Window");
     bool fullscreen = d.fullscreen;
-    if (ImGui::Checkbox("Full screen (Alt+Enter or F11)", &fullscreen)) set_fullscreen(fullscreen);
+    if (ImGui::Checkbox("Full screen (F11 or Alt+Enter)", &fullscreen)) set_fullscreen(fullscreen);
 
     int count = 0;
     SDL_DisplayID* displays = SDL_GetDisplays(&count);
@@ -568,61 +679,62 @@ void Menu::display_tab() {
     SDL_free(displays);
 
     ImGui::SeparatorText("Picture");
-    const int preset = matching_preset(d);
-    ImGui::TextUnformatted("Preset");
     bool changed = false;
-    for (std::size_t i = 0; i < display_presets.size(); ++i) {
-        ImGui::SameLine();
-        const bool chosen = preset == static_cast<int>(i);
-        if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (ImGui::Button(display_presets[i].name)) {
-            apply_preset(d, i);
-            changed = true;
+    const int preset = matching_preset(d);
+    if (ImGui::BeginCombo("Preset", preset < 0 ? "(set by hand)" : display_presets[static_cast<std::size_t>(preset)].name)) {
+        for (std::size_t i = 0; i < display_presets.size(); ++i) {
+            if (ImGui::Selectable(display_presets[i].name, preset == static_cast<int>(i))) {
+                apply_preset(d, i);
+                changed = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", display_presets[i].about);
         }
-        if (chosen) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", display_presets[i].about);
+        ImGui::EndCombo();
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled(preset < 0 ? "(set by hand)" : "");
     int scaling = static_cast<int>(d.scaling);
-    ImGui::TextUnformatted("Size");
+    bool scaling_changed = ImGui::RadioButton("Whole multiples (sharpest)", &scaling, static_cast<int>(gfx::Scaling::integer));
     ImGui::SameLine();
-    changed |= ImGui::RadioButton("Whole multiples (sharpest)", &scaling, static_cast<int>(gfx::Scaling::integer));
+    scaling_changed |= ImGui::RadioButton("Fit", &scaling, static_cast<int>(gfx::Scaling::fit));
     ImGui::SameLine();
-    changed |= ImGui::RadioButton("Fit", &scaling, static_cast<int>(gfx::Scaling::fit));
-    ImGui::SameLine();
-    changed |= ImGui::RadioButton("Fill the window", &scaling, static_cast<int>(gfx::Scaling::stretch));
-    if (changed) d.scaling = static_cast<gfx::Scaling>(scaling);
+    scaling_changed |= ImGui::RadioButton("Fill the window", &scaling, static_cast<int>(gfx::Scaling::stretch));
+    if (scaling_changed) d.scaling = static_cast<gfx::Scaling>(scaling);
+    changed |= scaling_changed;
     int effect = static_cast<int>(d.effect);
-    ImGui::TextUnformatted("Look");
-    ImGui::SameLine();
-    bool effect_changed = ImGui::RadioButton("Plain pixels", &effect, static_cast<int>(gfx::Effect::none));
+    bool effect_changed = ImGui::RadioButton("Plain", &effect, static_cast<int>(gfx::Effect::none));
     ImGui::SameLine();
     effect_changed |= ImGui::RadioButton("Smoothed pixel art", &effect, static_cast<int>(gfx::Effect::pixel_art));
     ImGui::SameLine();
-    effect_changed |= ImGui::RadioButton("CRT", &effect, static_cast<int>(gfx::Effect::crt));
+    effect_changed |= ImGui::RadioButton("CRT television", &effect, static_cast<int>(gfx::Effect::crt));
     if (effect_changed) d.effect = static_cast<gfx::Effect>(effect);
     changed |= effect_changed;
     if (d.effect == gfx::Effect::none) {
         if (renderer_.smooth_supported()) {
-            changed |= ImGui::Checkbox("Smooth (at sizes that aren't whole multiples)", &d.smooth);
+            changed |= ImGui::Checkbox("Smooth", &d.smooth);
         } else {
-            ImGui::TextDisabled("Smooth scaling: this graphics device can't (the picture is scaled sharp).");
+            ImGui::TextDisabled("Smooth: this graphics device can't (the picture is scaled sharp).");
         }
     } else if (d.effect == gfx::Effect::pixel_art) {
-        ImGui::TextDisabled("Edges between colours are drawn as lines instead of steps. Sharpest at whole multiples.");
+        ImGui::TextDisabled("Edges between colours are drawn as lines instead of steps. Sharpest at Whole multiples.");
     } else {
-        changed |= ImGui::SliderFloat("Scanlines", &d.scanlines, 0.0f, 1.0f, "%.2f");
-        changed |= ImGui::SliderFloat("Phosphor stripes", &d.mask, 0.0f, 1.0f, "%.2f");
-        ImGui::TextDisabled("APB's monitor stood upright, so its scanlines run down the screen. They need about two screen\n"
-                            "pixels per line to show: they fade out on smaller pictures.");
+        int scan = static_cast<int>(std::lround(d.scanlines * 100)), mask = static_cast<int>(std::lround(d.mask * 100));
+        if (ImGui::SliderInt("Scanlines", &scan, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+            d.scanlines = static_cast<float>(scan) / 100.0f;
+            changed = true;
+        }
+        if (ImGui::SliderInt("Phosphor stripes", &mask, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+            d.mask = static_cast<float>(mask) / 100.0f;
+            changed = true;
+        }
+        ImGui::TextDisabled("APB's monitor stood upright, so its scanlines run down the screen. They show best at Whole "
+                            "multiples, or a large window: they fade out below about two screen pixels per line.");
     }
-    changed |= ImGui::Checkbox("Vsync (wait for the display: no tearing)", &d.vsync);
+    changed |= ImGui::Checkbox("Vsync", &d.vsync);
+    ImGui::Checkbox("Frame times (F3)", &d.performance_overlay);
     if (changed) apply();
+
+    ImGui::SeparatorText("Refresh rate");
     if (d.vsync) {
         int speed = d.match_display ? 1 : 0;
-        ImGui::TextUnformatted("Speed");
-        ImGui::SameLine();
         bool speed_changed = ImGui::RadioButton("Exact (the cabinet's 60.1 Hz)", &speed, 0);
         ImGui::SameLine();
         speed_changed |= ImGui::RadioButton("Match the display (smoothest)", &speed, 1);
@@ -632,7 +744,7 @@ void Menu::display_tab() {
         if (d.match_display && !speed_note.empty()) {
             ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%s", speed_note.c_str());
         } else if (!d.match_display) {
-            ImGui::TextDisabled("The newest frame is shown at each refresh. On a 60 Hz display one frame in about 600 is skipped,\n"
+            ImGui::TextDisabled("The newest frame is shown at each refresh. On a 60 Hz display one frame in about 600 is skipped, "
                                 "as 60.1 doesn't divide into 60; a variable-refresh (FreeSync, G-Sync) display shows every one.");
         } else if (repeats) {
             const double game_rate = hz / repeats;
@@ -644,8 +756,11 @@ void Menu::display_tab() {
                                                   : "This display's refresh rate isn't known: the exact speed is used.", hz).c_str());
         }
     } else {
-        ImGui::TextDisabled("The game always runs at the cabinet's 60.1 frames a second.");
+        ImGui::TextDisabled("Without vsync the game always runs at the cabinet's 60.1 frames a second.");
     }
+    if (ImGui::Button("Look at the picture")) peek_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(any key or button comes back)");
 
     ImGui::SeparatorText("Graphics device");
     const auto& devices = renderer_.devices();
@@ -656,18 +771,19 @@ void Menu::display_tab() {
             if (ImGui::Selectable(name.c_str(), d.gpu == name)) d.gpu = name;
         ImGui::EndCombo();
     }
-    ImGui::Text("In use: %s", renderer_.device_name().c_str());
-    const std::string& wanted = d.gpu.empty() ? (devices.empty() ? renderer_.device_name() : devices.front()) : d.gpu;
-    if (wanted != renderer_.device_name()) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "The device changes the next time apb starts.");
+    ImGui::TextDisabled("In use: %s. A change takes effect the next time the game starts.", renderer_.device_name().c_str());
 }
 
 void Menu::game_tab() {
+    ImGui::SeparatorText("The cabinet");
     ImGui::Checkbox("Self-test switch (the cabinet's test mode; F2)", &input_.test_switch);
-    ImGui::Separator();
-    ImGui::Text("Settings file: %s", path_.c_str());
-    ImGui::TextDisabled("APB (Atari Games, 1987), recompiled by ApbArcade-QilinRecomp. Menu: Dear ImGui (MIT).");
-    ImGui::Separator();
-    if (ImGui::Button("Quit the game")) quit_ = true;
+
+    ImGui::SeparatorText("About");
+    ImGui::TextWrapped("APB QilinRecomp %s: a static recompilation, the game's own code compiled for this computer.", QILIN_APP_VERSION);
+    ImGui::TextWrapped("APB: Atari Games, 1987. Graphics: Vulkan. Window, sound and input: SDL3 (zlib). Menu: Dear ImGui (MIT).");
+    ImGui::TextWrapped("Settings file: %s", path_.c_str());
+    const auto folder = std::filesystem::path(std::u8string(path_.begin(), path_.end())).parent_path().u8string();
+    ImGui::TextWrapped("Saves (high scores and audits): %s", std::string(folder.begin(), folder.end()).c_str());
 }
 
 }  // namespace qilin::app

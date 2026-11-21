@@ -62,6 +62,7 @@ struct DisplaySettings {
     bool fullscreen = false;    // borderless, at the display's own mode
     std::string monitor;        // the display's name; empty: the primary display
     std::string gpu;            // the Vulkan device's name; empty: the best one (used at start-up)
+    bool performance_overlay = false;  // the frame-time readout (F3), as the other recomps have it
 };
 
 // One-click settings for the picture (the Display page's presets): its size
@@ -196,6 +197,11 @@ private:
     bool focused_ = true, requested_playing_ = true;
     bool was_playing_ = true;
     bool resuming_ = false;
+    // The gamepad's Back is coin 1, and Back + Start is the settings menu (as
+    // in the other recomps): Back counts as a coin once it has been held for
+    // a few frames without Start, so opening the menu doesn't drop one in.
+    int back_frames_ = 0;
+    bool back_with_start_ = false;
     double mouse_dx_ = 0, mouse_carry_ = 0;
     int pedal_ = 0;   // the keys' and trigger's pedal, 0..0x3f, moved 8 a frame
 

@@ -1,7 +1,8 @@
 #pragma once
 // The recomp's own settings menu, over the game (F1 or Escape, or a
-// gamepad's Start or Guide): the controls and the display. Alt+Enter or
-// F11 switches full screen whether it's open or not.
+// controller's Back + Start, as in the other recomps): the controls and the
+// display. F11 or Alt+Enter switches full screen whether it's open or not;
+// F3 shows frame times.
 // Dear ImGui (third_party/imgui, MIT) drawn by its Vulkan backend in the
 // renderer's overlay pass, with its SDL3 backend for mouse, keys and pads.
 // While it's open the game is paused.
@@ -66,6 +67,15 @@ private:
     void buttons_section();
     void game_tab();
     void save();
+    void draw_frame_times();
+
+    // F3: the last 20 s of intervals between frames shown, in ms.
+    static constexpr std::size_t frame_history = 1200;
+    std::vector<float> frame_ms_ = std::vector<float>(frame_history, 0.0f);
+    std::size_t frame_next_ = 0, frame_count_ = 0;
+    std::uint64_t last_frame_ns_ = 0;
+    bool peek_ = false;                     // "Look at the picture": the menu hidden until any key or button
+    bool close_asked_ = false;              // the Close button (acted on after the frame is built)
 
     SDL_Window* window_;
     gfx::Renderer& renderer_;

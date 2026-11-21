@@ -15,8 +15,9 @@
 //   5, 6               coin slots 1 and 2      (Back)
 //   9                  service coin
 //   F2                 the self-test switch (on/off)
-//   F1 or Escape       the settings menu       (Start or Guide)
-//   Alt+Enter or F11   full screen (on/off)
+//   F1 or Escape       the settings menu       (Back + Start; Start alone closes it)
+//   F3                 frame times (on/off)
+//   F11 or Alt+Enter   full screen (on/off)
 // The menu sets up wheels (any: a direct-drive wheel that spins freely, as
 // the cabinet's did, or one that stops at a lock), pedals and extra button
 // bindings, and the display: full screen, which display, the picture's size
