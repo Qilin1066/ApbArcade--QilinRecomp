@@ -39,6 +39,8 @@ lic="$pkg/LICENSES"
 mkdir -p "$lic/llvm-mingw" "$lic/ninja" "$lic/SDL3"
 mv "$pkg/kit/toolchain/licenses/"* "$lic/llvm-mingw/"
 rmdir "$pkg/kit/toolchain/licenses"
+mkdir -p "$lic/APB-QilinRecomp"
+sed 's/$/\r/' "$root/LICENSE" > "$lic/APB-QilinRecomp/LICENSE.txt"  # GPL-3.0
 cp "$NINJA_WINDOWS/COPYING" "$lic/ninja/"
 cp "$build/_deps/sdl3-src/LICENSE.txt" "$lic/SDL3/"
 for d in "$root"/third_party/*/; do

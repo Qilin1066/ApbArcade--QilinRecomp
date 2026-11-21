@@ -192,7 +192,7 @@ The independent MAME harness now replays captured per-band graphics state throug
 
 ## Licence
 
-This project's own code and documentation are under the [MIT licence](LICENSE). Some things in or around it are not:
+This project's own code and documentation are under the [GNU General Public License, version 3](LICENSE) (GPL-3.0), as in the other QilinRecomp projects: you may use, share, change and sell it, but anything you distribute that is built from it must come with its full source under the same licence. (Versions before 2026-11-21 were released under MIT, and those copies stay under MIT.) Some things in or around it are not:
 
 - The vendored code in `third_party/` keeps its own licences: MAME's T-11, 6502 and TMS5220 cores and ymfm (BSD-3-Clause), Dear ImGui (MIT), volk (MIT) and the Vulkan headers (Apache-2.0 or MIT). The MAME scheduler port in `recomp/runtime/mame/` follows MAME's BSD-3-Clause. See `third_party/README.md`.
 - SDL3 (zlib), fetched by CMake at build time, and in the Windows download LLVM-MinGW and Ninja (Apache-2.0), keep theirs.
