@@ -11,11 +11,6 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
-### Changed
-- **The Windows download is now `ApbArcade--QilinRecomp-<version>-windows-x64.zip`**, and unpacks to a folder of that name, as Ghoulies' and Punch-Out's are named after their repositories (it was `APB-QilinRecomp-…`). Its contents, and the game's data folder, are unchanged.
-- **The repository is now Qilin1066/ApbArcade--QilinRecomp** (renamed by the owner, as were the sister projects: GBTGhoulies--QilinRecomp, PunchOutWii--QilinRecomp, and Beat the Beat's, now RhythmHeavenFever--QilinRecomp; GitHub redirects the old names). Links and docs follow. The download keeps its name, `APB-QilinRecomp-X.Y.Z-windows-x64.zip`, and the data folder is unchanged.
-- `docs/naming.md` records the window's title, the data folder and the menu's keys, as the sister projects' do.
-
 ## [0.22.0] - 2026-11-21
 
 A pass over the game as a player meets it: the controls, the menu, the window and where it keeps its files.
@@ -27,6 +22,9 @@ A pass over the game as a player meets it: the controls, the menu, the window an
 - **"Paused: click the window to carry on"** over the picture while the game waits because its window isn't the active one. Before, the picture simply stopped (and a window that opened behind another one stayed blank).
 
 ### Changed
+- **The Windows download is now `ApbArcade--QilinRecomp-<version>-windows-x64.zip`**, and unpacks to a folder of that name, as Ghoulies' and Punch-Out's are named after their repositories (it was `APB-QilinRecomp-…`). Its contents, and the game's data folder, are unchanged.
+- **The repository is now Qilin1066/ApbArcade--QilinRecomp** (renamed by the owner, as were the sister projects: GBTGhoulies--QilinRecomp, PunchOutWii--QilinRecomp, and Beat the Beat's, now RhythmHeavenFever--QilinRecomp; GitHub redirects the old names). Links and docs follow. The download keeps its name, `APB-QilinRecomp-X.Y.Z-windows-x64.zip`, and the data folder is unchanged.
+- `docs/naming.md` records the window's title, the data folder and the menu's keys, as the sister projects' do.
 - **The game's files are in `qilin/apb`, as the other QilinRecomp projects keep theirs**: `%LOCALAPPDATA%\qilin\apb` on Windows, `~/Library/Application Support/qilin/apb` on macOS, `$XDG_DATA_HOME` or `~/.local/share/qilin/apb` elsewhere. They were in SDL's preferences folder for `Qilin/apb` (`%APPDATA%\Qilin\apb` on Windows). The first run brings the settings, high scores and their backup across: every file is copied before any old one is removed, nothing is overwritten, and if a copy fails the old folder goes on being used. The build scripts and the Windows download read the ROM folder from either place.
 - **A wheel's own buttons work without being set up** where SDL knows the wheel as a gamepad (A, B, X, Start, Back and its d-pad): only its stick and triggers are left out once it's bound as the wheel, since those are the wheel and pedals themselves. A real gamepad with one trigger bound as the pedal keeps its stick and buttons (binding it used to switch the whole pad's defaults off).
 - **Every controller works the menu**, not only the first one SDL lists (which can be a virtual pad or a wheel's base).
