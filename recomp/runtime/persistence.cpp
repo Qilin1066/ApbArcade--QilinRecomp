@@ -5,6 +5,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <system_error>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -29,6 +31,50 @@ bool read_eeprom(const std::string& path, Eeprom::Bytes& bytes) {
     bytes = candidate;   // never partially overwrite the board's factory state
     return true;
 }
+}
+
+bool adopt_folder(const std::string& from, const std::string& to, int* moved, std::string* error) {
+    namespace fs = std::filesystem;
+    if (moved) *moved = 0;
+    const fs::path old = native(from), current = native(to);
+    std::error_code ec;
+    if (!fs::is_directory(old, ec)) return true;
+    fs::create_directories(current, ec);
+    if (ec) {
+        if (error) *error = "Could not create " + to + ": " + ec.message();
+        return false;
+    }
+    if (fs::equivalent(old, current, ec)) return true;
+    ec.clear();
+    std::vector<fs::path> files, copied;
+    for (fs::directory_iterator it(old, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) files.push_back(it->path());
+    if (ec) {
+        if (error) *error = "Could not read " + from + ": " + ec.message();
+        return false;
+    }
+    for (const auto& file : files) {
+        const fs::path target = current / file.filename();
+        if (fs::exists(target, ec)) continue;   // the current folder's own wins
+        ec.clear();
+        if (!fs::copy_file(file, target, ec) || ec) {
+            if (error) *error = "Could not copy " + from + " to " + to + ": " + ec.message();
+            for (const auto& made : copied) fs::remove(made, ec);
+            return false;
+        }
+        copied.push_back(target);
+    }
+    // Every file is across: the old copies can go (one that stays does no harm).
+    for (const auto& file : files)
+        if (fs::exists(current / file.filename(), ec)) fs::remove(file, ec);
+    ec.clear();
+    if (fs::is_empty(old, ec) && !ec) {
+        fs::remove(old, ec);
+        ec.clear();
+        if (old.has_parent_path() && fs::is_empty(old.parent_path(), ec) && !ec) fs::remove(old.parent_path(), ec);
+    }
+    if (moved) *moved = static_cast<int>(copied.size());
+    return true;
 }
 
 bool replace(const std::string& path, std::span<const std::uint8_t> bytes, std::string* error) {

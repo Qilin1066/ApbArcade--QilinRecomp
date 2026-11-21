@@ -8,6 +8,8 @@
 #include "imgui_impl_vulkan.h"
 
 #include <algorithm>
+#include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -28,6 +30,31 @@ VkFormat window_format = VK_FORMAT_UNDEFINED;
 void check_vk(VkResult r) {
     if (r != VK_SUCCESS) std::fprintf(stderr, "apb: Vulkan error %d in the menu\n", static_cast<int>(r));
 }
+
+// A widget's label: beside it, as ImGui puts it, where the page is wide
+// enough; in a narrow window (APB's own is upright) on a line of its own
+// above the widget, wrapped, with the widget across the page, so that it
+// isn't cut off. Returns the label to give the widget (hidden, after "##",
+// when it has been written above).
+const char* labelled(const char* text) {
+    static std::array<std::string, 8> hidden;
+    static std::size_t next = 0;
+    const ImGuiStyle& st = ImGui::GetStyle();
+    if (ImGui::CalcItemWidth() + st.ItemInnerSpacing.x + ImGui::CalcTextSize(text).x <= ImGui::GetContentRegionAvail().x) return text;
+    ImGui::TextUnformatted(text);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    std::string& out = hidden[next++ % hidden.size()];
+    out = std::string("##") + text;
+    return out.c_str();
+}
+
+// The next item, this wide, beside the last one if the page has the room
+// there, else below it: rows of choices wrap in a narrow window.
+void beside(float width) {
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+}
+float radio_width(const char* text) { return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(text).x; }
 
 // A bar from -1 to 1 (or 0 to 1), with a label.
 void meter(const char* label, double value, bool centred) {
@@ -82,6 +109,9 @@ Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::strin
     ImGui::GetStyle().FontScaleDpi = dpi;
     if (!ImGui_ImplSDL3_InitForVulkan(window_)) return;
     sdl_backend_ = true;
+    // Every controller works the menu, not only the first one SDL lists
+    // (which can be a virtual pad, or a wheel's base).
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll);
 
     window_format = static_cast<VkFormat>(o.format);
     ImGui_ImplVulkan_InitInfo info{};
@@ -175,9 +205,12 @@ void Menu::handle(const SDL_Event& e) {
             peek_ = false;
             break;
         }
-        // Back and Start together, as in the other recomps (Back alone is
-        // coin 1; Input holds it back while Start is pressed with it); with
-        // the menu open, Start alone closes it too.
+        // Back and Start together, as in the other recomps (alone, Back is
+        // coin 1 and Start is siren/start; Input holds each back while the
+        // other is pressed with it); with the menu open, Start alone closes
+        // it too. Not while a control is being set: the press is that control.
+        if (e.gbutton.button != SDL_GAMEPAD_BUTTON_BACK && e.gbutton.button != SDL_GAMEPAD_BUTTON_START) break;
+        if (open_ && (input_.listening() != Input::Listen::none || listening_button_ >= 0)) break;
         SDL_Gamepad* pad = SDL_GetGamepadFromID(e.gbutton.which);
         const bool back = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
         const bool start = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
@@ -193,20 +226,22 @@ void Menu::notify(std::string text) {
     if (notices_.size() > 4) notices_.erase(notices_.begin());
 }
 
-void Menu::frame() {
+void Menu::frame(bool away) {
     const std::uint64_t now = SDL_GetTicks();
     // Every shown frame's interval, for F3 (recorded whether it's showing or not).
     const std::uint64_t ns = SDL_GetTicksNS();
-    if (last_frame_ns_ && !open_) {
+    const bool paused = open_ || away;
+    if (last_frame_ns_ && !paused) {
         frame_ms_[frame_next_] = static_cast<float>(static_cast<double>(ns - last_frame_ns_) / 1e6);
         frame_next_ = (frame_next_ + 1) % frame_history;
         frame_count_ = std::min(frame_count_ + 1, frame_history);
     }
-    last_frame_ns_ = open_ ? 0 : ns;   // the paused menu's frames aren't the game's
+    last_frame_ns_ = paused ? 0 : ns;   // a paused game's frames aren't the game's
     std::erase_if(notices_, [&](const Notice& n) { return n.until <= now; });
+    away = away && !open_;
     const bool hint = !open_ && (now < hint_until_ || !notices_.empty());
-    const bool times = !open_ && input_.settings.display.performance_overlay;
-    if (!ok_ || (!open_ && !hint && !times) || (open_ && peek_)) {
+    const bool times = !open_ && !away && input_.settings.display.performance_overlay;
+    if (!ok_ || (!open_ && !hint && !times && !away) || (open_ && peek_)) {
         if (drawing_) {
             renderer_.set_overlay({});
             drawing_ = false;
@@ -219,11 +254,32 @@ void Menu::frame() {
         });
         drawing_ = true;
     }
+    // While a control is being set, the press is that control and not the
+    // menu's own (Space or a controller's A would press "Set" again, and the
+    // d-pad would move away from it).
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        const bool setting = open_ && (input_.listening() != Input::Listen::none || listening_button_ >= 0);
+        const ImGuiConfigFlags nav = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+        io.ConfigFlags = setting ? (io.ConfigFlags & ~nav) : (io.ConfigFlags | nav);
+    }
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     const ImGuiViewport* view = ImGui::GetMainViewport();
     if (!open_) {
+        if (away) {
+            ImGui::SetNextWindowPos(ImVec2(view->WorkPos.x + view->WorkSize.x / 2, view->WorkPos.y + view->WorkSize.y / 2), ImGuiCond_Always,
+                                    ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowBgAlpha(0.94f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetFontSize() * 1.5f, ImGui::GetFontSize()));
+            ImGui::Begin("##away", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                                ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::TextUnformatted("Paused");
+            ImGui::TextUnformatted("Click the window to carry on");
+            ImGui::End();
+            ImGui::PopStyleVar();
+        }
         if (hint) {
             ImGui::SetNextWindowPos(ImVec2(view->WorkPos.x + 12, view->WorkPos.y + view->WorkSize.y - 12), ImGuiCond_Always, ImVec2(0, 1));
             ImGui::SetNextWindowBgAlpha(0.6f);
@@ -346,10 +402,12 @@ void Menu::controls_tab() {
     buttons_section();
     ImGui::Separator();
     if (ImGui::Button("Back to the defaults")) {
-        const DisplaySettings display = input_.settings.display;   // the display and the ROM folder aren't controls
+        const DisplaySettings display = input_.settings.display;   // the display, the sound and the ROM folder aren't controls
+        const SoundSettings sound = input_.settings.sound;
         const std::string rom_dir = input_.settings.rom_dir;
         input_.settings = Settings{};
         input_.settings.display = display;
+        input_.settings.sound = sound;
         input_.settings.rom_dir = rom_dir;
         input_.stop_listening();
         input_.end_wheel_measurement();
@@ -365,12 +423,12 @@ void Menu::steering_section() {
     ImGui::SeparatorText("Steering");
     auto& s = input_.settings;
     ImGui::TextWrapped("APB's wheel spins freely: the game counts how far it turns, not where it is. The arrow keys and a "
-                       "gamepad's left stick always steer too.");
+                       "gamepad's left stick and d-pad always steer too.");
     int mode = static_cast<int>(s.steering);
     ImGui::RadioButton("Keys and gamepad only", &mode, 0);
-    ImGui::SameLine();
+    beside(radio_width("Wheel"));
     ImGui::RadioButton("Wheel", &mode, 1);
-    ImGui::SameLine();
+    beside(radio_width("Mouse or spinner"));
     ImGui::RadioButton("Mouse or spinner", &mode, 2);
     if (mode != static_cast<int>(s.steering)) {
         measuring_ = false;
@@ -380,7 +438,7 @@ void Menu::steering_section() {
     }
 
     if (s.steering == Steering::wheel) {
-        if (!s.profiles.empty() && ImGui::BeginCombo("Saved wheel setup", s.wheel_axis.name.empty() ? "Choose wheel" : s.wheel_axis.name.c_str())) {
+        if (!s.profiles.empty() && ImGui::BeginCombo(labelled("Saved wheel setup"), s.wheel_axis.name.empty() ? "Choose wheel" : s.wheel_axis.name.c_str())) {
             std::string chosen;
             for (const auto& [guid, profile] : s.profiles) {
                 const std::string label = (profile.wheel_axis.name.empty() ? "Wheel " + guid.substr(0, 8) : profile.wheel_axis.name) + "##" + guid;
@@ -395,7 +453,9 @@ void Menu::steering_section() {
         }
         ImGui::TextWrapped("Each bound wheel remembers its calibration, pedals, buttons and friction. Display settings stay shared.");
         int behaviour = (s.moza_angle || s.wheel.wrap) ? 0 : 1;
-        if (ImGui::Combo("Wheel behaviour", &behaviour, "Free rotation / direct drive\0Limited rotation / belt or gear driven\0")) {
+        ImGui::TextUnformatted("Wheel behaviour");   // above it: the choices are long
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::Combo("##Wheel behaviour", &behaviour, "Free rotation / direct drive\0Limited rotation / belt or gear driven\0")) {
             measuring_ = false;
             input_.end_wheel_measurement();
             s.moza_angle = false;
@@ -420,7 +480,7 @@ void Menu::steering_section() {
             input_.configure();
         }
         const bool limited = !s.moza_angle && !s.wheel.wrap;
-        if (s.moza_angle && ImGui::BeginCombo("Wheel device", s.wheel_axis.name.empty() ? "Choose the MOZA base" : s.wheel_axis.name.c_str())) {
+        if (s.moza_angle && ImGui::BeginCombo(labelled("Wheel device"), s.wheel_axis.name.empty() ? "Choose the MOZA base" : s.wheel_axis.name.c_str())) {
             for (const auto& d : input_.devices()) {
                 if (SDL_GetNumJoystickAxes(d.joystick) == 0) continue;
                 ImGui::PushID(static_cast<int>(d.id));
@@ -433,7 +493,7 @@ void Menu::steering_section() {
             ImGui::EndCombo();
         }
         ImGui::Text("Wheel: %s", s.wheel_axis.describe().c_str());
-        ImGui::SameLine();
+        beside(ImGui::CalcTextSize("Turn the wheel...").x);
         if (input_.listening() == Input::Listen::wheel) {
             ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Turn the wheel...");
         } else if (ImGui::Button("Find it")) {
@@ -450,14 +510,15 @@ void Menu::steering_section() {
         bool changed = false;
         float rotation = static_cast<float>(s.wheel.rotation);
         if (limited) {
-            if (ImGui::InputFloat("Maximum angle (degrees)", &rotation, 90, 360, "%.0f")) {
+            if (ImGui::InputFloat(labelled("Maximum angle (degrees)"), &rotation, 90, 360, "%.0f")) {
                 if (std::isfinite(rotation) && rotation >= 90 && rotation <= 10000) changed = true;
                 else rotation = static_cast<float>(s.wheel.rotation);
             }
             ImGui::TextWrapped("Total travel from left stop to right stop: 900 degrees means 450 each way. Match your wheel driver's setting (90-10000 degrees).");
             for (const int preset : {360, 540, 900, 1080, 1440, 2160, 2700}) {
-                if (preset != 360) ImGui::SameLine();
-                if (ImGui::SmallButton(std::to_string(preset).c_str())) {
+                const std::string degrees = std::to_string(preset);
+                if (preset != 360) beside(ImGui::CalcTextSize(degrees.c_str()).x + 2 * ImGui::GetStyle().FramePadding.x);
+                if (ImGui::SmallButton(degrees.c_str())) {
                     rotation = static_cast<float>(preset);
                     changed = true;
                 }
@@ -470,21 +531,21 @@ void Menu::steering_section() {
             if (const auto angle = input_.moza_degrees()) ImGui::Text("Physical angle: %.2f degrees", *angle);
         }
         float counts = static_cast<float>(s.wheel.counts_per_turn);
-        changed |= ImGui::SliderFloat("Sensitivity (dial counts per turn)", &counts, 32, 512, "%.0f");
+        changed |= ImGui::SliderFloat(labelled("Sensitivity (dial counts per turn)"), &counts, 32, 512, "%.0f");
         bool edge = s.wheel.edge < 1.0;
         if (limited)
             changed |= ImGui::Checkbox("Keep turning while held at a stop", &edge);
         float edge_start = static_cast<float>(s.wheel.edge < 1.0 ? s.wheel.edge : controls::WheelSettings{}.edge);
         float edge_rate = static_cast<float>(s.wheel.edge_rate);
         if (limited && edge) {
-            changed |= ImGui::SliderFloat("Starts this far to the stop", &edge_start, 0.6f, 0.99f, "%.2f");
-            changed |= ImGui::SliderFloat("Turning speed at the stop (counts a frame)", &edge_rate, 1, 16, "%.1f");
+            changed |= ImGui::SliderFloat(labelled("Starts this far to the stop"), &edge_start, 0.6f, 0.99f, "%.2f");
+            changed |= ImGui::SliderFloat(labelled("Turning speed at the stop (counts a frame)"), &edge_rate, 1, 16, "%.1f");
         }
         changed |= ImGui::Checkbox("Reverse the wheel", &s.wheel.invert);
         if (ImGui::CollapsingHeader("Advanced wheel input", measuring_ ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
             if (!limited) {
                 int source = s.moza_angle ? 0 : 1;
-                if (ImGui::Combo("Continuous input source", &source, "MOZA physical angle (Windows SDK)\0Wrapping joystick axis\0")) {
+                if (ImGui::Combo(labelled("Continuous input source"), &source, "MOZA physical angle (Windows SDK)\0Wrapping joystick axis\0")) {
                     s.moza_angle = source == 0;
                     s.wheel.wrap = source == 1;
                     measuring_ = false;
@@ -498,7 +559,7 @@ void Menu::steering_section() {
                 if (ImGui::Button("Retry MOZA connection")) input_.retry_moza();
             } else {
                 if (s.wheel.wrap) {
-                    changed |= ImGui::SliderFloat("Degrees per reported axis cycle", &rotation, 90, 10000, "%.0f");
+                    changed |= ImGui::SliderFloat(labelled("Degrees per reported axis cycle"), &rotation, 90, 10000, "%.0f");
                     ImGui::TextWrapped("This calibrates the input scale; it does not limit physical rotation. Use a wrapping axis only if its reading rolls "
                                        "from one endpoint to the other as you keep turning. A clipped axis needs a physical-angle source.");
                 }
@@ -530,23 +591,23 @@ void Menu::steering_section() {
             s.wheel.edge_rate = edge_rate;
             input_.configure();
         }
-        if (ImGui::SliderInt("Force feedback: friction (%)", &s.friction, 0, 100)) input_.configure();
+        if (ImGui::SliderInt(labelled("Force feedback: friction (%)"), &s.friction, 0, 100)) input_.configure();
         for (const auto& d : input_.devices())
             if (d.guid == s.wheel_axis.device && !d.force_status.empty()) ImGui::TextWrapped("%s", d.force_status.c_str());
         ImGui::TextWrapped("The game requests no centring spring and passive friction. Settings in the wheel's own driver can still add a spring or a stop.");
     } else if (s.steering == Steering::mouse) {
         float m = static_cast<float>(s.mouse_counts);
-        if (ImGui::SliderFloat("Dial counts per mouse step", &m, 0.02f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) s.mouse_counts = m;
+        if (ImGui::SliderFloat(labelled("Dial counts per mouse step"), &m, 0.02f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) s.mouse_counts = m;
         ImGui::TextDisabled("While playing, the mouse is captured; the menu frees it.");
     }
-    ImGui::SeparatorText("Gamepad stick and arrow keys");
+    ImGui::SeparatorText("Gamepad stick, d-pad and arrow keys");
     float stick = static_cast<float>(s.stick_speed);
-    if (ImGui::SliderFloat("Turning speed (dial counts a frame, stick fully over)", &stick, 0.5f, 8, "%.1f")) {
+    if (ImGui::SliderFloat(labelled("Turning speed (dial counts a frame, stick fully over)"), &stick, 0.5f, 8, "%.1f")) {
         s.stick_speed = stick;
         input_.configure();
     }
     float curve = static_cast<float>(s.stick_curve);
-    if (ImGui::SliderFloat("Stick response (1 straight; higher: finer near the centre)", &curve, 1, 4, "%.1f")) {
+    if (ImGui::SliderFloat(labelled("Stick response (1 straight; higher: finer near the centre)"), &curve, 1, 4, "%.1f")) {
         s.stick_curve = curve;
         input_.configure();
     }
@@ -567,7 +628,7 @@ void Menu::steering_section() {
 void Menu::pedal_section() {
     ImGui::SeparatorText("Gas pedal");
     auto& s = input_.settings;
-    ImGui::TextWrapped("The Up key and a gamepad's right trigger always work. A pedal (or any axis) can be added:");
+    ImGui::TextWrapped("The Up key and a gamepad's right trigger or d-pad up always work. A pedal (or any axis) can be added:");
     ImGui::Text("Pedal: %s", s.pedal_axis.describe().c_str());
     if (input_.listening() == Input::Listen::pedal) {
         const Binding& found = input_.pedal_candidate();
@@ -596,9 +657,9 @@ void Menu::pedal_section() {
     if (!s.pedal_axis.empty()) {
         float released = static_cast<float>(s.pedal.released), floored = static_cast<float>(s.pedal.floored);
         float dead = static_cast<float>(s.pedal.deadzone);
-        if (ImGui::SliderFloat("Reading released", &released, -1, 1, "%.3f")) s.pedal.released = released;
-        if (ImGui::SliderFloat("Reading floored", &floored, -1, 1, "%.3f")) s.pedal.floored = floored;
-        if (ImGui::SliderFloat("Dead zone at each end", &dead, 0, 0.2f, "%.2f")) s.pedal.deadzone = dead;
+        if (ImGui::SliderFloat(labelled("Reading released"), &released, -1, 1, "%.3f")) s.pedal.released = released;
+        if (ImGui::SliderFloat(labelled("Reading floored"), &floored, -1, 1, "%.3f")) s.pedal.floored = floored;
+        if (ImGui::SliderFloat(labelled("Dead zone at each end"), &dead, 0, 0.2f, "%.2f")) s.pedal.deadzone = dead;
         meter("axis", input_.read(s.pedal_axis), true);
     }
     meter("gas", input_.last_pedal, false);
@@ -607,9 +668,17 @@ void Menu::pedal_section() {
 void Menu::buttons_section() {
     ImGui::SeparatorText("Buttons and coins");
     auto& s = input_.settings;
-    static constexpr const char* defaults[] = {"Left Ctrl, Z, gamepad A", "Left Alt, X, gamepad B", "Space, C, gamepad X",
+    static constexpr const char* defaults[] = {"Left Ctrl, Z, gamepad A or Start", "Left Alt, X, gamepad B", "Space, C, gamepad X",
                                                "5, gamepad Back", "6", "9"};
-    if (ImGui::BeginTable("buttons", 4, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+    if (ImGui::BeginTable("buttons", 4, ImGuiTableFlags_RowBg)) {
+        // Set widths: with the page's text wrapping, a column sized by what's
+        // in it would shrink to a letter's width.
+        const ImGuiStyle& st = ImGui::GetStyle();
+        ImGui::TableSetupColumn("control", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+        ImGui::TableSetupColumn("built in", ImGuiTableColumnFlags_WidthStretch, 1.8f);
+        ImGui::TableSetupColumn("yours", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("set", ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::CalcTextSize("Set").x + ImGui::CalcTextSize("Clear").x + 4 * st.FramePadding.x + st.ItemSpacing.x);
         for (int i = 0; i < static_cast<int>(Button::count); ++i) {
             ImGui::PushID(i);
             ImGui::TableNextRow();
@@ -668,7 +737,7 @@ void Menu::display_tab() {
     SDL_DisplayID* displays = SDL_GetDisplays(&count);
     const SDL_DisplayID current = SDL_GetDisplayForWindow(window_);
     const char* current_name = current ? SDL_GetDisplayName(current) : nullptr;
-    if (ImGui::BeginCombo("Display", current_name ? current_name : "?")) {
+    if (ImGui::BeginCombo(labelled("Display"), current_name ? current_name : "?")) {
         for (int i = 0; i < count && displays; ++i) {
             const char* name = SDL_GetDisplayName(displays[i]);
             if (ImGui::Selectable(strf("%s##%u", name ? name : "?", static_cast<unsigned>(displays[i])).c_str(), displays[i] == current))
@@ -681,7 +750,7 @@ void Menu::display_tab() {
     ImGui::SeparatorText("Picture");
     bool changed = false;
     const int preset = matching_preset(d);
-    if (ImGui::BeginCombo("Preset", preset < 0 ? "(set by hand)" : display_presets[static_cast<std::size_t>(preset)].name)) {
+    if (ImGui::BeginCombo(labelled("Preset"), preset < 0 ? "(set by hand)" : display_presets[static_cast<std::size_t>(preset)].name)) {
         for (std::size_t i = 0; i < display_presets.size(); ++i) {
             if (ImGui::Selectable(display_presets[i].name, preset == static_cast<int>(i))) {
                 apply_preset(d, i);
@@ -693,17 +762,17 @@ void Menu::display_tab() {
     }
     int scaling = static_cast<int>(d.scaling);
     bool scaling_changed = ImGui::RadioButton("Whole multiples (sharpest)", &scaling, static_cast<int>(gfx::Scaling::integer));
-    ImGui::SameLine();
+    beside(radio_width("Fit"));
     scaling_changed |= ImGui::RadioButton("Fit", &scaling, static_cast<int>(gfx::Scaling::fit));
-    ImGui::SameLine();
+    beside(radio_width("Fill the window"));
     scaling_changed |= ImGui::RadioButton("Fill the window", &scaling, static_cast<int>(gfx::Scaling::stretch));
     if (scaling_changed) d.scaling = static_cast<gfx::Scaling>(scaling);
     changed |= scaling_changed;
     int effect = static_cast<int>(d.effect);
     bool effect_changed = ImGui::RadioButton("Plain", &effect, static_cast<int>(gfx::Effect::none));
-    ImGui::SameLine();
+    beside(radio_width("Smoothed pixel art"));
     effect_changed |= ImGui::RadioButton("Smoothed pixel art", &effect, static_cast<int>(gfx::Effect::pixel_art));
-    ImGui::SameLine();
+    beside(radio_width("CRT television"));
     effect_changed |= ImGui::RadioButton("CRT television", &effect, static_cast<int>(gfx::Effect::crt));
     if (effect_changed) d.effect = static_cast<gfx::Effect>(effect);
     changed |= effect_changed;
@@ -717,11 +786,11 @@ void Menu::display_tab() {
         ImGui::TextDisabled("Edges between colours are drawn as lines instead of steps. Sharpest at Whole multiples.");
     } else {
         int scan = static_cast<int>(std::lround(d.scanlines * 100)), mask = static_cast<int>(std::lround(d.mask * 100));
-        if (ImGui::SliderInt("Scanlines", &scan, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+        if (ImGui::SliderInt(labelled("Scanlines"), &scan, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
             d.scanlines = static_cast<float>(scan) / 100.0f;
             changed = true;
         }
-        if (ImGui::SliderInt("Phosphor stripes", &mask, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+        if (ImGui::SliderInt(labelled("Phosphor stripes"), &mask, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
             d.mask = static_cast<float>(mask) / 100.0f;
             changed = true;
         }
@@ -736,7 +805,7 @@ void Menu::display_tab() {
     if (d.vsync) {
         int speed = d.match_display ? 1 : 0;
         bool speed_changed = ImGui::RadioButton("Exact (the cabinet's 60.1 Hz)", &speed, 0);
-        ImGui::SameLine();
+        beside(radio_width("Match the display (smoothest)"));
         speed_changed |= ImGui::RadioButton("Match the display (smoothest)", &speed, 1);
         if (speed_changed) d.match_display = speed == 1;
         double hz = 0;
@@ -759,13 +828,13 @@ void Menu::display_tab() {
         ImGui::TextDisabled("Without vsync the game always runs at the cabinet's 60.1 frames a second.");
     }
     if (ImGui::Button("Look at the picture")) peek_ = true;
-    ImGui::SameLine();
+    beside(ImGui::CalcTextSize("(any key or button comes back)").x);
     ImGui::TextDisabled("(any key or button comes back)");
 
     ImGui::SeparatorText("Graphics device");
     const auto& devices = renderer_.devices();
-    const std::string label = d.gpu.empty() ? "The best one" : d.gpu;
-    if (ImGui::BeginCombo("Device", label.c_str())) {
+    const std::string chosen = d.gpu.empty() ? "The best one" : d.gpu;
+    if (ImGui::BeginCombo(labelled("Device"), chosen.c_str())) {
         if (ImGui::Selectable("The best one", d.gpu.empty())) d.gpu.clear();
         for (const auto& name : devices)
             if (ImGui::Selectable(name.c_str(), d.gpu == name)) d.gpu = name;
@@ -775,8 +844,12 @@ void Menu::display_tab() {
 }
 
 void Menu::game_tab() {
+    ImGui::SeparatorText("Sound");
+    ImGui::SliderInt(labelled("Volume"), &input_.settings.sound.volume, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+
     ImGui::SeparatorText("The cabinet");
-    ImGui::Checkbox("Self-test switch (the cabinet's test mode; F2)", &input_.test_switch);
+    ImGui::Checkbox("Self-test switch (F2)", &input_.test_switch);
+    ImGui::TextDisabled("The cabinet's test mode: its own checks and settings. Off again to play.");
 
     ImGui::SeparatorText("About");
     ImGui::TextWrapped("APB QilinRecomp %s: a static recompilation, the game's own code compiled for this computer.", QILIN_APP_VERSION);

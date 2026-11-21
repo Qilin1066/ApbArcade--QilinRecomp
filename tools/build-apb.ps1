@@ -70,12 +70,17 @@ if ($Pull) {
 }
 
 if (-not $RomDir) {
+    # The game's data folder (qilin\apb under the local application data; up to
+    # v0.21.0 Qilin\apb under the roaming one, which the game moves across the
+    # first time it runs).
     if ($onWindows) {
-        $ini = Join-Path $env:APPDATA "Qilin\apb\apb.ini"
+        $ini = Join-Path $env:LOCALAPPDATA "qilin\apb\apb.ini"
+        if (-not (Test-Path $ini)) { $ini = Join-Path $env:APPDATA "Qilin\apb\apb.ini" }
     } else {
         $data = $env:XDG_DATA_HOME
         if (-not $data) { $data = Join-Path $HOME ".local/share" }
-        $ini = Join-Path $data "Qilin/apb/apb.ini"
+        $ini = Join-Path $data "qilin/apb/apb.ini"
+        if (-not (Test-Path $ini)) { $ini = Join-Path $data "Qilin/apb/apb.ini" }
     }
     if (Test-Path $ini) {
         $line = Select-String -Path $ini -Pattern '^rom_dir = (.+)$' | Select-Object -First 1

@@ -7,9 +7,9 @@
 // none, or it no longer holds a verified set, apb asks with a folder picker.
 //
 // Controls (keyboard; gamepads, wheels, pedals and mice too):
-//   Left / Right       steering wheel          (left stick; a wheel; a mouse or spinner)
-//   Up                 gas pedal               (right trigger; a pedal)
-//   Left Ctrl or Z     siren / start           (A / south)
+//   Left / Right       steering wheel          (left stick or d-pad; a wheel; a mouse or spinner)
+//   Up                 gas pedal               (right trigger or d-pad up; a pedal)
+//   Left Ctrl or Z     siren / start           (A / south, or Start)
 //   Left Alt or X      fire                    (B / east)
 //   Space or C         siren (alternate)       (X / west)
 //   5, 6               coin slots 1 and 2      (Back)
@@ -28,8 +28,9 @@
 // They're kept in apb.ini next to the EEPROM; --no-vsync and --gpu N
 // override the saved ones for one run.
 //
-// The EEPROM (high scores, audits, settings) is kept in SDL's per-user
-// preferences folder for "Qilin/apb". Everything else follows the board:
+// The EEPROM (high scores, audits, settings) is kept in the game's data
+// folder, <per-user data>/qilin/apb, as the other Qilin recomps keep theirs
+// (data_folder below). Everything else follows the board:
 // one game frame per VBLANK, 166,400 main-CPU cycles (60.1 Hz), paced to
 // the clock; a frame is drawn as MAME draws it and shown on the next present.
 // Sound (the YM2151, the POKEYs and the TMS5220's speech) is made as the 6502
@@ -70,6 +71,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -171,14 +173,61 @@ std::optional<std::string> pick_rom_folder(const std::string& why, const std::st
     return pick.folder;
 }
 
-// A file in SDL's per-user preferences folder for "Qilin/apb".
-std::string pref_path(const char* file) {
-    char* folder = SDL_GetPrefPath("Qilin", "apb");
-    if (!folder) return file;
-    std::string path = std::string(folder) + file;
-    SDL_free(folder);
-    return path;
+// The game's data folder with its separator: <per-user data>/qilin/apb, as
+// the other Qilin recomps keep theirs (%LOCALAPPDATA% on Windows,
+// ~/Library/Application Support on macOS, $XDG_DATA_HOME or ~/.local/share
+// elsewhere). Up to v0.21.0 it was SDL's preferences folder for "Qilin/apb"
+// (%APPDATA%\Qilin\apb on Windows): what's there is brought across on the
+// first run, and if that can't be done the old folder goes on being used.
+int files_moved = 0;   // by that first run, for a note in the window
+const std::string& data_folder() {
+    static const std::string folder = [] {
+        const auto env = [](const char* name) {
+            const char* value = SDL_getenv(name);   // UTF-8 on every platform
+            return std::string(value ? value : "");
+        };
+        const auto sdl_folder = [] {   // SDL's own choice, when there's nothing better
+            char* pref = SDL_GetPrefPath("Qilin", "apb");
+            std::string path = pref ? pref : "";
+            SDL_free(pref);
+            return path;
+        };
+#if defined(_WIN32)
+        const char sep = '\\';
+        const std::string base = env("LOCALAPPDATA"), old_base = env("APPDATA");
+#elif defined(__APPLE__)
+        const char sep = '/';
+        const std::string home = env("HOME");
+        const std::string base = home.empty() ? std::string() : home + "/Library/Application Support", old_base = base;
+#else
+        const char sep = '/';
+        const std::string home = env("HOME"), xdg = env("XDG_DATA_HOME");
+        const std::string base = !xdg.empty() ? xdg : home.empty() ? std::string() : home + "/.local/share", old_base = base;
+#endif
+        if (base.empty()) return sdl_folder();
+        const std::string current = base + sep + "qilin" + sep + "apb";
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(std::u8string(current.begin(), current.end())), ec);
+        if (ec) {
+            std::fprintf(stderr, "apb: can't create %s (%s)\n", current.c_str(), ec.message().c_str());
+            return sdl_folder();
+        }
+        if (!old_base.empty()) {
+            const std::string old = old_base + sep + "Qilin" + sep + "apb";
+            std::string error;
+            if (!persist::adopt_folder(old, current, &files_moved, &error)) {
+                std::fprintf(stderr, "apb: %s; the settings and high scores stay in %s\n", error.c_str(), old.c_str());
+                return old + sep;
+            }
+            if (files_moved) std::fprintf(stderr, "apb: moved the settings and high scores from %s to %s\n", old.c_str(), current.c_str());
+        }
+        return current + sep;
+    }();
+    return folder;
 }
+
+// A file in the game's data folder.
+std::string pref_path(const char* file) { return data_folder() + file; }
 
 } // namespace
 
@@ -197,6 +246,7 @@ int main(int argc, char** argv) {
     // from a terminal, the focus can stay there, and SDL would otherwise
     // ignore every controller until the window is clicked.
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    SDL_SetHint(SDL_HINT_APP_NAME, "APB");   // what the system's sound mixer and the like call it
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "apb: SDL: %s\n", SDL_GetError());
         return 1;
@@ -279,7 +329,6 @@ int main(int argc, char** argv) {
     std::string error;
     auto renderer = gfx::Renderer::create(config, &error);
     if (!renderer) fail(error);
-    SDL_SetWindowTitle(window, app::strf("APB  (%s)", renderer->device_name().c_str()).c_str());
 
     auto profiler = options.profile.empty() ? nullptr : std::make_unique<profile::Profiler>();
 
@@ -310,6 +359,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<sys2::AudioWorker> audio;
     if (!options.mute) {
         sound = std::make_unique<app::AudioOutput>();
+        sound->set_volume(saved.sound.volume);
         audio = std::make_unique<sys2::AudioWorker>([&](std::span<const std::int16_t> pcm) { return sound->push(pcm); }, profiler.get());
         machine.sound_sink = audio.get();
     }
@@ -328,6 +378,7 @@ int main(int argc, char** argv) {
     for (const auto& d : input.devices()) menu.notify("Controller: " + d.name);
     if (input.devices().empty()) menu.notify("No controller found yet (the keyboard works)");
     if (sound && !sound->ok()) menu.notify("Audio device unavailable; retrying automatically");
+    if (files_moved) menu.notify("Settings and high scores moved to the qilin/apb folder (Game page)");
     if (loaded_eeprom == persist::Eeprom::Loaded::backup) menu.notify("Recovered high scores and audits from the EEPROM backup");
     if (loaded_eeprom == persist::Eeprom::Loaded::invalid) menu.notify(eeprom.error());
     if (!options.replay.empty()) menu.notify(replay.interrupted() ? "Replaying validated inputs from an interrupted recording" : "Playing recorded inputs; controller input is ignored");
@@ -402,6 +453,7 @@ int main(int argc, char** argv) {
             }
         }
         if (sound) {
+            sound->set_volume(input.settings.sound.volume);   // the menu's slider
             if (SDL_GetTicks() >= audio_retry_at && !(SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO)) {
                 audio_retry_at = SDL_GetTicks() + 1000;
                 if (audio) audio->drain();
@@ -460,12 +512,15 @@ int main(int argc, char** argv) {
         }
         const bool paused = menu.is_open() || !input.focused();
         while ((menu.is_open() || !input.focused()) && !quit) {
-            if (input.focused()) {
+            // Away from the window, the picture stays with a note that the
+            // game is paused (nothing is drawn while it's minimised).
+            if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED)) {
                 renderer->write_back_buffer(pixels.data());
-                menu.frame();
+                menu.frame(!input.focused());
                 renderer->present();
             }
-            if (!input.focused() || !renderer->config().lock_to_display || !renderer->config().vsync) SDL_Delay(16);   // only a locked FIFO waits by itself
+            if (!input.focused()) SDL_Delay(50);
+            else if (!renderer->config().lock_to_display || !renderer->config().vsync) SDL_Delay(16);   // only a locked FIFO waits by itself
             events();
             if (options.replay.empty()) input.apply(machine.inputs);   // keeps the meters live; the cabinet's controls rest
             paced_from = frame;

@@ -200,6 +200,7 @@ bool Settings::load(const std::string& path) {
     display.monitor = std::string(get("monitor"));
     display.gpu = std::string(get("gpu"));
     display.performance_overlay = num("performance_overlay", 0) != 0;
+    sound.volume = static_cast<int>(std::clamp(num("volume", 100), 0.0, 100.0));
     rom_dir = std::string(get("rom_dir"));
     profiles.clear();
     for (const auto& [key, value] : kv) {
@@ -260,6 +261,7 @@ bool Settings::save(const std::string& path) const {
     out << strf("effect = %s\ncrt_scanlines = %.9g\ncrt_mask = %.9g\n", effect, display.scanlines, display.mask);
     out << "monitor = " << display.monitor << "\ngpu = " << display.gpu << '\n';
     out << "performance_overlay = " << (display.performance_overlay ? 1 : 0) << '\n';
+    out << "volume = " << sound.volume << '\n';
     out << "rom_dir = " << rom_dir << '\n';
     auto saved_profiles = profiles;
     if (steering == Steering::wheel && wheel_axis.device.size() == 32 && wheel_axis.device.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos)
@@ -577,7 +579,11 @@ std::optional<Binding> Input::heard() {
 void Input::apply(sys2::Inputs& in) {
     profile::Scope measured(playing ? profiler : nullptr, profile::Stage::input);
     if (playing != was_playing_) set_playing(playing);
-    if (resuming_) { reset_motion(); resuming_ = false; }
+    if (resuming_) {
+        reset_motion();
+        resuming_ = false;
+        start_from_menu_ = true;   // cleared below unless a Start is still down
+    }
     if (measuring_wheel_) measurement_.observe(read(settings.wheel_axis));
     // Listening: the axis that has moved furthest from where it was.
     if (listen_ == Listen::wheel || listen_ == Listen::pedal || listen_ == Listen::button) {
@@ -619,25 +625,41 @@ void Input::apply(sys2::Inputs& in) {
     }
 
     const bool* key = SDL_GetKeyboardState(nullptr);
-    // The gamepad defaults (stick, trigger, A/B/X, Back) come from gamepads
-    // that aren't bound as the wheel or the pedal: SDL knows some wheels as
-    // gamepads (their wheel as the left stick, their pedals as triggers), and
-    // that would steer twice.
-    auto defaults_from = [&](const Device& d) {
-        if (!d.gamepad) return false;
-        if (settings.steering == Steering::wheel && settings.wheel_axis.device == d.guid) return false;
-        return settings.pedal_axis.device != d.guid;
+    // The gamepad defaults. Buttons (A/B/X, Start, Back, the d-pad) come
+    // from every device SDL knows as a gamepad, a wheel's own buttons too.
+    // The stick and the trigger don't come from a device bound as the wheel
+    // or the pedal: SDL knows some wheels as gamepads (their wheel as the
+    // left stick, their pedals as triggers), and that would steer twice, or
+    // hold the gas down where the mapping has a pedal the wrong way round.
+    // (A real gamepad with one trigger bound as the pedal keeps its stick.)
+    const bool wheel_bound = settings.steering == Steering::wheel && !settings.wheel_axis.empty();
+    auto is_wheel = [&](const Device& d) { return wheel_bound && settings.wheel_axis.device == d.guid; };
+    auto is_pedal = [&](const Device& d) { return !settings.pedal_axis.empty() && settings.pedal_axis.device == d.guid; };
+    auto stick_from = [&](const Device& d) {
+        return d.gamepad && !is_wheel(d) && (!is_pedal(d) || d.type == SDL_JOYSTICK_TYPE_GAMEPAD);
     };
+    auto trigger_from = [&](const Device& d) { return d.gamepad && !is_wheel(d) && !is_pedal(d); };
     auto pad = [&](SDL_GamepadButton b) {
-        return std::ranges::any_of(devices_, [&](const Device& d) { return defaults_from(d) && SDL_GetGamepadButton(d.gamepad, b); });
+        return std::ranges::any_of(devices_, [&](const Device& d) { return d.gamepad && SDL_GetGamepadButton(d.gamepad, b); });
     };
     auto bound = [&](Button b) { return playing && settings.buttons[static_cast<int>(b)].kind != Binding::Kind::none &&
                                         read(settings.buttons[static_cast<int>(b)]) > 0.5; };
     const bool live = playing;   // while the menu is open, the cabinet's controls rest
 
+    // Back (coin 1) and Start (siren/start), which together are the menu's.
+    const bool back = pad(SDL_GAMEPAD_BUTTON_BACK), start = pad(SDL_GAMEPAD_BUTTON_START);
+    if (back && start) menu_combo_ = true;
+    else if (!back && !start) menu_combo_ = false;
+    if (!start) start_from_menu_ = false;
+    back_frames_ = back ? std::min(back_frames_ + 1, 1000) : 0;
+    start_frames_ = start ? std::min(start_frames_ + 1, 1000) : 0;
+    // 3 frames: 50 ms, shorter than any press, longer than two thumbs landing apart.
+    const bool back_coin = back_frames_ >= 3 && !menu_combo_;
+    const bool start_press = start_frames_ >= 3 && !menu_combo_ && !start_from_menu_;
+
     // IN0, active low: siren/start, fire and the self-test switch.
     unsigned in0 = 0xffff;
-    const bool b1 = key[SDL_SCANCODE_LCTRL] || key[SDL_SCANCODE_Z] || pad(SDL_GAMEPAD_BUTTON_SOUTH) || bound(Button::one);
+    const bool b1 = key[SDL_SCANCODE_LCTRL] || key[SDL_SCANCODE_Z] || pad(SDL_GAMEPAD_BUTTON_SOUTH) || start_press || bound(Button::one);
     const bool b2 = key[SDL_SCANCODE_LALT] || key[SDL_SCANCODE_X] || pad(SDL_GAMEPAD_BUTTON_EAST) || bound(Button::two);
     const bool b3 = key[SDL_SCANCODE_SPACE] || key[SDL_SCANCODE_C] || pad(SDL_GAMEPAD_BUTTON_WEST) || bound(Button::three);
     if (live && b1) in0 &= ~unsigned(in0_bits[0]);
@@ -647,29 +669,22 @@ void Input::apply(sys2::Inputs& in) {
     in.in0 = static_cast<std::uint16_t>(in0);
     // IN1, active low: the coins and the service coin (the low bits are the board's own).
     unsigned in1 = 0xf0;
-    if (pad(SDL_GAMEPAD_BUTTON_BACK)) {
-        if (pad(SDL_GAMEPAD_BUTTON_START)) back_with_start_ = true;
-        back_frames_ = std::min(back_frames_ + 1, 1000);
-    } else {
-        back_frames_ = 0;
-        back_with_start_ = false;
-    }
-    const bool back_coin = back_frames_ >= 3 && !back_with_start_;   // 3 frames: 50 ms, shorter than any press
     if (live && (key[SDL_SCANCODE_5] || back_coin || bound(Button::coin_left))) in1 &= ~unsigned(in1_bits[0]);
     if (live && (key[SDL_SCANCODE_6] || bound(Button::coin_right))) in1 &= ~unsigned(in1_bits[1]);
     if (live && (key[SDL_SCANCODE_9] || bound(Button::service))) in1 &= ~unsigned(in1_bits[2]);
     in.in1 = static_cast<std::uint8_t>(in1);
 
     // The gas pedal, ADC1. A bound pedal axis gives its travel; otherwise the
-    // Up key and gamepad triggers move a pedal 8 steps a frame, as a foot would.
+    // Up key, a d-pad's up and gamepad triggers move a pedal 8 steps a frame,
+    // as a foot would.
     double travel = 0;
     if (!settings.pedal_axis.empty() && find(settings.pedal_axis.device)) {
         const Device* d = find(settings.pedal_axis.device);
         travel = controls::pedal_travel(axis_of(d->joystick, settings.pedal_axis.index), settings.pedal);
     }
-    int target = key[SDL_SCANCODE_UP] ? 0x3f : 0;
+    int target = key[SDL_SCANCODE_UP] || pad(SDL_GAMEPAD_BUTTON_DPAD_UP) ? 0x3f : 0;
     for (const auto& d : devices_)
-        if (defaults_from(d)) target = std::max(target, SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 0x3f / 32767);
+        if (trigger_from(d)) target = std::max(target, SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 0x3f / 32767);
     pedal_ = target > pedal_ ? std::min(target, pedal_ + 8) : std::max(target, pedal_ - 8);
     travel = std::max(travel, pedal_ / 63.0);
     if (!live) travel = 0;
@@ -677,11 +692,12 @@ void Input::apply(sys2::Inputs& in) {
     in.adc[1] = controls::pedal_adc(travel);
 
     // The steering wheel: a free-spinning dial on LETA0, counts a frame.
-    // The arrow keys ask for 60% of the full speed; else the stick pushed furthest.
-    const double keys = (key[SDL_SCANCODE_RIGHT] ? 0.6 : 0) - (key[SDL_SCANCODE_LEFT] ? 0.6 : 0);
+    // The arrow keys and a d-pad ask for 60% of the full speed; else the stick pushed furthest.
+    const double keys = (key[SDL_SCANCODE_RIGHT] || pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) ? 0.6 : 0) -
+                        (key[SDL_SCANCODE_LEFT] || pad(SDL_GAMEPAD_BUTTON_DPAD_LEFT) ? 0.6 : 0);
     double stick = 0;
     for (const auto& d : devices_)
-        if (defaults_from(d)) {
+        if (stick_from(d)) {
             const double x = SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0;
             if (std::abs(x) > std::abs(stick)) stick = x;
         }

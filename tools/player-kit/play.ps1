@@ -118,9 +118,14 @@ Write-Host ""
 
 # The ROM folder: the one APB used last, else ask (until one holds a verified set).
 $qilin = Join-Path $kit "qilin.exe"
-$settingsFolder = if ($onWindows) { Join-Path $env:APPDATA "Qilin\apb" }
-                  elseif ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME "Qilin/apb" }
-                  else { Join-Path $HOME ".local/share/Qilin/apb" }
+# The game's data folder: qilin\apb under the local application data. Up to
+# v0.21.0 it was Qilin\apb under the roaming one; the game moves that across
+# the first time it runs, so until then the settings are still read from there.
+$dataBase = if ($onWindows) { $env:LOCALAPPDATA } elseif ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME ".local/share" }
+$oldBase = if ($onWindows) { $env:APPDATA } else { $dataBase }
+$settingsFolder = Join-Path (Join-Path $dataBase "qilin") "apb"
+$oldSettingsFolder = Join-Path (Join-Path $oldBase "Qilin") "apb"
+if (-not (Test-Path (Join-Path $settingsFolder "apb.ini")) -and (Test-Path (Join-Path $oldSettingsFolder "apb.ini"))) { $settingsFolder = $oldSettingsFolder }
 $romDir = ""
 $ini = Join-Path $settingsFolder "apb.ini"
 if (Test-Path $ini) {

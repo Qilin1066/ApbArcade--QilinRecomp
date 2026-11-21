@@ -194,6 +194,8 @@ int main(int argc, char** argv) {
     // The settings file keeps all of it.
     const auto path = (std::filesystem::temp_directory_path() / "apb_input_test.ini").string();
     input.settings.display = {gfx::Scaling::stretch, false, gfx::Effect::crt, 0.25f, 0.75f, false, true, true, "Monitor = 2", "Some GPU"};
+    input.settings.display.performance_overlay = true;
+    input.settings.sound.volume = 35;
     input.settings.rom_dir = "D:\\APB Arcade Project";
     input.settings.wheel.wrap = true;
     input.settings.moza_angle = true;
@@ -208,6 +210,7 @@ int main(int argc, char** argv) {
     CHECK(loaded.buttons[0].text() == input.settings.buttons[0].text());
     CHECK(loaded.display.scaling == gfx::Scaling::stretch && !loaded.display.smooth && !loaded.display.vsync && loaded.display.fullscreen);
     CHECK(loaded.display.match_display);
+    CHECK(loaded.display.performance_overlay && loaded.sound.volume == 35 && app::Settings{}.sound.volume == 100);
     CHECK(loaded.rom_dir == "D:\\APB Arcade Project");
     // The stick's settings; a file from before them, with the old stick_counts = 6, gets the new defaults.
     CHECK(loaded.stick_speed == input.settings.stick_speed && loaded.stick_curve == input.settings.stick_curve);
@@ -321,6 +324,47 @@ int main(int argc, char** argv) {
     frame(input, in);
     CHECK((in.in1 & 0x40) != 0);   // still held from the menu's press: not a coin until let go
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, false);
+    frame(input, in);
+    // Start alone is siren/start, from its third frame held.
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, true);
+    frame(input, in);
+    CHECK((in.in0 & 0x0008) != 0);
+    frame(input, in);
+    frame(input, in);
+    CHECK((in.in0 & 0x008a) == 0x0082 && (in.in1 & 0x40) != 0);
+    // Back joining it makes the pair the menu's: neither counts, in either
+    // order of letting go, until both are up.
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, true);
+    for (int i = 0; i < 5; ++i) {
+        frame(input, in);
+        CHECK((in.in0 & 0x0008) != 0 && (in.in1 & 0x40) != 0);
+    }
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_BACK, false);
+    for (int i = 0; i < 5; ++i) {
+        frame(input, in);
+        CHECK((in.in0 & 0x0008) != 0 && (in.in1 & 0x40) != 0);
+    }
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, false);
+    frame(input, in);
+    // A Start that closed the menu (the game resuming with it held) doesn't
+    // start a game; the next press does.
+    input.playing = false;
+    frame(input, in);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, true);
+    frame(input, in);
+    input.playing = true;
+    for (int i = 0; i < 6; ++i) {
+        frame(input, in);
+        CHECK((in.in0 & 0x0008) != 0);
+    }
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, false);
+    frame(input, in);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, true);
+    for (int i = 0; i < 3; ++i) frame(input, in);
+    CHECK((in.in0 & 0x0008) == 0);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_START, false);
+    frame(input, in);
+    CHECK((in.in0 & 0x0008) != 0);
     // B fires on APB's bit 1; X remains the alternate siren on bit 3.
     SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_EAST, true);
     frame(input, in);
@@ -349,6 +393,59 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 10; ++i) frame(input, in);
     CHECK(in.leta[0] == still);
     SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 0);
+    // (A virtual pad's trigger is a whole axis: it rests at -32768.)
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    CHECK(in.adc[1] == 0x3f);
+    // The d-pad is the arrow keys: left and right steer at 60% of the full
+    // speed (1.8 counts a frame), up is the gas.
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT, true);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP, true);
+    const std::uint8_t before_dpad = in.leta[0];
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    // (17 or 18: a fraction of a count is still owed to the right from the stick, above.)
+    const auto dpad_counts = static_cast<std::uint8_t>(before_dpad - in.leta[0]);
+    CHECK((dpad_counts == 17 || dpad_counts == 18) && in.adc[1] == 0);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT, false);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP, false);
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    CHECK(in.adc[1] == 0x3f);
+    // One of its triggers bound as the pedal: that trigger is the pedal, the
+    // default trigger rests, and the stick and buttons go on working.
+    const std::string pad_guid = input.devices().back().guid;
+    input.settings.pedal_axis = app::Binding{app::Binding::Kind::axis, pad_guid, "Test gamepad", SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 0};
+    input.settings.pedal.released = -1;
+    input.settings.pedal.floored = 1;
+    input.configure();
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 32767);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, true);
+    frame(input, in);
+    const std::uint8_t pedal_bound = in.leta[0];
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    CHECK(in.adc[1] == 0x3f && (in.in0 & 0x0008) == 0);
+    CHECK(static_cast<std::uint8_t>(in.leta[0] - pedal_bound) == 30);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 32767);
+    frame(input, in);
+    CHECK(in.adc[1] == 0);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
+    // The same device bound as the wheel (SDL knows some wheels as gamepads):
+    // its stick no longer steers a second time, but its buttons still work.
+    input.settings.pedal_axis = {};
+    input.settings.steering = app::Steering::wheel;
+    input.settings.wheel_axis = app::Binding{app::Binding::Kind::axis, pad_guid, "Test gamepad", SDL_GAMEPAD_AXIS_RIGHTX, 0};
+    input.configure();
+    frame(input, in);
+    const std::uint8_t wheel_bound = in.leta[0];
+    for (int i = 0; i < 10; ++i) frame(input, in);
+    CHECK(in.leta[0] == wheel_bound && (in.in0 & 0x0008) == 0);
+    SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, false);
+    SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 0);
+    input.settings = app::Settings{};
+    input.configure();
+    frame(input, in);
     SDL_DetachVirtualJoystick(SDL_GetJoystickID(pad));
     SDL_CloseJoystick(pad);
     frame(input, in);

@@ -47,8 +47,10 @@ public:
 
     // Every SDL event: the menu's own, and its shortcut keys and buttons.
     void handle(const SDL_Event& e);
-    // Before each present: builds the menu (or the start-up hint), if either is showing.
-    void frame();
+    // Before each present: builds the menu (or the start-up hint), if either
+    // is showing. 'away': the game is paused because the window isn't the
+    // active one; a note in the middle of the picture says so.
+    void frame(bool away = false);
     [[nodiscard]] bool quit_requested() const noexcept { return quit_; }
     // Set by apb when locking to the display didn't hold (shown on the Display page).
     std::string speed_note;

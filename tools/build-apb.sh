@@ -20,10 +20,14 @@ for arg in "$@"; do
 done
 
 if [ -z "$roms" ]; then
+    # The game's data folder (qilin/apb; Qilin/apb up to v0.21.0, which the
+    # game moves across the first time it runs).
     case "$(uname)" in
-        Darwin) ini="$HOME/Library/Application Support/Qilin/apb/apb.ini" ;;
-        *) ini="${XDG_DATA_HOME:-$HOME/.local/share}/Qilin/apb/apb.ini" ;;
+        Darwin) data="$HOME/Library/Application Support" ;;
+        *) data="${XDG_DATA_HOME:-$HOME/.local/share}" ;;
     esac
+    ini="$data/qilin/apb/apb.ini"
+    [ -f "$ini" ] || ini="$data/Qilin/apb/apb.ini"
     if [ -f "$ini" ]; then
         roms=$(sed -n 's/^rom_dir = //p' "$ini" | head -n 1)
     fi

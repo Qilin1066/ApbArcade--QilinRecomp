@@ -11,8 +11,29 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-21
+
+A pass over the game as a player meets it: the controls, the menu, the window and where it keeps its files.
+
+### Added
+- **A gamepad's Start is siren/start**, with A: Back drops a coin in, Start starts the game. Back + Start is still the menu's: neither counts while the other is held with it, in either order of letting go, and a Start that closed the menu doesn't start a game until it's let go.
+- **A gamepad's d-pad is the arrow keys**: left and right steer (at the keys' 60% of full speed), up is the gas.
+- **Volume** on the menu's Game page (0 to 100% of the board's own level), kept in `apb.ini` (`volume`).
+- **"Paused: click the window to carry on"** over the picture while the game waits because its window isn't the active one. Before, the picture simply stopped (and a window that opened behind another one stayed blank).
+
 ### Changed
+- **The game's files are in `qilin/apb`, as the other QilinRecomp projects keep theirs**: `%LOCALAPPDATA%\qilin\apb` on Windows, `~/Library/Application Support/qilin/apb` on macOS, `$XDG_DATA_HOME` or `~/.local/share/qilin/apb` elsewhere. They were in SDL's preferences folder for `Qilin/apb` (`%APPDATA%\Qilin\apb` on Windows). The first run brings the settings, high scores and their backup across: every file is copied before any old one is removed, nothing is overwritten, and if a copy fails the old folder goes on being used. The build scripts and the Windows download read the ROM folder from either place.
+- **A wheel's own buttons work without being set up** where SDL knows the wheel as a gamepad (A, B, X, Start, Back and its d-pad): only its stick and triggers are left out once it's bound as the wheel, since those are the wheel and pedals themselves. A real gamepad with one trigger bound as the pedal keeps its stick and buttons (binding it used to switch the whole pad's defaults off).
+- **Every controller works the menu**, not only the first one SDL lists (which can be a virtual pad or a wheel's base).
+- **The menu fits APB's narrow upright window**: a slider's or list's label goes on a line of its own above it where it would be cut off, rows of choices wrap, and the buttons table keeps set column widths (a new binding was written one letter to a line).
+- The window is titled **APB**, as the other recomps name theirs after the game (the graphics device is on the Display page), and SDL is told the same name for the system's sound mixer.
+- The READMEs: the gamepad controls, the data folder, and the standalone-MAME result (it passes with MAME's scheduling).
 - **Licence: GPL-3.0** (`LICENSE`), as in all the QilinRecomp projects, in place of MIT: anyone may use, share, change and sell it, but whatever they distribute that is built from it must come with its full source under the same licence. Earlier versions stay under MIT.
+
+### Fixed
+- **Setting a control to Space, Enter or a controller's A didn't take** when "Set" had been reached with the keyboard or the controller: the same press pressed "Set" again. While a control is being set, the press is only that control; and a controller's Start no longer closes the menu in the middle of it.
+- **Back + Start opened or closed the menu again on any other button** pressed while the two were held.
+- **The frame-time readout (F3) counted the time away from the window as one long frame** after coming back.
 
 ## [0.21.0] - 2026-11-21
 

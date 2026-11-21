@@ -1216,6 +1216,49 @@ void test_persistence() {
     Eeprom unicode_store(std::string(unicode.begin(), unicode.end()));
     CHECK(unicode_store.save(next));
     CHECK(unicode_store.load(loaded) == Eeprom::Loaded::primary && loaded == next);
+
+    // An older data folder brought into the current one (apb's move from
+    // Qilin/apb to qilin/apb): files the current folder lacks come across,
+    // its own are never overwritten, and the emptied old folders go.
+    {
+        const auto text_of = [](const fs::path& p) { std::ifstream f(p); std::string s; std::getline(f, s); return s; };
+        const auto write = [](const fs::path& p, const char* s) { std::ofstream f(p); f << s; };
+        const fs::path old_parent = dir / "Old", old = old_parent / "apb", current = dir / "new" / u8"apb-é";
+        const auto u8 = [](const fs::path& p) { const auto s = p.u8string(); return std::string(s.begin(), s.end()); };
+        int moved = -1;
+        std::string error;
+        // No old folder: nothing to do, nothing made.
+        CHECK(qilin::persist::adopt_folder(u8(old), u8(current), &moved, &error) && moved == 0 && !fs::exists(current));
+        fs::create_directories(old);
+        write(old / "apb.ini", "old settings");
+        write(old / "eeprom.bin", "old scores");
+        write(old / "eeprom.bin.bak", "old backup");
+        fs::create_directories(current);
+        write(current / "apb.ini", "new settings");
+        CHECK(qilin::persist::adopt_folder(u8(old), u8(current), &moved, &error) && moved == 2);
+        CHECK(text_of(current / "apb.ini") == "new settings" && text_of(current / "eeprom.bin") == "old scores");
+        CHECK(text_of(current / "eeprom.bin.bak") == "old backup");
+        CHECK(!fs::exists(old) && !fs::exists(old_parent));   // emptied, so removed with its parent
+        // Again: nothing left to move.
+        CHECK(qilin::persist::adopt_folder(u8(old), u8(current), &moved, &error) && moved == 0);
+        // The old folder's parent stays when something else lives there.
+        fs::create_directories(old);
+        fs::create_directories(old_parent / "another game");
+        write(old / "controllers.txt", "report");
+        CHECK(qilin::persist::adopt_folder(u8(old), u8(current), &moved, &error) && moved == 1);
+        CHECK(!fs::exists(old) && fs::exists(old_parent / "another game") && text_of(current / "controllers.txt") == "report");
+        // The same folder under both names: left alone.
+        CHECK(qilin::persist::adopt_folder(u8(current), u8(current), &moved, &error) && moved == 0);
+        CHECK(text_of(current / "apb.ini") == "new settings");
+        // A file that can't be copied: nothing changes, the old folder stays whole.
+        fs::create_directories(old);
+        write(old / "a.txt", "a");
+        write(old / "z.txt", "z");
+        const fs::path blocked_target = dir / "not-a-folder";
+        write(blocked_target, "file");
+        CHECK(!qilin::persist::adopt_folder(u8(old), u8(blocked_target), &moved, &error) && !error.empty());
+        CHECK(text_of(old / "a.txt") == "a" && text_of(old / "z.txt") == "z");
+    }
     fs::remove_all(dir);
 }
 

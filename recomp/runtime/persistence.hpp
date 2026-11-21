@@ -14,6 +14,15 @@ inline bool replace(const std::string& path, std::string_view text, std::string*
     return replace(path, {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()}, error);
 }
 
+// Brings an older data folder's files into the current one: each file the
+// current folder doesn't have is copied across, and only once every copy
+// has succeeded are the old ones removed (and the old folder, if that
+// leaves it empty). Nothing is overwritten. False if a file couldn't be
+// copied: then nothing has changed and the old folder is still complete.
+// *moved gets how many files came across. The same folder by another name
+// (a file system that ignores case) is left as it is.
+bool adopt_folder(const std::string& from, const std::string& to, int* moved = nullptr, std::string* error = nullptr);
+
 class Eeprom {
 public:
     using Bytes = std::array<std::uint8_t, 512>;

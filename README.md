@@ -100,7 +100,7 @@ ctest --test-dir build -C Release -L parity --output-on-failure
 
 The four picture tests each compare 6,000 frames (about 100 seconds of game time) between the lifted game and MAME's CPU cores: attract mode, a credited game with the pedal and steering held, a repeatable random player, and the self-test menus. It fails on a runner error, missing or incomplete output, or the first differing frame. Logs and hashes stay under `build/game-parity/`. Both runs use this project's board and CPU video renderer; this checks CPU recompilation and scheduling, and does not independently validate the board, sound or Vulkan output against MAME itself. No window or Vulkan driver is needed. A fifth test records a 6,000-frame credited game with synchronous and threaded mixing and requires byte-identical WAVs, including speech (`build/audio-parity/`). Leave `QILIN_ROM_DIR` empty for the usual tests without ROMs.
 
-A separate [standalone MAME comparison](docs/independent-mame.md) checks independently captured pictures and coin audio against MAME 0.264. It reports exact pixel differences, waveform correlation and sound levels, with captures kept locally. The current independent comparison finds differences; passing the shared-model tests does not mean complete MAME equivalence.
+A separate [standalone MAME comparison](docs/independent-mame.md) checks independently captured pictures and coin audio against MAME 0.264. It reports exact pixel differences, waveform correlation and sound levels, with captures kept locally. With MAME's own turn-taking between the two processors (`--mame-scheduling`, a diagnostic mode of `qilin_run`) the comparison passes: identical pictures and sound commands, audio correlation 0.9999. With the player's own, finer turn-taking the two runs drift apart in timing, as two real boards would; that is by design and is what `apb` uses.
 
 ### Playing it
 
@@ -131,9 +131,9 @@ build/apb ["D:/APB Arcade Project"] [--scale N] [--no-vsync] [--gpu N] [--mute]
 
 | Cabinet | Keyboard | Gamepad |
 |---|---|---|
-| Steering wheel | Left / Right | left stick |
-| Gas pedal | Up | right trigger |
-| Siren / start | Left Ctrl or Z; Space or C also work | A; X also works |
+| Steering wheel | Left / Right | left stick, or d-pad left / right |
+| Gas pedal | Up | right trigger, or d-pad up |
+| Siren / start | Left Ctrl or Z; Space or C also work | A or Start; X also works |
 | Fire | Left Alt or X | B |
 | Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
 | Self-test switch | F2 (toggles) | |
@@ -161,9 +161,9 @@ See [wheel setup and verification](docs/wheels.md) for the two wheel setups, SDK
 
 Each configured wheel has a saved control profile: its rotation mode, angle, calibration, pedals, buttons and friction. Choose **Saved wheel setup** in Controls, or reconnect a previously configured wheel while the selected one is absent. Bind each wheel once; profiles use SDL's device GUID, so two identical units with the same GUID share a setup. Display settings and the ROM folder are shared.
 
-Alt-Tab or minimising pauses gameplay and audio, suspends game wheel effects, and rebases steering on return. Audio-device outages retry automatically without restarting APB; playback resumes from current game audio.
+Alt-Tab or minimising pauses gameplay and audio (the window says *Paused: click the window to carry on*), suspends game wheel effects, and rebases steering on return. Audio-device outages retry automatically without restarting APB; playback resumes from current game audio.
 
-Settings are saved to `apb.ini`, and the EEPROM (high scores, audits, the game's own settings) to `eeprom.bin`, both in your user preferences folder (SDL's for `Qilin/apb`). Settings and EEPROM use flushed temporary files and atomic replacement. Changed EEPROM is saved every five seconds, when opening the pause menu, and on exit; `eeprom.bin.bak` holds the previous complete save. An incomplete primary is recovered from that backup with an on-screen notice. Storage failures are reported. Abrupt loss of power can still lose the most recent unsaved changes.
+Settings are saved to `apb.ini`, and the EEPROM (high scores, audits, the game's own settings) to `eeprom.bin`, both in the game's data folder, `qilin/apb` in your per-user data as the other QilinRecomp projects keep theirs (`%LOCALAPPDATA%\qilin\apb` on Windows, `~/Library/Application Support/qilin/apb` on macOS, `$XDG_DATA_HOME` or `~/.local/share/qilin/apb` on Linux; the Game page shows it). Up to v0.21.0 it was SDL's preferences folder for `Qilin/apb` (`%APPDATA%\Qilin\apb` on Windows): the first run moves what's there across. Settings and EEPROM use flushed temporary files and atomic replacement. Changed EEPROM is saved every five seconds, when opening the pause menu, and on exit; `eeprom.bin.bak` holds the previous complete save. An incomplete primary is recovered from that backup with an on-screen notice. Storage failures are reported. Abrupt loss of power can still lose the most recent unsaved changes.
 
 WAV exports convert the fractional chip rate (55,930.39453125 Hz) to the file's integer 55,930 Hz rate, preserving the timebase. The independent MAME check also replays its bus trace through the native sound chips to distinguish chip/mixer errors from CPU scheduling differences.
 
@@ -173,7 +173,7 @@ For an actual R5/G920 and display check, the Windows download includes **Check c
 
 The player and headless runner support `--record session.qir` and `--replay session.qir` for reproducible cabinet inputs, with initial EEPROM and checksums. Replay preserves personal high-score saves. See [input recordings](docs/input-movies.md). Use `--profile performance.txt` to measure simulation, audio and frame pacing; see [profiling](docs/profiling.md). Controls → **Save controller diagnostics** exports device ranges and the MOZA angle status for hardware testing; see [wheel setup](docs/wheels.md#saving-a-controller-report).
 
-The independent MAME harness now replays captured per-band graphics state through `qilin_video_trace`: all five sampled pictures match exactly when given the same state. Independently running the complete games still produces timing differences; see [the measured checks and limitations](docs/independent-mame.md).
+The independent MAME harness now replays captured per-band graphics state through `qilin_video_trace`: all five sampled pictures match exactly when given the same state. Run independently with the player's own scheduler, the complete games differ from MAME in timing; with MAME's scheduler they match. See [the measured checks and limitations](docs/independent-mame.md).
 
 `qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs (`--look crt:1152x1536` as a window that size would show them, through a look), `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound. `qilin_tween` (a prototype, needs ffmpeg) renders a stretch of a run with frames drawn between the game's, beside the game as it is, to a video.
 

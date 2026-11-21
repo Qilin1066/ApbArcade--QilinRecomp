@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL3/SDL.h>
+#include <algorithm>
 #include <cstdint>
 #include <atomic>
 #include <span>
@@ -21,6 +22,9 @@ public:
     void request_reopen() { reopen_.store(true); }
     bool push(std::span<const std::int16_t> samples);
     bool pause();
+    // The player's volume, 0 to 100 percent of the board's own level. From
+    // any thread; the worker applies it to the stream with the next sound.
+    void set_volume(int percent) { volume_.store(std::clamp(percent, 0, 100)); }
     // Snapshot counters without touching the worker-owned SDL stream.
     [[nodiscard]] std::string diagnostics() const;
 private:
@@ -31,6 +35,8 @@ private:
     std::atomic<bool> reopen_{false};
     std::atomic<std::uint64_t> open_attempts_{0}, starvations_{0}, submitted_frames_{0}, queue_peak_{0};
     std::atomic<int> last_queued_{0}, frequency_ppm_{1000000};
+    std::atomic<int> volume_{100};
+    int applied_volume_ = 100;   // a new stream starts at full
     Uint64 retry_at_ = 0;
     SDL_AudioStream* stream_ = nullptr;
     bool started_ = false;

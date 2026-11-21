@@ -65,6 +65,11 @@ struct DisplaySettings {
     bool performance_overlay = false;  // the frame-time readout (F3), as the other recomps have it
 };
 
+// The sound (the menu's Game page).
+struct SoundSettings {
+    int volume = 100;   // percent of the board's own level
+};
+
 // One-click settings for the picture (the Display page's presets): its size
 // and look only, never full screen, the display, vsync or the device.
 struct DisplayPreset {
@@ -108,6 +113,7 @@ struct Settings : ControlSettings {
     void remember_controls();
     bool select_profile(const std::string& guid);
     DisplaySettings display;
+    SoundSettings sound;
     std::string rom_dir;               // where the ROMs were last found (apb with no folder given uses it)
 
     bool load(const std::string& path);
@@ -197,11 +203,13 @@ private:
     bool focused_ = true, requested_playing_ = true;
     bool was_playing_ = true;
     bool resuming_ = false;
-    // The gamepad's Back is coin 1, and Back + Start is the settings menu (as
-    // in the other recomps): Back counts as a coin once it has been held for
-    // a few frames without Start, so opening the menu doesn't drop one in.
-    int back_frames_ = 0;
-    bool back_with_start_ = false;
+    // A gamepad's Back is coin 1 and its Start is siren/start, and Back +
+    // Start is the settings menu (as in the other recomps): each counts once
+    // it has been held for a few frames without the other, so opening the
+    // menu neither drops a coin in nor starts a game; and a Start that closed
+    // the menu doesn't count until it's let go.
+    int back_frames_ = 0, start_frames_ = 0;
+    bool menu_combo_ = false, start_from_menu_ = false;
     double mouse_dx_ = 0, mouse_carry_ = 0;
     int pedal_ = 0;   // the keys' and trigger's pedal, 0..0x3f, moved 8 a frame
 

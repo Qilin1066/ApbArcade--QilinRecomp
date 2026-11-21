@@ -2,8 +2,10 @@ APB QilinRecomp for Windows (64-bit)
 ==================================
 
 APB (Atari Games, 1987), recompiled to run natively: the arcade board's two
-processors' programs translated into C++ and compiled for your PC, checked against MAME's processor cores on the shared board model. Independent
-full-game MAME timing differences remain under investigation.
+processors' programs translated into C++ and compiled for your PC, checked
+against MAME's processor cores on the shared board model, and against
+standalone MAME 0.264: taking turns between the processors as MAME does, the
+pictures and sound commands come out the same.
 
 No game data is included. You need your own copy of the APB rev 7 ROM set
 (MAME's "apb": 36 files).
@@ -30,14 +32,16 @@ Controls
 --------
 Keyboard: arrows steer and accelerate; Left Ctrl, Left Alt, Space are the
 siren/start, fire and alternate siren; 5 inserts a coin. Gamepad: left stick
-steers, right trigger accelerates, A starts/sirens, B fires, X is alternate
-siren, View inserts a coin.
+or d-pad steers, right trigger or d-pad up accelerates, A or Start
+starts/sirens, B fires, X is alternate siren, Back (View) inserts a coin.
 
-F1 or Esc (gamepad: Menu): the settings menu: wheels, pedals, buttons, the
-picture (presets, size, a CRT look, smoothed pixel art), full screen.
-Alt+Enter or F11: full screen.
+F1 or Esc (gamepad: Back + Start together): the settings menu: wheels,
+pedals, buttons, the picture (presets, size, a CRT look, smoothed pixel art),
+full screen, the volume. F3: frame times. F11 or Alt+Enter: full screen.
 
-Settings and high scores are kept in %APPDATA%\Qilin\apb.
+Settings and high scores are kept in %LOCALAPPDATA%\qilin\apb (the Game page
+of the menu shows the folder). Versions up to 0.21.0 kept them in
+%APPDATA%\Qilin\apb; the game moves them across the first time it runs.
 
 
 What's in here

@@ -15,6 +15,7 @@ void AudioOutput::open() {
     if (stream_) SDL_DestroyAudioStream(stream_);
     const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, sample_rate};
     stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+    applied_volume_ = 100;
     started_ = false; ratio_ = chip_ratio; frequency_ppm_ = static_cast<int>(ratio_ * 1000000);
     state_.store(stream_ ? State::buffering : State::unavailable);
     retry_at_ = SDL_GetTicks() + 1000;
@@ -36,6 +37,10 @@ bool AudioOutput::push(std::span<const std::int16_t> samples) {
 }
 bool AudioOutput::queue(std::span<const std::int16_t> samples) {
     if (!stream_) return false;
+    if (const int volume = volume_.load(); volume != applied_volume_) {
+        if (!SDL_SetAudioStreamGain(stream_, static_cast<float>(volume) / 100.0f)) return false;
+        applied_volume_ = volume;
+    }
     const int queued = SDL_GetAudioStreamQueued(stream_);
     if (queued < 0) return false;
     last_queued_ = queued;
