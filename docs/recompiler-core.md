@@ -1,12 +1,12 @@
 # Recompiler core: status (roadmap step 2)
 
-Last updated 2026-11-18 (v0.14.0: the lifter, and the differential tests against MAME's core; v0.13.0: control-flow analysis keyed by physical ROM address; v0.12.0: the project rebuilt to GBTGhoulies-QilinRecomp's requirements, T-11 decoder verified against MAME).
+Last updated 2026-11-18 (v0.14.0: the lifter, and the differential tests against MAME's core; v0.13.0: control-flow analysis keyed by physical ROM address; v0.12.0: the project rebuilt to GBTGhoulies--QilinRecomp's requirements, T-11 decoder verified against MAME).
 
 ## Language and toolchain
 Everything is **C++23**. Minimum compilers are GCC 14, Clang 19, Xcode 16 and Visual Studio 2022 17.10; CMake checks them at configure time. CI builds with warnings as errors (`-Wall -Wextra -Wpedantic -Wshadow`, MSVC `/W4`) on Linux x64 (GCC 14 and Clang 19), Linux ARM64 (GCC 14), macOS ARM64 and x64, and Windows x64, and runs the renderer test on Mesa's software Vulkan driver with the validation layer.
 
 ## The reference CPU (`third_party/mame-t11`)
-MAME's T-11 core is ground truth for every check, as Unicorn is for GBTGhoulies-QilinRecomp's x86. Its instruction implementations (`t11ops.hxx`) and opcode table (`t11table.hxx`) are vendored unmodified and compiled inside a small class adapted from MAME's `t11.h` and `t11.cpp`, which runs outside MAME's device framework. Memory goes through a `Bus` interface, so a test sees every fetch, read and write in order. It counts cycles exactly as MAME does (`m_icount`). The differences from MAME's device are listed in `t11_reference.cpp`; none is visible on System 2 (no unaligned I/O-page handlers, no vectored interrupts).
+MAME's T-11 core is ground truth for every check, as Unicorn is for GBTGhoulies--QilinRecomp's x86. Its instruction implementations (`t11ops.hxx`) and opcode table (`t11table.hxx`) are vendored unmodified and compiled inside a small class adapted from MAME's `t11.h` and `t11.cpp`, which runs outside MAME's device framework. Memory goes through a `Bus` interface, so a test sees every fetch, read and write in order. It counts cycles exactly as MAME does (`m_icount`). The differences from MAME's device are listed in `t11_reference.cpp`; none is visible on System 2 (no unaligned I/O-page handlers, no vectored interrupts).
 
 ## Decoder (`recomp/src/t11_decoder.*`)
 Every 16-bit word decodes to an `Instruction`: operation, byte form, up to two operands (mode, register, extension word), length, MAME's cycle count, and whether the T-11 executes it. EIS (`MUL`, `DIV`, `ASH`, `ASHC`) and `MARK` decode for listings but are marked not legal: on the T-11 they trap through vector `010`, as the unassigned words do. `JMP` and `JSR` with a register destination trap through vector `004`.

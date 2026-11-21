@@ -55,7 +55,7 @@ kit\ninja.exe       Ninja, which drives the compiler
 work\               made when building: the recompiled code (from your ROMs)
 LICENSES\           the licences of everything included
 
-Source, changes and issues: https://github.com/Qilin1066/ApbArcade-QilinRecomp
+Source, changes and issues: https://github.com/Qilin1066/ApbArcade--QilinRecomp
 
 
 Checking a wheel and performance

@@ -1,6 +1,6 @@
 # APB — Recomp Roadmap & Design Targets
 
-The requirements and scope are those of GBTGhoulies-QilinRecomp, applied to an arcade board instead of an Xbox. Where the hardware differs, this document says how the same principle applies.
+The requirements and scope are those of GBTGhoulies--QilinRecomp, applied to an arcade board instead of an Xbox. Where the hardware differs, this document says how the same principle applies.
 
 **Guiding principle: efficiency and reliability come first.** Every design choice is judged on whether it makes the game cheaper to run on low-end hardware and whether it fails loudly and predictably instead of silently misbehaving.
 
@@ -34,7 +34,7 @@ The requirements and scope are those of GBTGhoulies-QilinRecomp, applied to an a
 **Out of scope:** anything without Vulkan 1.3, and 32-bit hosts.
 
 ### Vulkan baseline: 1.3
-Vulkan 1.3 core is the floor; optional features and limits come from v3dv on a Pi 4. The renderer is shared with GBTGhoulies-QilinRecomp: dynamic rendering (no render pass objects), synchronization2, extended dynamic state, timeline semaphores for frame pacing. It checks what it uses at start-up and fails with a clear message rather than taking a fallback path.
+Vulkan 1.3 core is the floor; optional features and limits come from v3dv on a Pi 4. The renderer is shared with GBTGhoulies--QilinRecomp: dynamic rendering (no render pass objects), synchronization2, extended dynamic state, timeline semaphores for frame pacing. It checks what it uses at start-up and fails with a clear message rather than taking a fallback path.
 
 **Low-end reference:** a Raspberry Pi 4–class board. It is what efficiency is measured against and tested on, not a floor.
 

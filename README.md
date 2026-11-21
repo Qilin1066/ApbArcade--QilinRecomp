@@ -1,6 +1,6 @@
-# ApbArcade-QilinRecomp
+# ApbArcade--QilinRecomp
 
-A static recompilation of **APB — All Points Bulletin** (Atari Games, 1987, Atari System 2 arcade hardware) into portable C++23 with a Vulkan 1.3 renderer, aimed at 64-bit Windows, Linux and macOS, on x86-64 or ARM64. It follows the requirements and scope of [GBTGhoulies-QilinRecomp](https://github.com/Qilin1066/GBTGhoulies-QilinRecomp): efficiency first, with a Raspberry Pi 4–class board as the reference for typical low-end hardware, not a floor; anything with a Vulkan 1.3 driver is in scope, Macs included through MoltenVK.
+A static recompilation of **APB — All Points Bulletin** (Atari Games, 1987, Atari System 2 arcade hardware) into portable C++23 with a Vulkan 1.3 renderer, aimed at 64-bit Windows, Linux and macOS, on x86-64 or ARM64. It follows the requirements and scope of [GBTGhoulies--QilinRecomp](https://github.com/Qilin1066/GBTGhoulies--QilinRecomp): efficiency first, with a Raspberry Pi 4–class board as the reference for typical low-end hardware, not a floor; anything with a Vulkan 1.3 driver is in scope, Macs included through MoltenVK.
 
 > **No game data is included, and none ever will be.** You need your own copy of the rev 7 ROM set (MAME's `apb`). The tools read it from a directory you give them. `.gitignore` keeps ROMs, and anything generated from them, out of the repo.
 
@@ -14,7 +14,7 @@ The recompiled game runs; current work focuses on controls, device validation an
 | Reference CPU: MAME's T-11 core, vendored unmodified behind a traced bus | ✅ |
 | T-11 decoder (full instruction set, cycle counts, MAME-format disassembly) | ✅ agrees with MAME on all 65,536 opcode words: text, length, cycles and traps |
 | Board models: memory map, ROM banks, Slapstic 110, palette, interrupt latches, watchdog, sound latches | ✅ each checked against MAME's definitions |
-| Renderer: Vulkan 1.3 (shared with GBTGhoulies-QilinRecomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
+| Renderer: Vulkan 1.3 (shared with GBTGhoulies--QilinRecomp) | ✅ clears, flips and read-back, tested in CI on Mesa's software driver with validation |
 | Control flow keyed by physical ROM address (`qilin cfg`): bank tracking, value-range jump tables, structural function discovery | ✅ 27,947 instructions in 805 functions, found with no seeds, across the fixed ROM and all 12 code banks: 78% of the fixed ROM and 66% of the code banks are code |
 | Lifter (`qilin lift`): one C++ function per guest function, registers and flags in locals, MAME's bus order and cycle counts, native calls with checked returns | ✅ all 805 functions (30,209 instructions, shared code counted per function) |
 | Differential test against MAME's T-11 core: registers, flags, cycles and every bus access in order | ✅ game functions: 6,440 trials, 5,018 matching runs, 0 mismatches; every instruction form (in CI): 148,992 trials, 146,125 matching runs, 0 mismatches |
@@ -187,7 +187,7 @@ The independent MAME harness now replays captured per-band graphics state throug
 | `recomp/tests/` | Unit tests; they need no game files |
 | `tools/check/` | Checks against MAME: both decoders on every opcode; both lifters on every instruction form |
 | `tools/difftest/`, `tools/difftest6502/` | Differential tests: lifted game functions against MAME's T-11 and 6502 cores |
-| `third_party/` | Vendored: the Vulkan headers and volk (as in GBTGhoulies-QilinRecomp), and MAME's T-11 and 6502 cores (the reference CPUs). See `third_party/README.md` |
+| `third_party/` | Vendored: the Vulkan headers and volk (as in GBTGhoulies--QilinRecomp), and MAME's T-11 and 6502 cores (the reference CPUs). See `third_party/README.md` |
 | `docs/` | Design targets, the board, the recompiler's status, naming |
 
 ## Licence

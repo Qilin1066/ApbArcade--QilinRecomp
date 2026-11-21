@@ -2,7 +2,7 @@
 // through volk, so there's nothing to link against and a machine without
 // Vulkan gets a message.
 //
-// Shared with GBTGhoulies-QilinRecomp, less depth and stencil.
+// Shared with GBTGhoulies--QilinRecomp, less depth and stencil.
 //
 // One command buffer records a frame. A render pass (dynamic rendering) on
 // the back buffer is begun when the first thing needs it and ended before
