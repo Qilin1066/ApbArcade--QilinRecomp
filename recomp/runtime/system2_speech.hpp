@@ -38,6 +38,16 @@ public:
     std::function<void(std::int16_t, std::int64_t)> on_sample;
 
     [[nodiscard]] std::uint64_t samples() const noexcept { return samples_; }
+    // The diagnostic MAME-scheduling mode: the io-ready timer becomes the
+    // caller's (a MAME timer): given the delay in chip clocks (or, when
+    // clocks < 0, in microseconds) and the parameter; it calls fire_io_ready.
+    std::function<void(std::int32_t clocks, std::int32_t usec, std::int32_t param)> external_io_ready_timer;
+    void fire_io_ready(std::int32_t param, std::int64_t at);
+    // The same mode: MAME's stream decides which samples exist by a time
+    // (how many are due, and the main cycle each starts on); 'at' is ignored.
+    std::function<std::uint64_t()> mame_samples_due;
+    std::function<std::int64_t(std::uint64_t index)> mame_sample_start;
+    [[nodiscard]] std::uint32_t chip_hz() const noexcept { return cycles_per_clock_ == 16 ? 625'000u : 833'333u; }
     // Samples louder than the idle level (|value| > 64): the chip said something.
     [[nodiscard]] std::uint64_t loud_samples() const noexcept { return loud_; }
 

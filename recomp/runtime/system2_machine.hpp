@@ -27,7 +27,38 @@
 #include <span>
 #include <vector>
 
+namespace qilin::game {
+class MameRun;
+}
+
 namespace qilin::sys2 {
+
+// The diagnostic MAME-scheduling mode (game/mame_mode.cpp) supplies these:
+// with them set, the board's timed and synchronised behaviour is MAME's
+// (its timers, set_input_line's queued line changes, the latches' and the
+// chips' synchronize calls), driven by a port of MAME's scheduler. Unset,
+// as in the player and every other tool, the board runs its own events.
+struct MameHooks {
+    virtual ~MameHooks() = default;
+    virtual void update_interrupts() = 0;   // atarisy2_state::update_interrupts: the four CP lines
+    virtual void int_enable_w(std::uint8_t data) = 0;
+    virtual void soundlatch_w(std::uint8_t data) = 0;
+    virtual void soundlatch_read() = 0;    // the command read: the latch's pending flag drops
+    virtual void mainlatch_w(std::uint8_t data) = 0;
+    virtual void sound_reset_line(bool asserted) = 0;
+    virtual void sound_irq_ack() = 0;
+    virtual void watchdog_reset() = 0;
+    virtual void adc_start(unsigned channel) = 0;
+    [[nodiscard]] virtual std::uint8_t adc_read() = 0;
+    virtual void yscroll_reset(int scroll) = 0;   // loaded at line 0
+    [[nodiscard]] virtual int vpos() = 0;
+    [[nodiscard]] virtual std::uint8_t pokey_read(int which, unsigned reg) = 0;
+    virtual void pokey_write(int which, unsigned reg, std::uint8_t value) = 0;
+    [[nodiscard]] virtual bool ym_busy() = 0;
+    virtual void ym_data_written() = 0;
+    virtual void ym_reset_line(bool running) = 0;   // sndrst_6502_w: the YM2151's reset line (high: running)
+    [[nodiscard]] virtual std::int64_t speech_time() = 0;   // now, in main cycles, for the speech chip
+};
 
 // Event timing, in main-CPU cycles (10 MHz): all whole numbers.
 inline constexpr std::int64_t cycles_per_scanline = 400;   // 640 pixels at 16 MHz
@@ -174,6 +205,9 @@ public:
     };
     VideoSink* video_sink = nullptr;
 
+    // The diagnostic MAME-scheduling mode, when set (see MameHooks).
+    MameHooks* mame = nullptr;
+
     // Optional: called at the start of each vblank, on the exact cycle the
     // frame count goes up (after the video sink), with the new count. Tools
     // change the controls here, so every run sees them change at the same moment.
@@ -198,7 +232,10 @@ public:
     [[nodiscard]] const Speech& speech() const noexcept { return speech_; }
     void advance_speech(std::int64_t to_sound_time) { speech_.advance(main_cycles_at(to_sound_time)); }
     // The scanline the beam is on, at main_time.
-    [[nodiscard]] int vpos() const noexcept { return static_cast<int>(((main_time + cycles_per_frame - raster_origin) % cycles_per_frame) / cycles_per_scanline); }
+    [[nodiscard]] int vpos() const noexcept {
+        if (mame) return mame->vpos();
+        return static_cast<int>(((main_time + cycles_per_frame - raster_origin) % cycles_per_frame) / cycles_per_scanline);
+    }
     struct Counters {
         std::uint64_t sound_commands = 0, sound_command_reads = 0, sound_replies = 0, sound_reply_reads = 0;
         std::uint64_t sound_resets = 0, watchdog_strobes = 0, eeprom_writes = 0, speech_bytes = 0;
@@ -223,6 +260,9 @@ public:
     [[nodiscard]] const std::array<std::uint8_t, 0x1000>& main_ram() const noexcept { return main_ram_; }
 
 private:
+    friend class game::MameRun;
+    std::uint8_t mame_cp_state_ = 0;   // MAME mode: the T-11's CP lines, as MAME's queued changes leave them
+
     std::uint16_t main_read_io(std::uint16_t address);   // 0x1000-0x3FFF, word-aligned, after the Slapstic
     std::uint8_t sound_read_io(std::uint16_t address);   // the EEPROM and the chips
     std::uint8_t sound_read_chips(std::uint16_t address);

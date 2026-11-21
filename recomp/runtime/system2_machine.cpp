@@ -101,6 +101,7 @@ std::uint16_t Machine::main_read_io(std::uint16_t address) {
         return palette_.read_word(address);
     case Area::adc:
         // The ADC0809's result, on the low lane; nothing drives the high one.
+        if (mame) return input(static_cast<std::uint16_t>(0xff00 | mame->adc_read()));
         advance_adc(main_time);
         return input(static_cast<std::uint16_t>(0xff00 | adc_result_));
     case Area::in0_watchdog:
@@ -109,6 +110,7 @@ std::uint16_t Machine::main_read_io(std::uint16_t address) {
     case Area::sound_reply:
         // sound_r: reading the sound CPU's reply clears CP1 and the latch.
         p2portwr_ = false;
+        if (mame) mame->update_interrupts();
         mainlatch_.pending = false;
         ++counters.sound_reply_reads;
         if (log) log->push_back({'r', mainlatch_.data, main_time});
@@ -153,7 +155,9 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         bank_[(address >> 1) & 1] = select_rom_bank(data);
         break;
     case Area::adc_start:
-        if (low) {
+        if (low && mame) {
+            mame->adc_start((address >> 1) & 7);
+        } else if (low) {
             advance_adc(main_time);
             adc_channel_ = static_cast<std::uint8_t>((address >> 1) & 7);
             adc_phase_ = 1;
@@ -161,26 +165,42 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         }
         break;
     case Area::int0_ack:
-        if (low) p2portrd_ = false;
+        if (low) {
+            p2portrd_ = false;
+            if (mame) mame->update_interrupts();
+        }
         break;
     case Area::sound_reset:
         if (low) sound_reset_w(static_cast<std::uint8_t>(data));
         break;
     case Area::scanline_ack:
-        if (low) scanline_int_ = false;
+        if (low) {
+            scanline_int_ = false;
+            if (mame) mame->update_interrupts();
+        }
         break;
     case Area::video_ack:
-        if (low) video_int_ = false;
+        if (low) {
+            video_int_ = false;
+            if (mame) mame->update_interrupts();
+        }
         break;
     case Area::int_enable:
-        if (low) pending_enable_ = data & 0xff;
+        if (low && mame)
+            mame->int_enable_w(static_cast<std::uint8_t>(data));
+        else if (low)
+            pending_enable_ = data & 0xff;
         break;
     case Area::sound_command:
         if (low) {
+            ++counters.sound_commands;
+            if (log) log->push_back({'C', static_cast<std::uint8_t>(data), main_time});
+            if (mame) {
+                mame->soundlatch_w(static_cast<std::uint8_t>(data));
+                break;
+            }
             if (!soundlatch_.pending) ++nmi_edges_;
             soundlatch_ = {static_cast<std::uint8_t>(data), true};
-            ++counters.sound_commands;
-            if (log) log->push_back({'C', soundlatch_.data, main_time});
         }
         break;
     case Area::xscroll: {
@@ -193,7 +213,9 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         const auto value = combine(yscroll_, data, mask);
         if (video_sink && value != yscroll_) video_sink->draw_through(*this, vpos());
         yscroll_ = value;
-        if (yscroll_ & 0x10) {
+        if ((yscroll_ & 0x10) && mame) {
+            mame->yscroll_reset(yscroll_ >> 6);
+        } else if (yscroll_ & 0x10) {
             pending_scroll_y_ = yscroll_ >> 6;
         } else {
             playfield_scroll_y_ = (yscroll_ >> 6) - vpos();
@@ -204,6 +226,7 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         if (low) {
             watchdog_deadline_ = main_time + watchdog_period;
             ++counters.watchdog_strobes;
+            if (mame) mame->watchdog_reset();
         }
         break;
     case Area::video:
@@ -221,6 +244,7 @@ void Machine::sound_reset_w(std::uint8_t data) {
     if (reset && !sound_reset_) ++counters.sound_resets;
     if (log && reset != sound_reset_) log->push_back({'S', static_cast<std::uint8_t>(reset), main_time});
     sound_reset_ = reset;
+    if (mame) mame->sound_reset_line(reset);
     // sndrst_6502_w(0), coincount_w(0), switch_6502_w(0)
     sndrst_w(false, sound_cycles_at(main_time));
     coin_counters_ = 0;
@@ -236,14 +260,16 @@ void Machine::sndrst_w(bool state, std::int64_t at_sound_time) {
     if (state == sndrst_state_) return;
     sndrst_state_ = state;
     if (sound_sink) sound_sink->ym_reset(state, at_sound_time);
+    if (mame) mame->ym_reset_line(state);
     if (state) {   // 0 -> 1: the TMS5220 reset and mixer_w(0)
-        speech_.reset(main_cycles_at(at_sound_time));
+        speech_.reset(mame ? mame->speech_time() : main_cycles_at(at_sound_time));
         mixer_ = 0;
         if (sound_sink) sound_sink->mixer_write(0, at_sound_time);
     }
 }
 
 std::uint8_t Machine::main_cp_lines() const noexcept {
+    if (mame) return mame_cp_state_;
     return static_cast<std::uint8_t>((p2portrd_ ? 1 : 0) | (p2portwr_ ? 2 : 0) | (scanline_int_ ? 4 : 0) | (video_int_ ? 8 : 0));
 }
 
@@ -260,16 +286,21 @@ std::uint8_t Machine::sound_read_chips(std::uint16_t address) {
     if (m < 0x1800) return eeprom_[m & 0x1ffu];
     const unsigned r = m & 0x7fu;
     switch (r >> 4) {
-    case 0: return pokey_[0].read(r, inputs.dsw0, sound_time);
+    case 0: return mame ? mame->pokey_read(0, r & 15) : pokey_[0].read(r, inputs.dsw0, sound_time);
     case 1: return inputs.leta[r & 3];
-    case 3: return pokey_[1].read(r, inputs.dsw1, sound_time);
+    case 3: return mame ? mame->pokey_read(1, r & 15) : pokey_[1].read(r, inputs.dsw1, sound_time);
     case 4:   // IN1
         return static_cast<std::uint8_t>((inputs.in1 & 0xf0) | (soundlatch_.pending ? 0x01 : 0) | (mainlatch_.pending ? 0x02 : 0) |
-                                         (speech_.not_ready(main_cycles_at(sound_time)) ? 0x04 : 0));
+                                         (speech_.not_ready(mame ? mame->speech_time() : main_cycles_at(sound_time)) ? 0x04 : 0));
     case 5:   // YM2151 status: busy, no timer flags
+        if (mame) return (r & 1) ? (mame->ym_busy() ? 0x80 : 0x00) : 0xff;   // ym2151::read: the data port reads 0xFF
         return sound_time < ym_busy_until_ ? 0x80 : 0x00;
     case 6:   // sound_6502_r: the main CPU's command; clocks CP0 and drops the NMI
         p2portrd_ = (interrupt_enable_ & 1) != 0;
+        if (mame) {
+            mame->update_interrupts();
+            mame->soundlatch_read();
+        }
         soundlatch_.pending = false;
         ++counters.sound_command_reads;
         if (log) log->push_back({'c', soundlatch_.data, main_time});
@@ -296,6 +327,10 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
     switch (r >> 4) {
     case 0:
     case 3:
+        if (mame) {
+            mame->pokey_write(static_cast<int>(r >> 5), r & 15, value);
+            return;
+        }
         pokey_[r >> 5].write(r & 15, value, sound_time);
         if (sound_sink) sound_sink->pokey_write(static_cast<int>(r >> 5), r & 15, value, sound_time);
         return;
@@ -304,6 +339,7 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
         if (r & 1) {
             ym_registers_[ym_address_] = value;
             ym_busy_until_ = sound_time + 32;   // 64 YM clocks at 3.58 MHz
+            if (mame) mame->ym_data_written();
         } else {
             ym_address_ = value;
         }
@@ -312,28 +348,37 @@ void Machine::sound_write(std::uint16_t address, std::uint8_t value) {
         switch (r & 0x0e) {
         case 0x0:   // the TMS5220's data latch
             tms_data_ = value;
-            speech_.data_w(value, main_cycles_at(sound_time));
+            speech_.data_w(value, mame ? mame->speech_time() : main_cycles_at(sound_time));
             return;
         case 0x2:   // /WS: 0x1872 high, 0x1873 low (MAME's tms5220_strobe_w)
             if (r & 1) ++counters.speech_bytes;
-            speech_.wsq_w(1 - static_cast<int>(r & 1), main_cycles_at(sound_time));
+            speech_.wsq_w(1 - static_cast<int>(r & 1), mame ? mame->speech_time() : main_cycles_at(sound_time));
             return;
         case 0x4:           // sound_6502_w: the reply; clocks CP1
             p2portwr_ = (interrupt_enable_ & 2) != 0;
-            mainlatch_ = {value, true};
             ++counters.sound_replies;
             if (log) log->push_back({'R', value, main_time});
+            if (mame) {
+                mame->update_interrupts();
+                mame->mainlatch_w(value);
+                return;
+            }
+            mainlatch_ = {value, true};
             return;
         case 0x6: coin_counters_ = value; return;
         case 0x8:
             if (log) log->push_back({'A', 0, main_time});
+            if (mame) {
+                mame->sound_irq_ack();
+                return;
+            }
             sound_irq_ = false;
             return;
         case 0xa:
             mixer_ = value;
             if (sound_sink) sound_sink->mixer_write(value, sound_time);
             return;
-        case 0xc: switch_w(value, main_cycles_at(sound_time)); return;
+        case 0xc: switch_w(value, mame ? mame->speech_time() : main_cycles_at(sound_time)); return;
         case 0xe:
             sndrst_w((value & 1) != 0, sound_time);
             return;

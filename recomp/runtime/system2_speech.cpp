@@ -8,19 +8,38 @@ Speech::Speech() : tms5220_core(VARIANT_5220C) {
 }
 
 void Speech::timer_io_ready_clocks(std::int32_t clocks, std::int32_t param) {
+    if (external_io_ready_timer) return external_io_ready_timer(clocks, 0, param);
     timer_at_ = now_ + clocks * cycles_per_clock_;   // MAME's timer adjust: replaces any pending one
     timer_param_ = param;
 }
 
 void Speech::timer_io_ready_usec(std::int32_t usec, std::int32_t param) {
+    if (external_io_ready_timer) return external_io_ready_timer(-1, usec, param);
     timer_at_ = now_ + usec * 10;   // 10 main cycles a microsecond
     timer_param_ = param;
+}
+
+void Speech::fire_io_ready(std::int32_t param, std::int64_t at) {
+    advance(at);
+    set_io_ready(param);
 }
 
 // Samples start every 80 chip clocks; the timer fires at its time, after
 // the samples that start before it, as MAME's timer callback updates the
 // stream first.
 void Speech::advance(std::int64_t at) {
+    if (mame_samples_due) {
+        // The io-ready timer is the caller's (external_io_ready_timer).
+        for (const auto due = mame_samples_due(); samples_ < due;) {
+            std::int16_t sample = 0;
+            process(&sample, 1);
+            if (sample > 64 || sample < -64) ++loud_;
+            if (on_sample) on_sample(sample, mame_sample_start(samples_));
+            ++samples_;
+        }
+        now_ = at;
+        return;
+    }
     // The 6502 runs behind the T-11, so the main CPU's accesses (its sound
     // reset) can come at a time a little before the 6502's: never go back.
     if (at < now_) at = now_;

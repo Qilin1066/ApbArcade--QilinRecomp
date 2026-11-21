@@ -68,9 +68,13 @@ Stop Scheduler::run(std::uint64_t frames) {
     sound.cpu = {};
     sound.cpu.x = 0x80;     // MAME's 6502 power-on registers
     sound.cpu.sp = 0x0100;
-    m_.run_events(m_.main_time);   // those due at power-on, before the first instruction (as MAME's first, empty, slice)
-    next_main_slice();
     try {
+        if (external) {
+            external->start();
+        } else {
+            m_.run_events(m_.main_time);   // those due at power-on, before the first instruction (as MAME's first, empty, slice)
+            next_main_slice();
+        }
         for (;;) {
             if (!rt::dispatch(main)) unlifted_main();
         }
@@ -91,8 +95,18 @@ void Scheduler::next_main_slice() {
     main.icount = main_given_ = static_cast<std::int32_t>(std::clamp<std::int64_t>(until_event, 1, quantum));
 }
 
+void Scheduler::external_frame_check() {
+    // The frame's callback first: the last frame is still captured.
+    if (m_.frames() != frames_seen_) {
+        frames_seen_ = m_.frames();
+        if (on_frame) on_frame(frames_seen_);
+    }
+    if (m_.frames() >= stop_frames_) throw Stop{Stop::frames, {}};
+}
+
 void Scheduler::main_service() {
     ++counters.main_services;
+    if (external) return external->main_service();
     account_main();
     run_sound();
     m_.run_events(m_.main_time);
@@ -114,6 +128,7 @@ void Scheduler::main_service() {
 void Scheduler::main_check_interrupts() { take_main_interrupt(false); }
 
 void Scheduler::main_wait() {
+    if (external) return external->main_wait();
     // WAIT: the T-11 idles, its time passing, until it takes an interrupt.
     // As MAME's core, it idles out each timeslice (at most 'quantum' cycles,
     // ending at the next event), so a line raised between events, by the
@@ -163,7 +178,7 @@ bool Scheduler::take_main_interrupt(bool at_slice_start) {
     // first instruction in that slice, however far over it already is: the
     // slice is stretched to let it (the accounting shifted with it). Taken
     // after RTI, RTT or MTPS, the step ends there.
-    if (at_slice_start && main.icount <= 0) {
+    if (at_slice_start && main.icount <= 0 && !external) {
         const std::int32_t stretch = 1 - main.icount;
         main.icount += stretch;
         main_given_ += stretch;

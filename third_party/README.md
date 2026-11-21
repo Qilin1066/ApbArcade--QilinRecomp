@@ -19,6 +19,16 @@ SDL3, or fetches release 3.4.20 and links it statically
 (`-DQILIN_FETCH_SDL3=OFF` never fetches; then `apb`, the menu and the controls
 test aren't built).
 
+Ported, not vendored: `recomp/runtime/mame/` (`attotime.hpp`,
+`scheduler.hpp`, `scheduler.cpp`) reimplements MAME 0.264's `attotime`,
+`device_scheduler` and the timing parts of `device_execute_interface`
+(`src/emu/attotime.*`, `schedule.cpp`, `diexec.cpp` at tag `mame0264`;
+BSD-3-Clause, Aaron Giles), and `recomp/runtime/game/mame_mode.cpp` follows
+the timer and synchronisation behaviour of MAME 0.264's `atarisy2.cpp`,
+`pokey.cpp`, `adc0808.cpp`, `ymopm.cpp` and `tms5220.cpp` (BSD-3-Clause, their
+listed authors). Both are only in the diagnostic `qilin_run`, never in what
+players run; the licence text is the same as in `mame-t11/LICENSE`.
+
 MAME's licence for these files (BSD-3-Clause, as stated in each file's
 `license:` line) is in `mame-t11/LICENSE` and `mame-m6502/LICENSE`; ymfm's is
 in `ymfm/LICENSE`; the TMS5220's in `mame-tms5220/LICENSE`.

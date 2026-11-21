@@ -38,6 +38,23 @@ class Scheduler {
 public:
     explicit Scheduler(sys2::Machine& machine);
 
+    // A different scheduler for the main CPU's runs: the diagnostic
+    // MAME-scheduling mode (mame_mode.hpp). Set, it runs the sound CPU itself.
+    struct External {
+        virtual ~External() = default;
+        virtual void start() = 0;          // power-on, up to the T-11's first run (main.icount set)
+        virtual void main_service() = 0;   // the T-11's run is over
+        virtual void main_wait() = 0;      // WAIT
+        [[nodiscard]] virtual std::int64_t main_now(std::int32_t icount) const = 0;
+    };
+    External* external = nullptr;
+    // For External: MAME's t11_check_irqs at the start of a run (true: a
+    // handler ran and came back here); whether the last check took one; and
+    // the frame checks (the stop, on_frame).
+    bool take_interrupt_at_run_start() { return take_main_interrupt(true); }
+    [[nodiscard]] bool main_interrupt_was_taken() const noexcept { return main_interrupt_taken_; }
+    void external_frame_check();
+
     // Powers on and runs until a Stop; returns it.
     Stop run(std::uint64_t frames);
 
@@ -57,7 +74,9 @@ public:
     [[nodiscard]] bool main_interrupt_due() const;
     void main_check_interrupts();
     // The main CPU's time with 'icount' cycles of its slice left.
-    [[nodiscard]] std::int64_t main_now(std::int32_t icount) const noexcept { return m_.main_time + (main_given_ - icount); }
+    [[nodiscard]] std::int64_t main_now(std::int32_t icount) const {
+        return external ? external->main_now(icount) : m_.main_time + (main_given_ - icount);
+    }
     // The sound CPU's time with 'icount' cycles of its slice left.
     [[nodiscard]] std::int64_t sound_now(std::int32_t icount) const noexcept { return m_.sound_time + (sound_given_ - icount); }
     void sound_service();

@@ -129,6 +129,9 @@ def main():
     p.add_argument('--interleave-probe', type=int, default=0,
                    help='Diagnostic only: insert MAME timer boundaries every N main cycles (0 keeps original scheduling)')
     p.add_argument('--native-quantum', type=int, default=64, help='Diagnostic native scheduler quantum (default 64)')
+    p.add_argument('--mame-scheduling', action='store_true',
+                   help='Run the native side with MAME 0.264\'s own CPU interleave (qilin_run --mame-scheduling 1); '
+                        'use with --boot-offset 0: both then reach each frame at the same moment')
     args = p.parse_args()
     mame, native, roms, out = [x.resolve() for x in (args.mame, args.native, args.rom_dir, args.out)]
     if not 0 <= args.interleave_probe <= 166400:
@@ -247,6 +250,8 @@ video_capture.run()
     command = [native, roms, '--frames', str(max(frames)+2), '--pedal', '63',
                '--coin', '900', '--coin', '930', '--press', '8:3100', '--press', '8:4000',
                '--wav', out / 'native.wav', '--audio-threaded', '1', '--quantum', str(args.native_quantum),
+               '--mame-scheduling', '1' if args.mame_scheduling else '0',
+               '--mame-pixels', '1' if args.mame_scheduling else '0',
                '--io-trace', out / 'native-io.trace', '--input-trace', out / 'native-input.trace']
     for frame in frames:
         command += ['--frame-out', f'{frame-offset}:{out}/native-{frame}.png']
@@ -255,6 +260,7 @@ video_capture.run()
     result['interleave_probe_main_cycles'] = args.interleave_probe
     result['original_mame_scheduling'] = args.interleave_probe == 0
     result['native_quantum_main_cycles'] = args.native_quantum
+    result['native_mame_scheduling'] = args.mame_scheduling
     for frame in frames:
         # pixels() is host-endian 0x00RRGGBB before cabinet orientation.
         raw = np.fromfile(out / f'mame-{frame}.rgb32', dtype=np.uint32)

@@ -4,6 +4,11 @@
 //   qilin_run <rom-dir> [--frames N] [--coin FRAME]... [--press MASK:FRAME]... [--pedal V] [--steer V] [--log FILE]
 //             [--frame-out FRAME:FILE]... [--look EFFECT:WxH] [--frame-hashes FILE] [--io-trace FILE] [--draw 1] [--wav FILE] [--monkey SEED] [--test-switch 1]
 //
+// --mame-scheduling 1 interleaves the CPUs as standalone MAME 0.264 does
+// (game/mame_mode.hpp), for comparing with MAME; --mame-log FILE writes its
+// scheduler's decisions in the instrumented MAME's format (for the first
+// --mame-log-until SECONDS, default 10). Diagnostic only.
+//
 // --audio-threaded 1 uses the player's ordered audio worker with --wav.
 // --wav FILE records the board's sound (the YM2151, both POKEYs
 // and the TMS5220's speech, mixed as MAME mixes them) as a 16-bit stereo WAV
@@ -28,6 +33,7 @@
 #include "input_movie.hpp"
 #include "wav.hpp"
 #include "game.hpp"
+#include "mame_mode.hpp"
 #include "romset.hpp"
 #include "system2_machine.hpp"
 
@@ -59,6 +65,9 @@ int main(int argc, char** argv) {
     bool threaded = false, frames_specified = false;
     std::string record_path, replay_path, profile_path;
     std::int32_t quantum = 64;
+    bool mame_scheduling = false;
+    std::string_view mame_log_path;
+    double mame_log_until = 10;
     std::string_view log_path, wav_path, io_trace_path, input_trace_path;
     tools::Script script;
     tools::FrameCapture capture;
@@ -76,6 +85,9 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "--quantum needs a positive 32-bit cycle count\n"); return 2;
             }
         }
+        else if (flag == "--mame-scheduling") mame_scheduling = number != 0;
+        else if (flag == "--mame-log") mame_log_path = value;
+        else if (flag == "--mame-log-until") mame_log_until = std::strtod(std::string(value).c_str(), nullptr);
         else if (flag == "--log") log_path = value;
         else if (flag == "--wav") wav_path = value;
         else if (flag == "--audio-threaded") threaded = number != 0;
@@ -84,6 +96,7 @@ int main(int argc, char** argv) {
         else if (flag == "--io-trace") io_trace_path = value;
         else if (flag == "--input-trace") input_trace_path = value;
         else if (flag == "--draw") capture.draw_all = number != 0;
+        else if (flag == "--mame-pixels") capture.mame_pixels = number != 0;
         else if (flag == "--look") {
             if (!capture.look(value)) return 2;
         }
@@ -175,6 +188,23 @@ int main(int argc, char** argv) {
     }
     game::Scheduler scheduler(machine);
     scheduler.quantum = quantum;
+    std::unique_ptr<game::MameRun> mame_run;
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> mame_log(nullptr, &std::fclose);
+    if (mame_scheduling) {
+        if (quantum != 64 || !record_path.empty() || !replay_path.empty()) {
+            std::fprintf(stderr, "--mame-scheduling has its own interleave: no --quantum or input movies\n"); return 2;
+        }
+        mame_run = std::make_unique<game::MameRun>(machine, scheduler);
+        if (!mame_log_path.empty()) {
+            mame_log.reset(std::fopen(std::string(mame_log_path).c_str(), "w"));
+            if (!mame_log) {
+                std::fprintf(stderr, "Can't write %s\n", std::string(mame_log_path).c_str()); return 1;
+            }
+            mame_run->set_log(mame_log.get(), mame_log_until);
+        }
+    } else if (!mame_log_path.empty()) {
+        std::fprintf(stderr, "--mame-log needs --mame-scheduling 1\n"); return 2;
+    }
     // The controls change at each vblank (script.attach), as in qilin_refrun.
     scheduler.on_frame = [&](std::uint64_t frame) {
         profile::FrameMark frame_profile(profiler.get(), frame);

@@ -70,6 +70,48 @@ int m6502_device::step()
 	return start - m_icount;
 }
 
+void m6502_device::execute_run()
+{
+	if(m_inst_substate)
+		do_exec_partial();
+
+	while(m_icount > 0) {
+		if(m_inst_state < 0xff00) {
+			m_PPC = m_NPC;
+			m_inst_state = m_IR | m_inst_state_base;
+		}
+		do_exec_full();
+	}
+}
+
+void m6502_device::mame_reset()
+{
+	m_inst_state = STATE_RESET;
+	m_inst_substate = 0;
+	m_inst_state_base = 0;
+	m_nmi_pending = false;
+	m_irq_taken = false;
+	m_sync = false;
+	m_inhibit_interrupts = false;
+}
+
+void m6502_device::mame_set_input(int inputnum, bool asserted, bool time_after_zero)
+{
+	switch(inputnum) {
+	case IRQ_LINE: m_irq_state = asserted; break;
+	case NMI_LINE:
+		if(time_after_zero && !m_nmi_state && asserted)
+			m_nmi_pending = true;
+		m_nmi_state = asserted;
+		break;
+	case V_LINE:
+		if(time_after_zero && !m_v_state && asserted)
+			m_P |= F_V;
+		m_v_state = asserted;
+		break;
+	}
+}
+
 void m6502_device::set_input_line(int inputnum, bool asserted)
 {
 	const int state = asserted ? ASSERT_LINE : CLEAR_LINE;
@@ -97,6 +139,15 @@ void m6502_device::prefetch_start()
 void m6502_device::prefetch_end()
 {
 	m_sync = false;
+	if(mame0264) {
+		// MAME 0.264: the lines as they stand.
+		if((m_nmi_pending || ((m_irq_state || m_apu_irq_state) && !(m_P & F_I))) && !m_inhibit_interrupts) {
+			m_irq_taken = true;
+			m_IR = 0x00;
+		} else
+			m_PC++;
+		return;
+	}
 	if(((m_nmi_pending && m_nmi_sampled) || (m_irq_sampled && !(m_P & F_I))) && !m_inhibit_interrupts) {
 		m_irq_taken = true;
 		m_IR = 0x00;

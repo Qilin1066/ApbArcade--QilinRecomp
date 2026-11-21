@@ -17,6 +17,19 @@
     so far: MAME's local time, which the board uses to time its chips).
     dec_SP and inc_SP cast the new stack pointer to uint8_t, which MAME's
     leave implicit (the same value; MSVC's /W4 /WX otherwise stops on it).
+    For the diagnostic MAME-scheduling mode, also MAME 0.264's own run loop
+    (execute_run, which stops on any bus cycle once the icount runs out and
+    resumes there), its device_reset and execute_set_input (mame_reset,
+    mame_set_input: they differ from reset and set_input_line above, which
+    the shared-board tools were built on, in leaving the sampled lines alone
+    and in when an NMI edge counts), and access to the icount; and
+    mame0264, which gives MAME 0.264's interrupt timing: no sampling a cycle
+    before an instruction ends (sample_interrupt and the _noirq reads came
+    later), the lines as they are when the next opcode is fetched (0.264's
+    prefetch_end). The opcodes are otherwise the same as 0.264's but for
+    when BRK/IRQ/NMI picks its vector (a cycle earlier here), which only
+    matters if a timeslice ends on that cycle and an NMI arrives then: in
+    mame0264, dec_SP re-reads nmi_pending for the choice (see there).
 
 *******************************************************************************/
 
@@ -43,6 +56,11 @@ public:
 	explicit m6502_device(Bus &bus);
 
 	void reset();                  // MAME's device_reset: the reset sequence runs on the next step
+	void execute_run();            // MAME 0.264's execute_run, for icount() cycles
+	void mame_reset();             // MAME 0.264's device_reset, exactly
+	void mame_set_input(int line, bool asserted, bool time_after_zero);   // MAME 0.264's execute_set_input
+	int &icount() { return m_icount; }
+	bool mame0264 = false;         // MAME 0.264's interrupt timing (see above)
 	int step();                    // runs one instruction (with its prefetch); returns its cycles
 	int elapsed() const { return (1 << 20) - m_icount; }   // within step(): bus cycles counted so far
 	void set_input_line(int line, bool asserted);
@@ -112,7 +130,7 @@ protected:
 	void prefetch_end();
 	void prefetch_end_noirq();
 	void set_nz(uint8_t v);
-	void sample_interrupt() { m_irq_sampled = m_irq_state || m_apu_irq_state; m_nmi_sampled = m_nmi_pending; }
+	void sample_interrupt() { if (mame0264) return; m_irq_sampled = m_irq_state || m_apu_irq_state; m_nmi_sampled = m_nmi_pending; }
 
 	// MAME's cpu_device hooks the generated code calls.
 	static bool access_to_be_redone() { return false; }
@@ -126,7 +144,10 @@ protected:
 	static inline uint16_t set_l(uint16_t base, uint8_t val) { return (base & 0xff00) | val; }
 	static inline uint16_t set_h(uint16_t base, uint8_t val) { return (base & 0x00ff) | (val << 8); }
 
-	inline void dec_SP() { m_SP = set_l(m_SP, uint8_t(m_SP-1)); }
+	// mame0264: BRK and the interrupt sequence (inst_state 0) choose the NMI
+	// vector by nmi_pending after the status byte is pushed, as 0.264 does;
+	// the stack pointer's decrement right after that push is the place.
+	inline void dec_SP() { m_SP = set_l(m_SP, uint8_t(m_SP-1)); if (mame0264 && m_inst_state == 0) m_TMP = m_nmi_pending; }
 	inline void inc_SP() { m_SP = set_l(m_SP, uint8_t(m_SP+1)); }
 
 	void do_adc_d(uint8_t val);

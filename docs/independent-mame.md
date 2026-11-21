@@ -127,3 +127,48 @@ python tools/check/mame_compare.py --mame /path/to/mame --native build/qilin_run
 | MAME 16-cycle timer probe, native 16, zero offset | 18 cycles | 79 | 0.806632 |
 
 The 64-cycle experiment sampled frames 600, 1500, 2100, 3000 and 4500; the 16-cycle experiment used 600 and 1500 and a shorter audio capture. Neither experiment passes overall. Finer interleave removes most of the early scheduler delay and postpones differing command values, but correlation does not improve monotonically. These results support an interleave contribution while leaving later divergence unresolved; they do not justify increasing the normal player's quantum or claiming physical-board cycle accuracy.
+
+## MAME-scheduling diagnostic mode: full pass
+
+The remaining full-game differences came from turn-taking between the two CPUs, not from the recompiled code, graphics or sound chips. To show that directly, `qilin_run --mame-scheduling 1` replaces the native 64-cycle scheduler with a port of MAME 0.264's own device scheduler (`recomp/runtime/mame/`, built into the `qilin_run` diagnostic tool only, never into the player). It copies:
+
+- MAME's time arithmetic (`attotime`: exact multiply, divide rounding half up, `HZ_TO_ATTOSECONDS` truncation), so clocks such as the 6502's u32-truncated 1,789,772 Hz agree to the attosecond.
+- The timeslice loop: each slice ends at the next timer or the quantum, each running device executes its share in device order (main CPU, sound CPU, POKEY 1, POKEY 2), a CPU that stops early pulls the slice end back, and a timer inserted at the head aborts the slice.
+- Every timer APB's MAME driver creates, in the same start-up order with the same names: sound update, ADC conversion, screen vblank/scanline, latch synchronisation, motion-object force update, YM2151 mode write, the 6502's periodic IRQ, watchdog, speech ready, y-scroll reset and POKEY write/pot synchronisation.
+- Queued input lines, the 200 µs perfect quantum after a sound command, and the minimum quantum of one sound-CPU cycle.
+- MAME 0.264's YM2151 reset handling (reset line starts asserted; writes ignored while held) and busy flag (64 YM clocks after a data write).
+- MAME 0.264's 6502 interrupt timing. The vendored reference 6502 comes from a newer MAME commit (0058568), which samples interrupts one cycle earlier and chooses BRK's vector differently. Its new `mame0264` switch, set only in this mode, restores 0.264's behaviour. The shared-board parity tests and the lifted sound code still follow the newer timing.
+- MAME's speech stream timing (7,812 Hz sample spacing and per-second numbering), which decides when the TMS5220 raises ready.
+
+The lifted T-11 code now reloads its cycle counter after every bus access, so a slice aborted during an access ends where MAME's would. In normal play nothing aborts, so this changes no result: all 16 tests, including the six ROM parity runs, still pass.
+
+### How to run
+
+```sh
+python tools/check/mame_compare.py --mame /path/to/mame --native build/qilin_run \
+  --rom-dir /path/to/roms --out build/mame-scheduling \
+  --mame-scheduling --boot-offset 0
+```
+
+`--mame-scheduling` runs the native side with `--mame-scheduling 1 --mame-pixels 1` and records `native_mame_scheduling` in the report. Use `--boot-offset 0`: with identical scheduling, native frame N is MAME frame N. `--mame-pixels 1` makes the native capture show what MAME's Lua `screen:pixels()` shows at the end of frame N: the buffer drawn during frame N−1, in frame N's palette. The same applies to the graphics replay: `mame_video.lua` now pairs frame N's picture with frame N−1's bands and frame N's palette, in every mode.
+
+### Result, 21 November 2026
+
+Linux x64 Release, original Ubuntu MAME 0.264, fresh state, coins at 900/930, siren/start at 3100/4000, pedal 63:
+
+| Check | Result |
+| --- | --- |
+| Full-game pictures, frames 600, 1500, 2100, 3000, 4500 | 0, 0, 0, 0, 0 differing RGB pixels |
+| Full-game coin-window audio | correlation 0.999919 / 0.999919, level +0.0031 dB, lag 2 samples |
+| Sound commands | identical; no first difference |
+| Same-state graphics replay | 0, 0, 0, 0, 0 |
+| MAME chip replay, coin / long window | 0.999497 / 0.999497, 0.999486 / 0.999631 |
+| Overall | **exit 0, passed** |
+
+### Checking the scheduler itself
+
+To compare scheduling decision by decision, an instrumented MAME 0.264 (built locally with `SUBTARGET=apb`, never distributed) writes one line per timer adjustment (J), temporary timer (T), timer fired (X), slice (S), device run (R), abort (A) and quantum change (Q) when `QILIN_SCHEDLOG=file` is set, up to `QILIN_SCHEDLOG_UNTIL` seconds. `qilin_run --mame-scheduling 1 --mame-log FILE --mame-log-until S` writes the same format. The two logs were identical for 20 seconds of boot (8.88 million lines) and for 26 seconds of the coin scenario.
+
+### What this shows
+
+With MAME's turn-taking, the recompiled main and sound CPUs produce MAME's pictures and sound exactly over the tested scenario. The default mode's differences are therefore the native scheduler's different (finer, 64-cycle) interleave, which is a deliberate efficiency choice and not a recompilation error. The player keeps its own scheduler; this mode is a diagnostic. It throws if the game enables YM2151 timers or changes the speech clock, which APB does not do in the tested runs. It does not prove every possible game state, and it says nothing about physical-board cycle accuracy.

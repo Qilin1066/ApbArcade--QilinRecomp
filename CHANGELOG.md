@@ -11,6 +11,14 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Added
+- **MAME-scheduling diagnostic mode** (`qilin_run --mame-scheduling 1`, and `mame_compare.py --mame-scheduling --boot-offset 0`). Port MAME 0.264's device scheduler, time arithmetic and every APB timer into the diagnostic runner only, so the recompiled CPUs take turns exactly as in standalone MAME. The standalone-MAME comparison now **passes** in this mode: all five sampled pictures identical, coin-window audio correlation 0.999919, identical sound commands, identical graphics replays. Scheduler logs match an instrumented MAME 0.264 line for line for 20 s of boot and 26 s of the scenario (`--mame-log`, `--mame-log-until`). `--mame-pixels 1` captures what MAME's Lua `pixels()` returns. The player keeps its own scheduler. See `docs/independent-mame.md`.
+- **MAME 0.264 switch in the reference 6502** (`mame0264`, off by default): live interrupt check at the end of prefetch and 0.264's BRK vector choice. The vendored core is from a newer MAME commit; the switch is used only by the diagnostic mode.
+
+### Fixed
+- **Graphics replay paired the wrong frame with MAME's picture.** MAME's `pixels()` at the end of frame N is the buffer drawn during frame N−1, in frame N's palette; `mame_video.lua` now captures that pairing.
+- **Lifted main-CPU code ignored a cycle-count change made during a bus access.** Reload the counter after each access. Normal play never makes such a change, so results are unchanged; all 16 tests, including the six ROM parity runs, pass.
+
 ## [0.20.0] - 2026-11-20
 
 ### Fixed

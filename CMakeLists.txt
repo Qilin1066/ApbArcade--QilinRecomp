@@ -408,9 +408,14 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
         target_compile_options(qilin_game PRIVATE /bigobj /MP /wd4102 /wd4189 /wd4101)
     endif()
 
+    # The diagnostic MAME-scheduling mode (qilin_run --mame-scheduling): never in the player.
+    add_library(qilin_mame_mode STATIC recomp/runtime/mame/scheduler.cpp recomp/runtime/game/mame_mode.cpp)
+    target_include_directories(qilin_mame_mode PUBLIC recomp/runtime)
+    target_link_libraries(qilin_mame_mode PUBLIC qilin_game qilin_mame_m6502 PRIVATE qilin_warnings)
+
     add_executable(qilin_run tools/run/run.cpp)
     target_include_directories(qilin_run PRIVATE tools/common)
-    target_link_libraries(qilin_run PRIVATE qilin_game qilin_core qilin_video qilin_audio qilin_input_movie qilin_gfx qilin_warnings)
+    target_link_libraries(qilin_run PRIVATE qilin_game qilin_mame_mode qilin_core qilin_video qilin_audio qilin_input_movie qilin_gfx qilin_warnings)
     qilin_tool(qilin_run)
     # In-between frames, a prototype: renders a run with frames drawn between the game's, to a video (needs ffmpeg).
     add_executable(qilin_tween tools/tween/tween.cpp)

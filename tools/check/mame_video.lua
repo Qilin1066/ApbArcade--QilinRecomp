@@ -1,5 +1,8 @@
 -- Original MAME 0.264 video state, captured before register/list changes and
 -- at the motion-object device's 64-line partial-update boundaries.
+-- screen:pixels() in frame_done(N) shows the buffer drawn during frame N-1
+-- (the screen has swapped buffers by then), in the palette as it is at N: so
+-- picture N is frame N-1's bands with frame N's palette.
 -- No game RAM is changed. CPU execution and rendering remain MAME's own.
 return function(m, wanted, out, final_frame)
  local s=m.screens[':screen']
@@ -28,10 +31,10 @@ return function(m, wanted, out, final_frame)
  end
  local function capture(f,last)
   sync_y()
-  if not wanted[f] or last>=384 then return end
+  if not wanted[f+1] or last>=384 then return end
   local first=nextline[f] or 0
   if last<first then return end
-  file:write('B',string.pack('<I4I2I2I2I2i4',f,first,last,xs:read_u16(0),ys:read_u16(0),effective_y))
+  file:write('B',string.pack('<I4I2I2I2I2i4',f+1,first,last,xs:read_u16(0),ys:read_u16(0),effective_y))
   file:write(memory(shares[':alpha']),memory(shares[':mob']),memory(shares[':playfieldt']),memory(shares[':playfieldb']))
   bands=bands+1
   nextline[f]=last+1
@@ -53,10 +56,12 @@ return function(m, wanted, out, final_frame)
  end)
  return {
   frame_done=function(n)
-   if wanted[n] then
+   if wanted[n+1] then
     assert(frame()==n,'Unexpected MAME raster origin')
     capture(n,383)
     assert(nextline[n]==384,'Incomplete video frame')
+   end
+   if wanted[n] then
     file:write('P',string.pack('<I4',n),memory(shares[':palette']))
     pictures=pictures+1
    end

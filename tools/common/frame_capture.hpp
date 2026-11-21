@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <memory>
 #include <print>
 #include <string>
@@ -61,15 +62,28 @@ public:
     // Draws every frame, as the game does (--draw: to measure what video costs).
     bool draw_all = false;
     profile::Profiler* profiler = nullptr;
+    // --mame-pixels 1: save frame N as MAME's Lua screen:pixels() shows it
+    // from its frame_done callback for frame N, which runs after the screen
+    // has swapped buffers: frame N-1's picture, in the palette as it stands
+    // at frame N's vblank (for comparing with standalone MAME).
+    bool mame_pixels = false;
     bool attach(const rom::RomSet& set, sys2::Machine& machine) {
         if (wanted_.empty() && !draw_all && hashes_path.empty()) return true;
         graphics_ = std::make_unique<sys2::Graphics>(set);
         video_ = std::make_unique<sys2::Video>(*graphics_);
         video_->profiler = profiler;
         std::vector<std::uint64_t> frames;
-        for (const auto& w : wanted_) frames.push_back(w.frame);
+        for (const auto& w : wanted_) frames.push_back(mame_pixels && w.frame > 0 ? w.frame - 1 : w.frame);
         if (!draw_all && hashes_path.empty()) video_->draw_only(std::move(frames));
         machine.video_sink = video_.get();
+        if (mame_pixels) {
+            if (!hashes_path.empty() || look_) {
+                std::print(stderr, "--mame-pixels saves plain frames only (no --frame-hashes or --look)\n");
+                return false;
+            }
+            mame_sink_.capture = this;
+            machine.video_sink = &mame_sink_;
+        }
         if (!hashes_path.empty()) {
             hashes_.reset(std::fopen(hashes_path.c_str(), "w"));
             if (!hashes_) {
@@ -83,6 +97,7 @@ public:
     }
     // Call when frames may have completed. False if a file couldn't be written.
     bool poll(const sys2::Machine& machine) {
+        if (mame_pixels) return mame_ok_;
         if (!video_ || video_->frames() == seen_) return true;
         seen_ = video_->frames();
         const std::uint64_t frame = seen_ - 1;
@@ -128,6 +143,42 @@ private:
             std::print(capture->hashes_.get(), "{} {:016x}\n", capture->video_->frames() - 1, h);
         }
     };
+    // --mame-pixels: keeps the pens of each frame before a wanted one, and
+    // writes them at the wanted frame's vblank in the palette then.
+    struct MamePixels final : sys2::Machine::VideoSink {
+        FrameCapture* capture = nullptr;
+        std::vector<std::uint16_t> previous;
+        std::uint64_t previous_frame = ~0ull;
+        void draw_through(const sys2::Machine& machine, int scanline) override {
+            capture->video_->draw_through(machine, scanline);
+        }
+        void vblank(const sys2::Machine& machine) override {
+            auto& video = *capture->video_;
+            video.vblank(machine);
+            const std::uint64_t completed = video.frames() - 1;
+            for (const auto& w : capture->wanted_) {
+                if (w.frame != completed || previous_frame + 1 != completed) continue;
+                const auto shown = std::make_unique<sys2::Frame>();
+                std::copy(previous.begin(), previous.end(), shown->pens.begin());
+                const gfx::Image image{sys2::Frame::height, sys2::Frame::width, sys2::to_rgba(*shown, machine.palette())};
+                if (gfx::write_png(w.path, image)) {
+                    std::print("Frame {} (MAME's pixels: frame {}'s picture) saved to {}.\n", completed, previous_frame, w.path);
+                } else {
+                    std::print(stderr, "could not write {}\n", w.path);
+                    capture->mame_ok_ = false;
+                }
+            }
+            for (const auto& w : capture->wanted_) {
+                if (w.frame == completed + 1) {
+                    const auto& pens = video.frame().pens;
+                    previous.assign(pens.begin(), pens.end());
+                    previous_frame = completed;
+                }
+            }
+        }
+    };
+    MamePixels mame_sink_;
+    bool mame_ok_ = true;
     struct CloseFile {
         void operator()(std::FILE* f) const { std::fclose(f); }
     };

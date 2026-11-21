@@ -314,7 +314,11 @@ void FunctionWriter::call(const std::string& target, std::optional<Loc> static_t
 // An instruction that touches memory first tells the board how many cycles
 // are left: MAME charges an instruction's cycles before its accesses, and the
 // board times what the game does to its I/O (latches, video, the speech chip)
-// by them, as MAME's devices see the CPU's local time.
+// by them, as MAME's devices see the CPU's local time. After each access it
+// takes the count back: a scheduler that ends the CPU's run at an access
+// (MAME's abort_timeslice, in the diagnostic MAME-scheduling mode) zeroes it
+// there, and the run ends with the instruction, as on MAME's core. Otherwise
+// nothing changes it and the reload is a no-op.
 bool FunctionWriter::instruction(const cfg::Node& node) {
     const auto start = body_.size();
     const bool ok = instruction_body(node);
@@ -322,8 +326,19 @@ bool FunctionWriter::instruction(const cfg::Node& node) {
     if (charge != std::string::npos) {
         const auto after = body_.find('\n', charge) + 1;
         const std::string_view rest(body_.data() + after, body_.size() - after);
-        if (rest.find("b.read") != std::string_view::npos || rest.find("b.write") != std::string_view::npos)
-            body_.insert(after, "    b.icount = ic;\n");
+        if (rest.find("b.read") != std::string_view::npos || rest.find("b.write") != std::string_view::npos) {
+            std::string tail = body_.substr(after), with_reloads;
+            for (std::size_t pos = 0; pos < tail.size();) {
+                const auto end = tail.find('\n', pos);
+                const auto line_end = end == std::string::npos ? tail.size() : end + 1;
+                const std::string_view text(tail.data() + pos, line_end - pos);
+                with_reloads += text;
+                if (text.find("b.read") != std::string_view::npos || text.find("b.write") != std::string_view::npos)
+                    with_reloads += "    ic = b.icount;\n";
+                pos = line_end;
+            }
+            body_.replace(after, std::string::npos, "    b.icount = ic;\n" + with_reloads);
+        }
     }
     return ok;
 }
