@@ -417,11 +417,6 @@ if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)
     target_include_directories(qilin_run PRIVATE tools/common)
     target_link_libraries(qilin_run PRIVATE qilin_game qilin_mame_mode qilin_core qilin_video qilin_audio qilin_input_movie qilin_gfx qilin_warnings)
     qilin_tool(qilin_run)
-    # In-between frames, a prototype: renders a run with frames drawn between the game's, to a video (needs ffmpeg).
-    add_executable(qilin_tween tools/tween/tween.cpp)
-    target_include_directories(qilin_tween PRIVATE tools/common)
-    target_link_libraries(qilin_tween PRIVATE qilin_game qilin_core qilin_video qilin_gfx qilin_warnings)
-    qilin_tool(qilin_tween)
 
     # The native run handed over to MAME's cores at a frame, to tell native faults from the game's own.
     add_executable(qilin_handoff tools/handoff/handoff.cpp)

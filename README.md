@@ -175,7 +175,7 @@ The player and headless runner support `--record session.qir` and `--replay sess
 
 The independent MAME harness now replays captured per-band graphics state through `qilin_video_trace`: all five sampled pictures match exactly when given the same state. Run independently with the player's own scheduler, the complete games differ from MAME in timing; with MAME's scheduler they match. See [the measured checks and limitations](docs/independent-mame.md).
 
-`qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs (`--look crt:1152x1536` as a window that size would show them, through a look), `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound. `qilin_tween` (a prototype, needs ffmpeg) renders a stretch of a run with frames drawn between the game's, beside the game as it is, to a video.
+`qilin_run` runs the same game headless with scripted inputs; `--frame-out FRAME:FILE` saves frames as PNGs (`--look crt:1152x1536` as a window that size would show them, through a look), `--draw 1` draws every frame to measure what video costs, and `--wav FILE` records the sound.
 
 ## Layout
 

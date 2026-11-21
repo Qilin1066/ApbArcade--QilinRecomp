@@ -11,6 +11,9 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Removed
+- **The in-between frames prototype (`qilin_tween`).** Drawing frames between the game's for high-refresh displays needs the next frame first, which adds a frame (about 17 ms) of delay: too much for a driving game, the owner decided. It was never in the game; the roadmap now lists it as ruled out.
+
 ## [0.22.0] - 2026-11-21
 
 A pass over the game as a player meets it: the controls, the menu, the window and where it keeps its files.
