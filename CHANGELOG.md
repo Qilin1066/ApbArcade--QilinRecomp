@@ -12,6 +12,7 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 ## [Unreleased]
 
 ### Changed
+- **The Windows download is now `ApbArcade--QilinRecomp-<version>-windows-x64.zip`**, and unpacks to a folder of that name, as Ghoulies' and Punch-Out's are named after their repositories (it was `APB-QilinRecomp-…`). Its contents, and the game's data folder, are unchanged.
 - **The repository is now Qilin1066/ApbArcade--QilinRecomp** (renamed by the owner, as were the sister projects: GBTGhoulies--QilinRecomp, PunchOutWii--QilinRecomp, and Beat the Beat's, now RhythmHeavenFever--QilinRecomp; GitHub redirects the old names). Links and docs follow. The download keeps its name, `APB-QilinRecomp-X.Y.Z-windows-x64.zip`, and the data folder is unchanged.
 - `docs/naming.md` records the window's title, the data folder and the menu's keys, as the sister projects' do.
 
