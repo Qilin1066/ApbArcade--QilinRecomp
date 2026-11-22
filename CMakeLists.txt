@@ -7,7 +7,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15 CACHE STRING "oldest macOS the runtime runs on")
 endif()
 # The single source of the version number (see CHANGELOG.md for the scheme).
-project(ApbArcadeQilinRecomp VERSION 0.22.0 LANGUAGES C CXX)
+project(ApbArcadeQilinRecomp VERSION 0.23.0 LANGUAGES C CXX)
 
 # ---- Language: C++23 everywhere (recompiler, runtime, generated code) ----
 set(CMAKE_CXX_STANDARD 23)
@@ -326,6 +326,13 @@ if(SDL3_FOUND)
     target_include_directories(qilin_app PUBLIC recomp/runtime/app)
     target_compile_definitions(qilin_app PRIVATE QILIN_APP_VERSION="${PROJECT_VERSION}")
     target_link_libraries(qilin_app PUBLIC qilin_board qilin_gfx qilin_imgui qilin_persistence qilin_input_movie qilin_profile SDL3::SDL3 PRIVATE qilin_warnings)
+    # Compile and link the entire player on every platform without ROMs.
+    # Empty dispatch tables are link fixtures, never a playable game.
+    add_executable(qilin_player_link_check recomp/runtime/app/apb.cpp
+        recomp/runtime/game/game.cpp tools/player-kit/link_check.cpp)
+    target_include_directories(qilin_player_link_check PRIVATE recomp/runtime/game)
+    target_link_libraries(qilin_player_link_check PRIVATE qilin_app qilin_core qilin_video
+        qilin_audio qilin_gfx qilin_board SDL3::SDL3 qilin_warnings)
     # The controls on SDL's virtual joysticks: a wheel and pedals (no window or device needed).
     add_executable(qilin_input_tests recomp/runtime/app/input_tests.cpp)
     target_link_libraries(qilin_input_tests PRIVATE qilin_app qilin_warnings)

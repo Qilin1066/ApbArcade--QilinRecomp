@@ -16,8 +16,8 @@ inline bool replace(const std::string& path, std::string_view text, std::string*
 
 // Brings an older data folder's files into the current one: each file the
 // current folder doesn't have is copied across, and only once every copy
-// has succeeded are the old ones removed (and the old folder, if that
-// leaves it empty). Nothing is overwritten. False if a file couldn't be
+// has succeeded are the copied originals removed (and the old folder, if that
+// leaves it empty). Conflicting old files remain for recovery. Nothing is overwritten. False if a file couldn't be
 // copied: then nothing has changed and the old folder is still complete.
 // *moved gets how many files came across. The same folder by another name
 // (a file system that ignores case) is left as it is.
@@ -38,6 +38,7 @@ private:
     Bytes saved_{};
     bool have_saved_ = false;
     bool repair_ = false;
+    bool writable_ = true;
     std::uint64_t last_attempt_ = 0;
 };
 } // namespace qilin::persist

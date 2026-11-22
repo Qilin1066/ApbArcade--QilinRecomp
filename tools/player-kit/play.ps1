@@ -29,6 +29,11 @@ $game = Join-Path $top "APB.exe"
 $stamp = Join-Path $work "built-with.txt"
 $kitVersion = (Get-Content (Join-Path $kit "VERSION") -Raw).Trim()
 $onWindows = ($PSVersionTable.PSEdition -eq "Desktop") -or $IsWindows   # Windows PowerShell 5.1 has no $IsWindows
+# A version alone cannot detect a repaired/replaced kit with the same release.
+$identityParts = @("lib/libapb_kit.a", "qilin.exe", "kit.ninja", "play.ps1") | ForEach-Object {
+    (Get-FileHash -LiteralPath (Join-Path $kit $_) -Algorithm SHA256).Hash
+}
+$builtFor = "$kitVersion | $($identityParts -join ':')"
 # Off Windows (testing the download under Wine), QILIN_KIT_RUNNER runs the kit's programs.
 $runner = $env:QILIN_KIT_RUNNER
 
@@ -106,7 +111,7 @@ run, not an automated certification of wheel support or input-to-photon latency.
 
 # Up to date: just play.
 $built = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
-if (-not $Rebuild -and (Test-Path $game) -and $built -eq $kitVersion) {
+if (-not $Rebuild -and (Test-Path $game) -and $built -eq $builtFor) {
     if (-not $BuildOnly) { Start-APB }
     exit 0
 }
@@ -190,8 +195,16 @@ Set-Content -Path (Join-Path $work "build.ninja") -Value $lines -Encoding ASCII
 
 Write-Host "== Compiling ($($sources.Count) files)" -ForegroundColor Cyan
 if ((Invoke-Kit (Join-Path $kit "ninja.exe") @("-C", $work)) -ne 0) { throw "compiling failed" }
-Copy-Item (Join-Path $work "APB.exe") $game -Force
-Set-Content -Path $stamp -Value $kitVersion -Encoding ASCII
+# Stage the whole executable before replacing the working one. If APB is
+# still running or the copy fails, its previous executable and stamp survive.
+$staged = "$game.new"
+Copy-Item -LiteralPath (Join-Path $work "APB.exe") -Destination $staged -Force
+if (Test-Path -LiteralPath $game) {
+    [System.IO.File]::Replace($staged, $game, "$game.previous", $true)
+} else {
+    [System.IO.File]::Move($staged, $game)
+}
+Set-Content -Path $stamp -Value $builtFor -Encoding ASCII
 Write-Host ""
 Write-Host "Built: $game" -ForegroundColor Green
 if (-not $BuildOnly) {

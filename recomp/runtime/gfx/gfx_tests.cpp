@@ -35,7 +35,8 @@ int main(int argc, char** argv) {
     auto r = gfx::Renderer::create(cfg, &error);
     if (!r) {
         std::printf("renderer tests skipped: %s\n", error.c_str());
-        return 77;
+        const char* required = std::getenv("QILIN_REQUIRE_VULKAN");
+        return required && std::string(required) == "1" ? 1 : 77;
     }
     std::printf("device: %s\n", r->device_name().c_str());
 

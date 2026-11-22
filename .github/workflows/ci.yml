@@ -47,6 +47,8 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
+        env:
+          QILIN_REQUIRE_VULKAN: ${{ runner.os == 'Linux' && '1' || '' }}
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Check Windows launcher syntax
         if: runner.os == 'Windows'

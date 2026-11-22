@@ -11,6 +11,19 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-22
+
+### Fixed
+- Data-folder migration retains conflicting old files for manual recovery. Previously an old high-score/settings file could be deleted just because a current file had the same name, even though it was never copied. Unreadable source folders now report failure rather than appearing empty.
+- If neither EEPROM copy is readable, autosave and exit-save preserve the original files instead of replacing them with factory state. The error explains how to repair or move them aside before restarting; valid backup recovery remains automatic.
+- Settings accept a UTF-8 BOM from Windows editors and reject incomplete reads before applying configuration.
+- The Windows kit checks archive, lifter, build flags and launcher content hashes as well as the version. Replacing kit files under the same version now rebuilds the executable. Installation stages a complete executable and retains `APB.exe.previous`; a failed replacement leaves the existing executable and build stamp intact.
+
+### Changed
+- Ordinary SDL-enabled builds compile and link the complete player, scheduler and app against empty dispatch fixtures, without requiring ROMs. This covers player code on all six CI platforms rather than only the Windows kit build. The fixture is a build check, not a playable game.
+- Linux CI requires a working Vulkan renderer test rather than silently skipping when Mesa fails to initialise. Local machines without Vulkan can still skip it.
+- Regression checks cover migration conflicts, unreadable EEPROM protection, backup write failure and BOM settings. The Windows launcher fixture checks content-based rebuilds and locked-executable failures. [Validation and remaining hardware checks](docs/reliability-0.23.md).
+
 ### Removed
 - **The in-between frames prototype (`qilin_tween`).** Drawing frames between the game's for high-refresh displays needs the next frame first, which adds a frame (about 17 ms) of delay: too much for a driving game, the owner decided. It was never in the game; the roadmap now lists it as ruled out.
 

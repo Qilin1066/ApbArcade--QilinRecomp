@@ -1200,6 +1200,19 @@ void test_persistence() {
     { std::ofstream out(path, std::ios::trunc); out << "bad"; }
     fs::remove(path + ".bak"); loaded.fill(0xcc);
     CHECK(reader.load(loaded) == Eeprom::Loaded::invalid && loaded[0] == 0xcc && loaded[511] == 0xcc);
+    CHECK(!reader.save(next));
+    CHECK(!reader.poll(next, 10000));
+    CHECK(fs::file_size(path) == 3 && !fs::exists(path + ".bak"));
+    fs::remove(path);
+    CHECK(reader.load(loaded) == Eeprom::Loaded::fresh);
+    CHECK(reader.save(next)); // explicit repair and reload unlocks persistence
+    // A blocked backup must leave the complete primary intact.
+    fs::remove(path + ".bak");
+    fs::create_directory(path + ".bak");
+    CHECK(!reader.save(original));
+    Eeprom unchanged(path);
+    CHECK(unchanged.load(loaded) == Eeprom::Loaded::primary && loaded == next);
+    fs::remove(path + ".bak");
     // Rename failure: do not damage the destination and remove the temp.
     const auto blocked = dir / "directory";
     fs::create_directory(blocked);
@@ -1238,9 +1251,11 @@ void test_persistence() {
         CHECK(qilin::persist::adopt_folder(u8(old), u8(current), &moved, &error) && moved == 2);
         CHECK(text_of(current / "apb.ini") == "new settings" && text_of(current / "eeprom.bin") == "old scores");
         CHECK(text_of(current / "eeprom.bin.bak") == "old backup");
-        CHECK(!fs::exists(old) && !fs::exists(old_parent));   // emptied, so removed with its parent
+        CHECK(fs::exists(old) && text_of(old / "apb.ini") == "old settings");
+        CHECK(!fs::exists(old / "eeprom.bin") && !fs::exists(old / "eeprom.bin.bak"));
         // Again: nothing left to move.
         CHECK(qilin::persist::adopt_folder(u8(old), u8(current), &moved, &error) && moved == 0);
+        fs::remove(old / "apb.ini");
         // The old folder's parent stays when something else lives there.
         fs::create_directories(old);
         fs::create_directories(old_parent / "another game");

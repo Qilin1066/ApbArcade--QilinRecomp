@@ -218,6 +218,14 @@ int main(int argc, char** argv) {
         std::ofstream old_file(path, std::ios::trunc);
         old_file << "stick_counts = 6\n";
     }
+    // Windows text editors/PowerShell may prepend a UTF-8 BOM.
+    {
+        const auto bom_path = path + ".bom";
+        { std::ofstream out(bom_path, std::ios::binary); out << "\xef\xbb\xbf" "volume = 27\r\n"; }
+        app::Settings bom;
+        CHECK(bom.load(bom_path) && bom.sound.volume == 27);
+        std::filesystem::remove(bom_path);
+    }
     app::Settings from_old;
     CHECK(from_old.load(path) && from_old.stick_speed == 3 && from_old.stick_curve == 2);
     // A damaged or hand-edited settings file must never supply invalid

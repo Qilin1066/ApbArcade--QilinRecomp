@@ -142,7 +142,10 @@ bool Settings::load(const std::string& path) {
     std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())));
     if (!in) return false;
     std::map<std::string, std::string, std::less<>> kv;
+    bool first_line = true;
     for (std::string line; std::getline(in, line);) {
+        if (first_line && line.starts_with("\xef\xbb\xbf")) line.erase(0, 3);
+        first_line = false;
         if (line.empty() || line[0] == '#') continue;
         const auto eq = line.find('=');
         if (eq == std::string::npos) continue;
@@ -153,6 +156,7 @@ bool Settings::load(const std::string& path) {
         };
         kv[trim(line.substr(0, eq))] = trim(line.substr(eq + 1));
     }
+    if (in.bad()) return false; // never apply a partially read configuration
     std::string prefix;
     auto get = [&](std::string_view key) -> std::string_view {
         const auto it = kv.find(prefix + std::string(key));

@@ -36,9 +36,16 @@ bool read_eeprom(const std::string& path, Eeprom::Bytes& bytes) {
 bool adopt_folder(const std::string& from, const std::string& to, int* moved, std::string* error) {
     namespace fs = std::filesystem;
     if (moved) *moved = 0;
+    if (error) error->clear();
     const fs::path old = native(from), current = native(to);
     std::error_code ec;
-    if (!fs::is_directory(old, ec)) return true;
+    const bool old_directory = fs::is_directory(old, ec);
+    if (ec && ec != std::errc::no_such_file_or_directory) {
+        if (error) *error = "Could not inspect " + from + ": " + ec.message();
+        return false;
+    }
+    if (!old_directory) return true;
+    ec.clear();
     fs::create_directories(current, ec);
     if (ec) {
         if (error) *error = "Could not create " + to + ": " + ec.message();
@@ -46,7 +53,7 @@ bool adopt_folder(const std::string& from, const std::string& to, int* moved, st
     }
     if (fs::equivalent(old, current, ec)) return true;
     ec.clear();
-    std::vector<fs::path> files, copied;
+    std::vector<fs::path> files, copied, originals;
     for (fs::directory_iterator it(old, ec), end; !ec && it != end; it.increment(ec))
         if (it->is_regular_file(ec)) files.push_back(it->path());
     if (ec) {
@@ -63,10 +70,11 @@ bool adopt_folder(const std::string& from, const std::string& to, int* moved, st
             return false;
         }
         copied.push_back(target);
+        originals.push_back(file);
     }
-    // Every file is across: the old copies can go (one that stays does no harm).
-    for (const auto& file : files)
-        if (fs::exists(current / file.filename(), ec)) fs::remove(file, ec);
+    // Remove only originals copied by this migration. A name collision may
+    // contain different scores/settings and must remain available for recovery.
+    for (const auto& file : originals) fs::remove(file, ec);
     ec.clear();
     if (fs::is_empty(old, ec) && !ec) {
         fs::remove(old, ec);
@@ -130,13 +138,20 @@ bool replace(const std::string& path, std::span<const std::uint8_t> bytes, std::
 Eeprom::Loaded Eeprom::load(Bytes& bytes) {
     error_.clear();
     have_saved_ = repair_ = false;
+    writable_ = true;
+    last_attempt_ = 0;
     Loaded result = Loaded::primary;
     if (!read_eeprom(path_, bytes)) {
         if (read_eeprom(path_ + ".bak", bytes)) { result = Loaded::backup; repair_ = true; }
         else {
             std::error_code ec;
-            const bool exists = std::filesystem::exists(native(path_), ec) || std::filesystem::exists(native(path_ + ".bak"), ec);
-            if (exists) error_ = "EEPROM files are incomplete or unreadable; keeping the board's initial state";
+            const bool primary = std::filesystem::exists(native(path_), ec);
+            const bool primary_error = static_cast<bool>(ec);
+            ec.clear();
+            const bool backup = std::filesystem::exists(native(path_ + ".bak"), ec);
+            const bool exists = primary || backup || primary_error || static_cast<bool>(ec);
+            writable_ = !exists;
+            if (exists) error_ = "EEPROM files are incomplete or unreadable; saves disabled to preserve them. Repair or move them aside, then restart";
             return exists ? Loaded::invalid : Loaded::fresh;
         }
     }
@@ -152,6 +167,7 @@ bool Eeprom::poll(const Bytes& bytes, std::uint64_t milliseconds) {
 }
 
 bool Eeprom::save(const Bytes& bytes) {
+    if (!writable_) return false;
     if (have_saved_ && bytes == saved_ && !repair_) return true;
     // Back up only a complete primary. A damaged primary must never
     // overwrite the backup we just recovered from.
