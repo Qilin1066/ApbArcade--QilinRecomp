@@ -13,8 +13,17 @@ foreach ($part in @('lib/libapb_kit.a', 'kit.ninja')) {
 }
 Copy-Item -LiteralPath $Stub -Destination (Join-Path $fixture 'kit/qilin.exe')
 Copy-Item -LiteralPath $Stub -Destination (Join-Path $fixture 'kit/ninja.exe')
+# SHA-256 of a file, upper-case hex. Not Get-FileHash: that cmdlet is missing
+# when Windows PowerShell inherits a PowerShell 7 module path, as it does
+# when started from pwsh (or from CI's shell).
+function Get-Sha256([string]$path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path))  # .NET resolves against the process folder, not PowerShell location
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
 $hashes = @('lib/libapb_kit.a', 'qilin.exe', 'kit.ninja', 'play.ps1') | ForEach-Object {
-    (Get-FileHash -LiteralPath (Join-Path $fixture "kit/$_") -Algorithm SHA256).Hash
+    (Get-Sha256 (Join-Path $fixture "kit/$_"))
 }
 Set-Content -LiteralPath (Join-Path $fixture 'work/built-with.txt') -Value "launcher-test | $($hashes -join ':')"
 $shellExe = (Get-Process -Id $PID).Path
@@ -49,14 +58,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $fixture 'APB.exe.previous'))) { thr
 # An in-use executable cannot be replaced; its bytes and stamp survive.
 $before = Get-Content -LiteralPath $stamp -Raw
 $game = Join-Path $fixture 'APB.exe'
-$hash = (Get-FileHash -LiteralPath $game).Hash
+$hash = (Get-Sha256 $game)
 Add-Content -LiteralPath (Join-Path $fixture 'kit/lib/libapb_kit.a') -Value 'another update'
 $locked = [System.IO.File]::Open($game, 'Open', 'Read', 'Read')
 try {
     & $shellExe -NoProfile -File (Join-Path $fixture 'kit/play.ps1') -BuildOnly
     if ($LASTEXITCODE -eq 0) { throw 'Locked executable replacement unexpectedly succeeded' }
 } finally { $locked.Dispose() }
-if ((Get-FileHash -LiteralPath $game).Hash -ne $hash -or (Get-Content -LiteralPath $stamp -Raw) -ne $before) {
+if ((Get-Sha256 $game) -ne $hash -or (Get-Content -LiteralPath $stamp -Raw) -ne $before) {
     throw 'Failed installation changed the executable or stamp'
 }
 Write-Host 'Same-version kit rebuild and failed installation preservation passed'

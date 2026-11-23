@@ -29,9 +29,18 @@ $game = Join-Path $top "APB.exe"
 $stamp = Join-Path $work "built-with.txt"
 $kitVersion = (Get-Content (Join-Path $kit "VERSION") -Raw).Trim()
 $onWindows = ($PSVersionTable.PSEdition -eq "Desktop") -or $IsWindows   # Windows PowerShell 5.1 has no $IsWindows
+# SHA-256 of a file, upper-case hex. Not Get-FileHash: that cmdlet is missing
+# when Windows PowerShell inherits a PowerShell 7 module path, as it does
+# when started from pwsh (or from CI's shell).
+function Get-Sha256([string]$path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path))  # .NET resolves against the process folder, not PowerShell location
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
 # A version alone cannot detect a repaired/replaced kit with the same release.
 $identityParts = @("lib/libapb_kit.a", "qilin.exe", "kit.ninja", "play.ps1") | ForEach-Object {
-    (Get-FileHash -LiteralPath (Join-Path $kit $_) -Algorithm SHA256).Hash
+    (Get-Sha256 (Join-Path $kit $_))
 }
 $builtFor = "$kitVersion | $($identityParts -join ':')"
 # Off Windows (testing the download under Wine), QILIN_KIT_RUNNER runs the kit's programs.
