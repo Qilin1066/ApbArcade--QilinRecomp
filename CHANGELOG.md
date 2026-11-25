@@ -14,6 +14,9 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 ### Fixed
 - The player kit's launcher hashes files with .NET rather than `Get-FileHash`, which is missing when Windows PowerShell inherits a PowerShell 7 module path (started from pwsh, for example), and stopped the launcher. The hashes are the same, so existing builds aren't redone.
 
+### Changed
+- README rewritten to the layout shared by the QilinRecomp projects: what works and how to build and play it, without the development history.
+
 ## [0.23.0] - 2026-11-22
 
 ### Fixed
