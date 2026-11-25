@@ -288,6 +288,8 @@ std::string FunctionWriter::write(std::vector<std::pair<std::uint16_t, unsigned>
     referenced_.insert(entry_);
     referenced_.insert(resume_sites.begin(), resume_sites.end());
 
+    std::set<std::string> used_labels;   // worked out once, not once a label
+    for (const auto r : referenced_) used_labels.insert(label(r));
     std::string text;
     for (std::size_t pos = 0; pos < code.size();) {
         const auto start = code.find("@@", pos);
@@ -298,9 +300,7 @@ std::string FunctionWriter::write(std::vector<std::pair<std::uint16_t, unsigned>
         text += code.substr(pos, start - pos);
         const auto end = code.find("@@\n", start + 2);
         const auto name = code.substr(start + 2, end - start - 2);
-        bool used = false;
-        for (const auto r : referenced_) used = used || label(r) == name;
-        if (used) text += name + ":\n";
+        if (used_labels.contains(name)) text += name + ":\n";
         pos = end + 3;
     }
 

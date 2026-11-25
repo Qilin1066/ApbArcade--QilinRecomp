@@ -426,6 +426,9 @@ bool FunctionWriter::instruction_body(const cfg::Node& node) {
         const unsigned r = i.reg;
         if (r == 7) {
             line("t = b.read16(static_cast<std::uint16_t>(r6 & 0xFFFE)); r6 = static_cast<std::uint16_t>(r6 + 2);");
+        } else if (r == 6) {
+            // RTS SP: PC = SP; SP = POP(), the assignment overwriting the pop's increment (MAME's rts).
+            line("t = r6; r6 = b.read16(static_cast<std::uint16_t>(r6 & 0xFFFE));");
         } else {
             line(std::format("t = r{0}; r{0} = b.read16(static_cast<std::uint16_t>(r6 & 0xFFFE)); r6 = static_cast<std::uint16_t>(r6 + 2);", r));
         }
@@ -607,12 +610,12 @@ bool FunctionWriter::instruction_body(const cfg::Node& node) {
         if (!get_dest(d, true)) return false;
         // PSW = (PSW & ~0xEF) | (dst & 0xEF): T is kept.
         line("c.psw = static_cast<std::uint8_t>((c.psw & 0x10) | (dst & 0xE0)); n = (dst >> 3) & 1; z = (dst >> 2) & 1; v = (dst >> 1) & 1; cf = dst & 1;");
-        if (fall) {
-            // MAME checks the lines at once after MTPS (in the same step, the board
-            // not running first): the interrupt is taken here, its handler runs.
-            line(std::format("if (b.interrupt_due()) [[unlikely]] {{ QL_SYNC(); c.r[7] = {0}; b.check_interrupts(); if (c.r[7] != {0}) return; QL_LOAD(); }}", hex(next_pc)));
-            if (options_.service_interval != 0) service_point(next_pc);
-        }
+        // MAME checks the lines at once after MTPS (in the same step, the board
+        // not running first): the interrupt is taken here, its handler runs.
+        // With no successor here (the next instruction in a window of unknown
+        // bank) the check is still made before leaving.
+        line(std::format("if (b.interrupt_due()) [[unlikely]] {{ QL_SYNC(); c.r[7] = {0}; b.check_interrupts(); if (c.r[7] != {0}) return; QL_LOAD(); }}", hex(next_pc)));
+        if (fall && options_.service_interval != 0) service_point(next_pc);
         break;
     default: {
         // Read-modify-write one-operand instructions.
@@ -684,8 +687,13 @@ bool FunctionWriter::instruction_body(const cfg::Node& node) {
     }
 
     if (writes_pc) {
-        // The new PC: through a table the analysis sized, or computed.
-        line("t = static_cast<std::uint16_t>(res);");
+        // The new PC: through a table the analysis sized, or computed. A byte
+        // result replaces only PC's low byte (MAME's PUT_DB_DREG writes REGB(7));
+        // MOVB and MFPS sign-extend into the whole register.
+        if (B && i.op != Op::mov && i.op != Op::mfps)
+            line(std::format("t = static_cast<std::uint16_t>(0x{:X}u | (res & 0xFFu));", next_pc & 0xFF00));
+        else
+            line("t = static_cast<std::uint16_t>(res);");
         if (node.flow == Flow::table) table_switch(node, "t");
         leave("t");
         return ok_;
@@ -741,7 +749,10 @@ std::string FunctionWriter::write(std::vector<std::pair<Loc, unsigned>>& entries
     std::vector<Loc> resume_sites(sites.begin(), sites.end());
     for (const auto& site : resume_sites) referenced_.insert(site);
     referenced_.insert(entry_);
-    // Emit only labels something jumps to.
+    // Emit only labels something jumps to (their names worked out once, not
+    // once for every label in the function: that was quadratic in its size).
+    std::set<std::string> used_labels;
+    for (const auto& r : referenced_) used_labels.insert(label(r));
     std::string text;
     for (std::size_t pos = 0; pos < code.size();) {
         const auto start = code.find("@@", pos);
@@ -752,11 +763,7 @@ std::string FunctionWriter::write(std::vector<std::pair<Loc, unsigned>>& entries
         text += code.substr(pos, start - pos);
         const auto end = code.find("@@\n", start + 2);
         const auto name = code.substr(start + 2, end - start - 2);
-        bool used = false;
-        for (const auto& r : referenced_) {
-            used = used || label(r) == name;
-        }
-        if (used) text += name + ":\n";
+        if (used_labels.contains(name)) text += name + ":\n";
         pos = end + 3;
     }
 

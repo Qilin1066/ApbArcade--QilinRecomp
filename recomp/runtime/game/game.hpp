@@ -102,6 +102,7 @@ private:
     std::int64_t sound_target_ = 0;   // sound cycles the current catch-up runs to
     bool sound_held_ = true;
     std::uint64_t nmi_edges_seen_ = 0;   // the machine's NMI edge count, as far as taken
+    std::uint64_t reset_pulses_seen_ = 0;   // the machine's sound-reset count, as far as acted on
     bool nmi_pending_ = false;
     Decision decision_ = Decision::none;  // a 6502 interrupt decision to make (see sound_interrupt_window)
     std::int64_t decide_after_ = 0;       // 'next': once the sound clock has passed this

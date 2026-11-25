@@ -299,6 +299,11 @@ int main(int argc, char** argv) {
     if (saved.display.fullscreen && !SDL_SetWindowFullscreen(window, true)) std::fprintf(stderr, "apb: full screen: %s\n", SDL_GetError());
     SDL_ShowWindow(window);
     SDL_SyncWindow(window);
+    // Started minimised (a shortcut set to Run: Minimized): the renderer and the menu need a window with a size.
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) {
+        SDL_RestoreWindow(window);
+        SDL_SyncWindow(window);
+    }
 
     gfx::Config config;
     config.width = width;
@@ -306,7 +311,7 @@ int main(int argc, char** argv) {
     config.gpu = options.gpu;                     // --gpu N wins over the saved device
     if (options.gpu < 0) config.gpu_name = saved.display.gpu;
     config.vsync = options.vsync && saved.display.vsync;
-    config.lock_to_display = app::display_repeats(window, saved.display) > 0;
+    config.lock_to_display = app::display_repeats(window, saved.display, nullptr, options.vsync) > 0;
     config.scaling = saved.display.scaling;
     config.smooth = saved.display.smooth;
     config.effect = saved.display.effect;
@@ -374,6 +379,7 @@ int main(int argc, char** argv) {
     input.set_focused((SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0);
     auto menu_owner = std::make_unique<app::Menu>(window, *renderer, input, settings_path);
     app::Menu& menu = *menu_owner;
+    menu.no_vsync = !options.vsync;
     if (!menu.ok()) fail("the settings menu couldn't start on this window's Vulkan device");
     for (const auto& d : input.devices()) menu.notify("Controller: " + d.name);
     if (input.devices().empty()) menu.notify("No controller found yet (the keyboard works)");
@@ -397,6 +403,15 @@ int main(int argc, char** argv) {
             menu.notify("High scores could not be saved: " + save_notice);
         }
     };
+
+    // The graphics device or the window's surface lost: keep the high scores
+    // and the recording, and say so, before the program ends.
+    gfx::set_fatal_handler([&](const std::string& message) {
+        if (options.replay.empty()) (void)eeprom.save(machine.eeprom());
+        if (recording.active()) (void)recording.finish(machine.frames());
+        const std::string text = message + "\n\nHigh scores were saved. Start APB again; if it keeps happening, update the graphics driver.";
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "APB stopped", text.c_str(), window);
+    });
 
     game::Scheduler scheduler(machine);
     const double frame_ns = 166400.0 / 10e6 * 1e9;
@@ -468,15 +483,17 @@ int main(int argc, char** argv) {
         }
         if (menu.quit_requested()) quit = true;
     };
-    // Replay changes at vblank. Live controls are sampled immediately after
-    // pumping SDL below, before the scheduler resumes either CPU.
+    // The controls change at vblank, live or replayed, and are recorded
+    // there: a replay then gives every event of the frame (the ADC's
+    // conversion, say) the inputs the recorded run gave it, as qilin_run's does.
     machine.on_vblank = [&](std::uint64_t frame) {
         if (!options.replay.empty()) replay.apply(frame, machine.inputs);
+        else input.apply(machine.inputs);
+        record_frame(frame);
     };
     scheduler.on_frame = [&](std::uint64_t frame) {
         profile::FrameMark frame_profile(profiler.get(), frame);
         events();
-        if (options.replay.empty()) input.apply(machine.inputs);
         if (options.replay.empty() && !eeprom.poll(machine.eeprom(), SDL_GetTicks())) report_save_failure();
         if (quit) throw game::Stop{game::Stop::frames, "closed"};
         if (audio && machine.sound_sink) {
@@ -492,7 +509,7 @@ int main(int argc, char** argv) {
         // Locked to the display ("match the display"), presenting paces the
         // game; otherwise the board's clock does.
         double refresh = 0;
-        const int possible = app::display_repeats(window, input.settings.display, &refresh);
+        const int possible = app::display_repeats(window, input.settings.display, &refresh, options.vsync);
         if (lock_failed && (!input.settings.display.match_display || refresh != lock_refresh)) {   // turned off, or another display: try again
             lock_failed = false;
             menu.speed_note.clear();
@@ -533,7 +550,7 @@ int main(int argc, char** argv) {
         // Pace to the board's clock: frame n is due n frame-times after the
         // start. Falling more than a few frames behind restarts the count,
         // rather than racing to catch up.
-        if (repeats > 0 && renderer->config().lock_to_display) {
+        if (repeats > 0 && renderer->config().lock_to_display && renderer->config().vsync) {
             { profile::Scope measured(profiler.get(), profile::Stage::present);
               renderer->present();
               for (int i = 1; i < repeats; ++i) renderer->present_again(); }
@@ -556,7 +573,6 @@ int main(int argc, char** argv) {
                 lock_frames = 0;
                 lock_since = now;
             }
-            record_frame(frame);
             return;
         }
         const auto due = start + static_cast<std::uint64_t>(static_cast<double>(frame - paced_from) * frame_ns);
@@ -567,7 +583,6 @@ int main(int argc, char** argv) {
             paced_from = frame;
         }
         { profile::Scope measured(profiler.get(), profile::Stage::present); renderer->present(); }
-        record_frame(frame);
     };
     const auto limit = options.frames ? options.frames : ~0ull;
     const auto stop = scheduler.run(options.replay.empty() ? limit : std::min<std::uint64_t>(limit, replay.duration()));

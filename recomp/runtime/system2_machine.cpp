@@ -241,7 +241,15 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
 
 void Machine::sound_reset_w(std::uint8_t data) {
     const bool reset = (data & 1) != 0;
-    if (reset && !sound_reset_) ++counters.sound_resets;
+    if (reset && !sound_reset_) {
+        ++counters.sound_resets;
+        ++reset_pulses_;
+    }
+    if (!reset && sound_reset_) {
+        nmi_edges_at_release_ = nmi_edges_;
+        // MAME's interface_post_reset: the 6502's periodic interrupt starts again from the release.
+        next_sound_irq_ = main_time + sound_irq_period;
+    }
     if (log && reset != sound_reset_) log->push_back({'S', static_cast<std::uint8_t>(reset), main_time});
     sound_reset_ = reset;
     if (mame) mame->sound_reset_line(reset);

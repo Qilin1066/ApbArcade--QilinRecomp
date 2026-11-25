@@ -1,7 +1,7 @@
 param([string]$Stub, [string]$Launcher, [string]$Out)
 $ErrorActionPreference = 'Stop'
 $env:CI = 'true' # no Explorer window on the test runner
-$fixture = Join-Path $Out ('Kit with spaces ' + [char]0x00e9)
+$fixture = Join-Path $Out ('Kit with spaces [and brackets] ' + [char]0x00e9)   # brackets: PowerShell wildcards unless -LiteralPath
 if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $fixture 'kit'), (Join-Path $fixture 'work') -Force | Out-Null
 Copy-Item -LiteralPath $Stub -Destination (Join-Path $fixture 'APB.exe')

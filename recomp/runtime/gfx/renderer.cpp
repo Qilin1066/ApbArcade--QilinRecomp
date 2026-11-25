@@ -56,9 +56,23 @@ struct PresentPush {
     uint32_t flags;
 };
 
+std::function<void(const std::string&)>& fatal_handler() {
+    static std::function<void(const std::string&)> handler;
+    return handler;
+}
+
 [[noreturn]] void fatal(const char* what, VkResult r) {
     std::fflush(stdout);
     std::fprintf(stderr, "qilin: Vulkan: %s failed (VkResult %d)\n", what, int(r));
+    static bool ending = false;   // the handler's own Vulkan failure doesn't run it again
+    if (!ending && fatal_handler()) {
+        ending = true;
+        const char* why = r == VK_ERROR_DEVICE_LOST ? "The graphics driver stopped responding (the device was lost)."
+                          : r == VK_ERROR_SURFACE_LOST_KHR ? "The window's graphics surface was lost."
+                          : r == VK_ERROR_OUT_OF_DEVICE_MEMORY || r == VK_ERROR_OUT_OF_HOST_MEMORY ? "The graphics driver ran out of memory."
+                                                                                                    : "A graphics call failed.";
+        fatal_handler()(std::string(why) + " (" + what + ", VkResult " + std::to_string(int(r)) + ")");
+    }
     std::exit(3);
 }
 void check(VkResult r, const char* what) {
@@ -596,11 +610,15 @@ void VulkanRenderer::create_swapchain() {
         extent.height = std::clamp(config_.window_height ? config_.window_height : config_.height, caps.minImageExtent.height,
                                    caps.maxImageExtent.height);
     }
-    swapchain_stale_ = false;
-    if (extent.width == 0 || extent.height == 0) return;  // minimised: nothing to show until it's back
+    // Minimised (or not yet shown): nothing to show until it's back; the next present asks again.
+    swapchain_stale_ = extent.width == 0 || extent.height == 0;
+    if (swapchain_stale_) return;
 
-    // Locked to the display, the shortest queue: one frame waiting at most.
-    uint32_t images = locked ? std::max(caps.minImageCount, 2u) : caps.minImageCount + 1;
+    // Locked to the display, or FIFO because no mailbox is offered, the
+    // shortest queue: one frame waiting at most (a longer FIFO queue fills
+    // up as the game's 60.1 Hz outruns a 60 Hz display: frames of lag).
+    const bool short_queue = locked || mode == VK_PRESENT_MODE_FIFO_KHR;
+    uint32_t images = short_queue ? std::max(caps.minImageCount, 2u) : caps.minImageCount + 1;
     if (caps.maxImageCount && images > caps.maxImageCount) images = caps.maxImageCount;
     VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     info.surface = surface_;
@@ -613,8 +631,12 @@ void VulkanRenderer::create_swapchain() {
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
                                                                                           : caps.currentTransform;
-    info.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
-                                                                                            : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    // Opaque where offered, else the first mode the surface supports (one always is).
+    info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
+        for (VkCompositeAlphaFlagBitsKHR a : {VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+                                              VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR})
+            if (caps.supportedCompositeAlpha & a) { info.compositeAlpha = a; break; }
     info.presentMode = mode;
     info.clipped = VK_TRUE;
     info.oldSwapchain = swapchain_;
@@ -1155,6 +1177,8 @@ Image VulkanRenderer::read(Target& t, uint32_t width, uint32_t height) {
 }
 
 }  // namespace
+
+void set_fatal_handler(std::function<void(const std::string& message)> handler) { fatal_handler() = std::move(handler); }
 
 std::unique_ptr<Renderer> Renderer::create(const Config& config, std::string* error) {
     std::string local;

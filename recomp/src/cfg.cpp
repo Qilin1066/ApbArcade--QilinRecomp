@@ -69,9 +69,11 @@ std::uint32_t Loc::physical() const noexcept {
     return sys2::rom_offset(pc, bank, bank);
 }
 
-std::expected<std::vector<Loc>, std::string> read_seeds(const std::string& path) {
+std::expected<std::vector<Loc>, std::string> read_seeds(const std::filesystem::path& path) {
     std::ifstream in(path);
-    if (!in) return std::unexpected(std::format("can't read {}", path));
+    const auto utf8 = path.u8string();
+    const std::string name(utf8.begin(), utf8.end());
+    if (!in) return std::unexpected(std::format("can't read {}", name));
     std::vector<Loc> seeds;
     std::string line;
     for (int number = 1; std::getline(in, line); ++number) {
@@ -91,7 +93,7 @@ std::expected<std::vector<Loc>, std::string> read_seeds(const std::string& path)
         } else if (ok) {
             ok = pc >= 0x8000;   // a window address needs its bank
         }
-        if (!ok) return std::unexpected(std::format("{}:{}: not a location: {}", path, number, line));
+        if (!ok) return std::unexpected(std::format("{}:{}: not a location: {}", name, number, line));
         seeds.push_back(Loc{static_cast<std::uint16_t>(pc), static_cast<std::uint8_t>(bank)});
     }
     return seeds;
@@ -259,8 +261,19 @@ void Program::run(Work work) {
             }
         }
         auto& node = nodes_[loc];
+        // The banks known here now: add() keeps them merged, and an item queued
+        // before a merge would otherwise run with banks this location no
+        // longer has (and the later, merged visit would be undone).
+        in = node.banks_in;
+        // Everything below is worked out again from those banks: nothing a
+        // visit with other banks found (a target in a window, say) is kept.
+        node.flow = Flow::next;
+        node.target.reset();
+        node.window_entry.reset();
+        node.table.clear();
+        node.heuristic_table = false;
+        node.writes_bank = false;
         node.insn = t11::decode(*w0, word(loc, 2).value_or(0), word(loc, 4).value_or(0));
-        node.banks_in = in;
         const auto& insn = node.insn;
         const auto text = t11::disassemble(insn, loc.pc);
         if (insn.legal) {

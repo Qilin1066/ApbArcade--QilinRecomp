@@ -165,6 +165,12 @@ public:
     // A driver that samples the line between slices can miss a fall and rise
     // in between; the count can't be missed.
     [[nodiscard]] std::uint64_t sound_nmi_edges() const noexcept { return nmi_edges_; }
+    // Times the sound CPU's reset has been asserted, and the NMI edge count
+    // when it was last released: a driver that samples the reset line between
+    // slices can miss a pulse within one, and must not take an NMI from
+    // before the release (the reset clears it), nor drop one from after.
+    [[nodiscard]] std::uint64_t sound_reset_pulses() const noexcept { return reset_pulses_; }
+    [[nodiscard]] std::uint64_t sound_nmi_edges_at_release() const noexcept { return nmi_edges_at_release_; }
 
     // ---- Time. The driver keeps these current. ----
     std::int64_t main_time = 0;    // main-CPU cycles since power-on
@@ -293,6 +299,7 @@ private:
     // Between the CPUs.
     Latch soundlatch_;   // main -> sound: its pending flag is the 6502's NMI
     std::uint64_t nmi_edges_ = 0;
+    std::uint64_t reset_pulses_ = 0, nmi_edges_at_release_ = 0;
     Latch mainlatch_;    // sound -> main
 
     // Sound board.

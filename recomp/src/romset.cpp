@@ -147,7 +147,7 @@ std::expected<RomSet, std::string> RomSet::load(const std::filesystem::path& dir
     }
     if (!problems.empty()) {
         return std::unexpected(std::format("the APB rev 7 ROM set in {} doesn't verify ({} of {} files match):{}",
-                                           dir.string(), matched, files.size(), problems));
+                                           utf8_text(dir), matched, files.size(), problems));
     }
     for (std::size_t r = 0; r < region_count; ++r) {
         if (regions[r].inverted) {

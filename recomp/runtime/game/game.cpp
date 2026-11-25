@@ -217,14 +217,18 @@ void Scheduler::run_sound() {
     if (m_.sound_held_in_reset()) {
         m_.sound_time = std::max(m_.sound_time, target);
         sound_held_ = true;
+        reset_pulses_seen_ = m_.sound_reset_pulses();
         return;
     }
-    if (sound_held_) {
+    // Out of reset, or reset and released again since the last slice (a
+    // pulse between two looks at the line): the reset is still made.
+    if (sound_held_ || m_.sound_reset_pulses() != reset_pulses_seen_) {
         // Out of reset: MAME's reset sequence, 8 cycles, ending with the first opcode fetch.
         sound_held_ = false;
+        reset_pulses_seen_ = m_.sound_reset_pulses();
         nmi_pending_ = false;                        // MAME's reset clears a pending NMI...
         decision_ = Decision::none;                  // ...and any interrupt it was about to take
-        nmi_edges_seen_ = m_.sound_nmi_edges();
+        nmi_edges_seen_ = m_.sound_nmi_edges_at_release();   // a command written after the release still interrupts
         ++counters.sound_resets;
         auto& c = sound.cpu;
         sound.read_arg(c.pc);

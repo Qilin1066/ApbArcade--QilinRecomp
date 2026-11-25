@@ -210,6 +210,8 @@ private:
     // the menu doesn't count until it's let go.
     int back_frames_ = 0, start_frames_ = 0;
     bool menu_combo_ = false, start_from_menu_ = false;
+    bool held_from_menu_ = false;   // play resumed: take note of what is held
+    unsigned held_mask_ = 0;        // buttons held since play resumed, ignored until released
     double mouse_dx_ = 0, mouse_carry_ = 0;
     int pedal_ = 0;   // the keys' and trigger's pedal, 0..0x3f, moved 8 a frame
 

@@ -17,6 +17,7 @@
 
 #include "romset.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <exception>

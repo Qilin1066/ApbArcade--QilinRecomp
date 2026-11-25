@@ -116,6 +116,9 @@ qilin_tool(qilin_core)
 
 add_executable(qilin recomp/src/main.cpp)
 target_link_libraries(qilin PRIVATE qilin_core qilin_warnings)
+if(WIN32)
+    target_link_libraries(qilin PRIVATE shell32)   # CommandLineToArgvW: the UTF-16 command line
+endif()
 target_compile_definitions(qilin PRIVATE QILIN_VERSION="${PROJECT_VERSION}")
 qilin_tool(qilin)
 
@@ -127,12 +130,12 @@ target_include_directories(qilin_tests PRIVATE recomp/runtime/app tools/common)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
 if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
-    find_program(QILIN_POWERSHELL NAMES pwsh powershell)
+    find_program(QILIN_POWERSHELL NAMES powershell pwsh)   # Windows PowerShell 5.1 first: the one Play APB.bat runs
     if(QILIN_POWERSHELL)
         add_executable(qilin_launcher_stub tools/check/launcher_stub.cpp)
         target_include_directories(qilin_launcher_stub PRIVATE recomp/runtime)
         target_link_libraries(qilin_launcher_stub PRIVATE qilin_warnings shell32)
-        add_test(NAME qilin_launcher_check COMMAND "${QILIN_POWERSHELL}" -NoProfile -File
+        add_test(NAME qilin_launcher_check COMMAND "${QILIN_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/launcher_check.ps1"
             -Stub "$<TARGET_FILE:qilin_launcher_stub>"
             -Launcher "${CMAKE_CURRENT_SOURCE_DIR}/tools/player-kit/play.ps1"

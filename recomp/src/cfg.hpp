@@ -94,7 +94,7 @@ struct Finding {
 
 // Reads a seed file: one location per line ("D758", "4E0C/b12"; hex address,
 // decimal bank), '#' comments and blank lines ignored.
-[[nodiscard]] std::expected<std::vector<Loc>, std::string> read_seeds(const std::string& path);
+[[nodiscard]] std::expected<std::vector<Loc>, std::string> read_seeds(const std::filesystem::path& path);
 
 class Program {
 public:

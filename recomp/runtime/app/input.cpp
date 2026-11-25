@@ -78,6 +78,10 @@ Binding Binding::parse(std::string_view text) {
     if (parts[0] == "key" && parts.size() == 2) {
         const auto index = num(1);
         if (!index || *index <= SDL_SCANCODE_UNKNOWN || *index >= SDL_SCANCODE_COUNT) return {};
+        switch (*index) {   // the program's own keys: Escape, F1, F2, F3, F11
+        case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_F1: case SDL_SCANCODE_F2: case SDL_SCANCODE_F3: case SDL_SCANCODE_F11: return {};
+        default: break;
+        }
         b.kind = Kind::key;
         b.index = *index;
     } else if (parts[0] == "button" && parts.size() == 3) {
@@ -182,8 +186,8 @@ bool Settings::load(const std::string& path) {
         c.moza_angle = num("moza_angle", 0) != 0;
         c.moza_sdk = std::string(get("moza_sdk"));
         c.pedal_axis = binding("pedal_axis");
-        c.pedal.released = num("pedal_released", c.pedal.released);
-        c.pedal.floored = num("pedal_floored", c.pedal.floored);
+        c.pedal.released = std::clamp(num("pedal_released", c.pedal.released), -1.0, 1.0);
+        c.pedal.floored = std::clamp(num("pedal_floored", c.pedal.floored), -1.0, 1.0);
         c.pedal.deadzone = std::clamp(num("pedal_deadzone", c.pedal.deadzone), 0.0, 0.3);
         c.mouse_counts = std::clamp(num("mouse_counts", c.mouse_counts), 0.01, 8.0);
         c.stick_speed = std::clamp(num("stick_speed", c.stick_speed), 0.5, 16.0);
@@ -422,6 +426,9 @@ void Input::start_force(Device& d) {
 }
 
 void Input::configure() {
+    // The wheel in use until now keeps every change made to its setup
+    // (buttons, pedal, mouse) before another one's is restored.
+    if (active_profile_ == settings.wheel_axis.device) settings.remember_controls();
     // Known wheel selected in the menu, or a different known wheel connected
     // while the selected one is absent: restore that wheel's whole setup.
     std::string selected = settings.wheel_axis.device;
@@ -587,6 +594,7 @@ void Input::apply(sys2::Inputs& in) {
         reset_motion();
         resuming_ = false;
         start_from_menu_ = true;   // cleared below unless a Start is still down
+        held_from_menu_ = true;    // the buttons too (A or Space on Close, say): each ignored until let go
     }
     if (measuring_wheel_) measurement_.observe(read(settings.wheel_axis));
     // Listening: the axis that has moved furthest from where it was.
@@ -649,6 +657,7 @@ void Input::apply(sys2::Inputs& in) {
     auto bound = [&](Button b) { return playing && settings.buttons[static_cast<int>(b)].kind != Binding::Kind::none &&
                                         read(settings.buttons[static_cast<int>(b)]) > 0.5; };
     const bool live = playing;   // while the menu is open, the cabinet's controls rest
+    const bool reading = live || focused_;   // the menu's meters: read while it's open, not while another window has the controls
 
     // Back (coin 1) and Start (siren/start), which together are the menu's.
     const bool back = pad(SDL_GAMEPAD_BUTTON_BACK), start = pad(SDL_GAMEPAD_BUTTON_START);
@@ -663,19 +672,31 @@ void Input::apply(sys2::Inputs& in) {
 
     // IN0, active low: siren/start, fire and the self-test switch.
     unsigned in0 = 0xffff;
-    const bool b1 = key[SDL_SCANCODE_LCTRL] || key[SDL_SCANCODE_Z] || pad(SDL_GAMEPAD_BUTTON_SOUTH) || start_press || bound(Button::one);
+    const bool b1_raw = key[SDL_SCANCODE_LCTRL] || key[SDL_SCANCODE_Z] || pad(SDL_GAMEPAD_BUTTON_SOUTH) || bound(Button::one);
     const bool b2 = key[SDL_SCANCODE_LALT] || key[SDL_SCANCODE_X] || pad(SDL_GAMEPAD_BUTTON_EAST) || bound(Button::two);
     const bool b3 = key[SDL_SCANCODE_SPACE] || key[SDL_SCANCODE_C] || pad(SDL_GAMEPAD_BUTTON_WEST) || bound(Button::three);
+    const bool c1 = key[SDL_SCANCODE_5] || bound(Button::coin_left);
+    const bool c2 = key[SDL_SCANCODE_6] || bound(Button::coin_right);
+    const bool c3 = key[SDL_SCANCODE_9] || bound(Button::service);
+    // Held when play resumed: ignored until released (bit per control).
+    const unsigned held = (b1_raw ? 1u : 0u) | (b2 ? 2u : 0u) | (b3 ? 4u : 0u) | (c1 ? 8u : 0u) | (c2 ? 16u : 0u) | (c3 ? 32u : 0u);
+    if (held_from_menu_) {
+        held_mask_ = held;
+        held_from_menu_ = false;
+    }
+    held_mask_ &= held;
+    const unsigned down = held & ~held_mask_;
+    const bool b1 = (down & 1u) || start_press;
     if (live && b1) in0 &= ~unsigned(in0_bits[0]);
-    if (live && b2) in0 &= ~unsigned(in0_bits[1]);
-    if (live && b3) in0 &= ~unsigned(in0_bits[2]);
+    if (live && (down & 2u)) in0 &= ~unsigned(in0_bits[1]);
+    if (live && (down & 4u)) in0 &= ~unsigned(in0_bits[2]);
     if (test_switch) in0 &= ~0x8000u;
     in.in0 = static_cast<std::uint16_t>(in0);
     // IN1, active low: the coins and the service coin (the low bits are the board's own).
     unsigned in1 = 0xf0;
-    if (live && (key[SDL_SCANCODE_5] || back_coin || bound(Button::coin_left))) in1 &= ~unsigned(in1_bits[0]);
-    if (live && (key[SDL_SCANCODE_6] || bound(Button::coin_right))) in1 &= ~unsigned(in1_bits[1]);
-    if (live && (key[SDL_SCANCODE_9] || bound(Button::service))) in1 &= ~unsigned(in1_bits[2]);
+    if (live && ((down & 8u) || back_coin)) in1 &= ~unsigned(in1_bits[0]);
+    if (live && (down & 16u)) in1 &= ~unsigned(in1_bits[1]);
+    if (live && (down & 32u)) in1 &= ~unsigned(in1_bits[2]);
     in.in1 = static_cast<std::uint8_t>(in1);
 
     // The gas pedal, ADC1. A bound pedal axis gives its travel; otherwise the
@@ -691,8 +712,8 @@ void Input::apply(sys2::Inputs& in) {
         if (trigger_from(d)) target = std::max(target, SDL_GetGamepadAxis(d.gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 0x3f / 32767);
     pedal_ = target > pedal_ ? std::min(target, pedal_ + 8) : std::max(target, pedal_ - 8);
     travel = std::max(travel, pedal_ / 63.0);
+    last_pedal = reading ? travel : 0;   // the menu's meter shows it while the game rests
     if (!live) travel = 0;
-    last_pedal = travel;
     in.adc[1] = controls::pedal_adc(travel);
 
     // The steering wheel: a free-spinning dial on LETA0, counts a frame.
@@ -713,12 +734,12 @@ void Input::apply(sys2::Inputs& in) {
                 moza_min_ = moza_min_ ? std::min(*moza_min_, *moza_degrees_) : *moza_degrees_;
                 moza_max_ = moza_max_ ? std::max(*moza_max_, *moza_degrees_) : *moza_degrees_;
             }
-            if (moza_degrees_ && live) counts += wheel_.update_degrees(*moza_degrees_);
+            if (moza_degrees_ && reading) counts += wheel_.update_degrees(*moza_degrees_);   // in the menu too, for its reading
             else wheel_.reset();
         } else if (!settings.wheel_axis.empty()) {
-            if (const Device* d = find(settings.wheel_axis.device); d && live)
+            if (const Device* d = find(settings.wheel_axis.device); d && reading)   // in the menu too, for its reading (resuming rebases it)
                 counts += wheel_.update(axis_of(d->joystick, settings.wheel_axis.index));
-            else wheel_.reset();   // unplugged/paused: resume with a fresh baseline
+            else wheel_.reset();   // unplugged or away: a fresh baseline when it's back
         }
     }
     if (settings.steering == Steering::mouse) {
@@ -728,14 +749,13 @@ void Input::apply(sys2::Inputs& in) {
         counts += static_cast<int>(whole);
     }
     mouse_dx_ = 0;
-    if (!live) {
+    last_counts = reading ? counts : 0;   // the menu's "Dial counts this frame"
+    if (!live) {   // the cabinet's controls rest; resuming rebases the wheel (reset_motion)
         counts = 0;
-        wheel_.reset();
         stick_.reset();
         mouse_carry_ = 0;
         pedal_ = 0;
     }
-    last_counts = counts;
     in.leta[0] = static_cast<std::uint8_t>(in.leta[0] + counts);
 }
 

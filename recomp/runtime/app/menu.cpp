@@ -77,6 +77,12 @@ SDL_DisplayID display_named(const std::string& name) {
     return found;
 }
 
+// The menu's style before scaling (there is one menu).
+static ImGuiStyle& base_style() {
+    static ImGuiStyle style;
+    return style;
+}
+
 int repeats_for(double refresh_hz) {
     if (!(refresh_hz > 0)) return 0;
     const auto k = static_cast<int>(std::lround(refresh_hz / game_hz));
@@ -84,11 +90,11 @@ int repeats_for(double refresh_hz) {
     return std::abs(refresh_hz / k - game_hz) / game_hz <= 0.01 ? k : 0;
 }
 
-int display_repeats(SDL_Window* window, const DisplaySettings& d, double* refresh) {
+int display_repeats(SDL_Window* window, const DisplaySettings& d, double* refresh, bool vsync_allowed) {
     const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
     const double hz = mode ? static_cast<double>(mode->refresh_rate) : 0.0;
     if (refresh) *refresh = hz;
-    return d.vsync && d.match_display ? repeats_for(hz) : 0;
+    return vsync_allowed && d.vsync && d.match_display ? repeats_for(hz) : 0;
 }
 
 Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::string settings_path)
@@ -101,12 +107,8 @@ Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::strin
     io.IniFilename = nullptr;   // the menu keeps no layout file; the settings file is apb's
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     ImGui::StyleColorsDark();
-    // 1.25x, as the other recomps have it, times the display's own scale.
-    float dpi = SDL_GetWindowDisplayScale(window_);
-    if (!(dpi > 0.0f)) dpi = 1.0f;
-    ImGui::GetStyle().ScaleAllSizes(1.25f * dpi);
-    ImGui::GetStyle().FontScaleMain = 1.25f;
-    ImGui::GetStyle().FontScaleDpi = dpi;
+    base_style() = ImGui::GetStyle();
+    apply_scale();
     if (!ImGui_ImplSDL3_InitForVulkan(window_)) return;
     sdl_backend_ = true;
     // Every controller works the menu, not only the first one SDL lists
@@ -138,6 +140,23 @@ Menu::Menu(SDL_Window* window, gfx::Renderer& renderer, Input& input, std::strin
     SDL_SetWindowRelativeMouseMode(window_, input_.settings.steering == Steering::mouse);
 }
 
+// 1.25x, times the display's content scale: the display scale less the
+// pixel density the backend already applies (a Retina Mac's 2x is both).
+// Rebuilt from the unscaled style, so a move to another display rescales it.
+void Menu::apply_scale() {
+    float scale = SDL_GetWindowDisplayScale(window_);
+    const float density = SDL_GetWindowPixelDensity(window_);
+    if (density > 0.0f) scale /= density;
+    if (!(scale > 0.0f)) scale = 1.0f;
+    if (scale == scale_) return;
+    scale_ = scale;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = base_style();
+    style.ScaleAllSizes(1.25f * scale);
+    style.FontScaleMain = 1.25f;
+    style.FontScaleDpi = scale;
+}
+
 Menu::~Menu() {
     renderer_.set_overlay({});
     if (ok_) ImGui_ImplVulkan_Shutdown();
@@ -148,6 +167,11 @@ Menu::~Menu() {
 void Menu::set_open(bool open) {
     if (open == open_) return;
     open_ = open;
+    if (open && ok_) {
+        // Keys and buttons released while the menu was shut never reached ImGui.
+        ImGui::GetIO().ClearInputKeys();
+        ImGui::GetIO().ClearInputMouse();
+    }
     input_.set_playing(!open);
     input_.end_wheel_measurement();
     input_.stop_listening();
@@ -156,7 +180,10 @@ void Menu::set_open(bool open) {
     measuring_ = false;
     peek_ = close_asked_ = false;
     SDL_SetWindowRelativeMouseMode(window_, !open && input_.settings.steering == Steering::mouse);
-    if (!open) save();   // closing the menu keeps what was set
+    if (!open) {
+        input_.settings.remember_controls();   // the wheel in use keeps its whole setup
+        save();                                // closing the menu keeps what was set
+    }
 }
 
 void Menu::save() {
@@ -164,8 +191,16 @@ void Menu::save() {
 }
 
 void Menu::handle(const SDL_Event& e) {
-    if (ok_ && (open_ || SDL_GetTicks() < hint_until_ || !notices_.empty())) ImGui_ImplSDL3_ProcessEvent(&e);
+    // The press that ends "Look at the picture" is only that: ImGui doesn't
+    // see it, or the button still focused (or under the mouse) would press again.
+    const bool ends_peek = peek_ && ((e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                                     e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+    if (ok_ && !ends_peek && (open_ || SDL_GetTicks() < hint_until_ || !notices_.empty())) ImGui_ImplSDL3_ProcessEvent(&e);
     switch (e.type) {
+    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        if (ok_) apply_scale();
+        break;
     case SDL_EVENT_WINDOW_ENTER_FULLSCREEN: input_.settings.display.fullscreen = true; break;
     case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: input_.settings.display.fullscreen = false; break;
     case SDL_EVENT_KEY_DOWN:
@@ -186,6 +221,8 @@ void Menu::handle(const SDL_Event& e) {
         // Escape opens the menu, or closes it (unless a control is being set:
         // then it gives up waiting for one).
         if (e.key.key == SDLK_ESCAPE) {
+            // A drop-down or a text box open: Escape is ImGui's, to close that.
+            if (open_ && ok_ && (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || ImGui::GetIO().WantTextInput)) break;
             if (open_ && (input_.listening() != Input::Listen::none || measuring_)) {
                 input_.stop_listening();
                 listening_button_ = -1;
@@ -210,7 +247,8 @@ void Menu::handle(const SDL_Event& e) {
         // other is pressed with it); with the menu open, Start alone closes
         // it too. Not while a control is being set: the press is that control.
         if (e.gbutton.button != SDL_GAMEPAD_BUTTON_BACK && e.gbutton.button != SDL_GAMEPAD_BUTTON_START) break;
-        if (open_ && (input_.listening() != Input::Listen::none || listening_button_ >= 0)) break;
+        if (!input_.focused()) break;   // a pad used in another window isn't APB's
+        if (open_ && (input_.listening() == Input::Listen::button || listening_button_ >= 0)) break;
         SDL_Gamepad* pad = SDL_GetGamepadFromID(e.gbutton.which);
         const bool back = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
         const bool start = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START);
@@ -259,9 +297,10 @@ void Menu::frame(bool away) {
     // d-pad would move away from it).
     {
         ImGuiIO& io = ImGui::GetIO();
-        const bool setting = open_ && (input_.listening() != Input::Listen::none || listening_button_ >= 0);
+        const bool setting = open_ && (input_.listening() == Input::Listen::button || listening_button_ >= 0);
         const ImGuiConfigFlags nav = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
         io.ConfigFlags = setting ? (io.ConfigFlags & ~nav) : (io.ConfigFlags | nav);
+        if (!input_.focused()) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;   // nor while another window has the pad
     }
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -405,10 +444,15 @@ void Menu::controls_tab() {
         const DisplaySettings display = input_.settings.display;   // the display, the sound and the ROM folder aren't controls
         const SoundSettings sound = input_.settings.sound;
         const std::string rom_dir = input_.settings.rom_dir;
+        auto profiles = std::move(input_.settings.profiles);   // other wheels' setups, and the SDK's place, stay
+        const std::string moza_sdk = input_.settings.moza_sdk;
         input_.settings = Settings{};
         input_.settings.display = display;
         input_.settings.sound = sound;
         input_.settings.rom_dir = rom_dir;
+        input_.settings.profiles = std::move(profiles);
+        input_.settings.moza_sdk = moza_sdk;
+        if (!input_.settings.wheel_axis.device.empty()) input_.settings.profiles.erase(input_.settings.wheel_axis.device);
         input_.stop_listening();
         input_.end_wheel_measurement();
         measuring_ = finding_wheel_ = false;
@@ -485,6 +529,7 @@ void Menu::steering_section() {
                 if (SDL_GetNumJoystickAxes(d.joystick) == 0) continue;
                 ImGui::PushID(static_cast<int>(d.id));
                 if (ImGui::Selectable(d.name.c_str(), s.wheel_axis.device == d.guid)) {
+                    s.remember_controls();   // the wheel bound until now keeps its setup
                     s.wheel_axis = Binding{Binding::Kind::axis, d.guid, d.name, 0, 0};
                     input_.configure();
                 }
@@ -531,15 +576,15 @@ void Menu::steering_section() {
             if (const auto angle = input_.moza_degrees()) ImGui::Text("Physical angle: %.2f degrees", *angle);
         }
         float counts = static_cast<float>(s.wheel.counts_per_turn);
-        changed |= ImGui::SliderFloat(labelled("Sensitivity (dial counts per turn)"), &counts, 32, 512, "%.0f");
+        changed |= ImGui::SliderFloat(labelled("Sensitivity (dial counts per turn)"), &counts, 32, 512, "%.0f", ImGuiSliderFlags_AlwaysClamp);
         bool edge = s.wheel.edge < 1.0;
         if (limited)
             changed |= ImGui::Checkbox("Keep turning while held at a stop", &edge);
         float edge_start = static_cast<float>(s.wheel.edge < 1.0 ? s.wheel.edge : controls::WheelSettings{}.edge);
         float edge_rate = static_cast<float>(s.wheel.edge_rate);
         if (limited && edge) {
-            changed |= ImGui::SliderFloat(labelled("Starts this far to the stop"), &edge_start, 0.6f, 0.99f, "%.2f");
-            changed |= ImGui::SliderFloat(labelled("Turning speed at the stop (counts a frame)"), &edge_rate, 1, 16, "%.1f");
+            changed |= ImGui::SliderFloat(labelled("Starts this far to the stop"), &edge_start, 0.6f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            changed |= ImGui::SliderFloat(labelled("Turning speed at the stop (counts a frame)"), &edge_rate, 1, 16, "%.1f", ImGuiSliderFlags_AlwaysClamp);
         }
         changed |= ImGui::Checkbox("Reverse the wheel", &s.wheel.invert);
         if (ImGui::CollapsingHeader("Advanced wheel input", measuring_ ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
@@ -559,7 +604,7 @@ void Menu::steering_section() {
                 if (ImGui::Button("Retry MOZA connection")) input_.retry_moza();
             } else {
                 if (s.wheel.wrap) {
-                    changed |= ImGui::SliderFloat(labelled("Degrees per reported axis cycle"), &rotation, 90, 10000, "%.0f");
+                    changed |= ImGui::SliderFloat(labelled("Degrees per reported axis cycle"), &rotation, 90, 10000, "%.0f", ImGuiSliderFlags_AlwaysClamp);
                     ImGui::TextWrapped("This calibrates the input scale; it does not limit physical rotation. Use a wrapping axis only if its reading rolls "
                                        "from one endpoint to the other as you keep turning. A clipped axis needs a physical-angle source.");
                 }
@@ -572,14 +617,14 @@ void Menu::steering_section() {
                     } else {
                         const double moved = input_.measured_wheel_travel();
                         ImGui::TextWrapped("Turn the wheel exactly one full turn (360 degrees), then press Done. Moved so far: %.3f", moved);
-                        if (ImGui::Button("Done") && std::abs(moved) > 0.05) {
+                        if (ImGui::Button("Done##measure") && std::abs(moved) > 0.05) {
                             rotation = static_cast<float>(std::clamp(720.0 / std::abs(moved), 90.0, 10000.0));
                             changed = true;
                             measuring_ = false;
                             input_.end_wheel_measurement();
                         }
                         ImGui::SameLine();
-                        if (ImGui::Button("Cancel")) { measuring_ = false; input_.end_wheel_measurement(); }
+                        if (ImGui::Button("Cancel##measure")) { measuring_ = false; input_.end_wheel_measurement(); }
                     }
                 }
             }
@@ -591,23 +636,23 @@ void Menu::steering_section() {
             s.wheel.edge_rate = edge_rate;
             input_.configure();
         }
-        if (ImGui::SliderInt(labelled("Force feedback: friction (%)"), &s.friction, 0, 100)) input_.configure();
+        if (ImGui::SliderInt(labelled("Force feedback: friction (%)"), &s.friction, 0, 100, "%d", ImGuiSliderFlags_AlwaysClamp)) input_.configure();
         for (const auto& d : input_.devices())
             if (d.guid == s.wheel_axis.device && !d.force_status.empty()) ImGui::TextWrapped("%s", d.force_status.c_str());
         ImGui::TextWrapped("The game requests no centring spring and passive friction. Settings in the wheel's own driver can still add a spring or a stop.");
     } else if (s.steering == Steering::mouse) {
         float m = static_cast<float>(s.mouse_counts);
-        if (ImGui::SliderFloat(labelled("Dial counts per mouse step"), &m, 0.02f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) s.mouse_counts = m;
+        if (ImGui::SliderFloat(labelled("Dial counts per mouse step"), &m, 0.02f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp)) s.mouse_counts = m;
         ImGui::TextDisabled("While playing, the mouse is captured; the menu frees it.");
     }
     ImGui::SeparatorText("Gamepad stick, d-pad and arrow keys");
     float stick = static_cast<float>(s.stick_speed);
-    if (ImGui::SliderFloat(labelled("Turning speed (dial counts a frame, stick fully over)"), &stick, 0.5f, 8, "%.1f")) {
+    if (ImGui::SliderFloat(labelled("Turning speed (dial counts a frame, stick fully over)"), &stick, 0.5f, 8, "%.1f", ImGuiSliderFlags_AlwaysClamp)) {
         s.stick_speed = stick;
         input_.configure();
     }
     float curve = static_cast<float>(s.stick_curve);
-    if (ImGui::SliderFloat(labelled("Stick response (1 straight; higher: finer near the centre)"), &curve, 1, 4, "%.1f")) {
+    if (ImGui::SliderFloat(labelled("Stick response (1 straight; higher: finer near the centre)"), &curve, 1, 4, "%.1f", ImGuiSliderFlags_AlwaysClamp)) {
         s.stick_curve = curve;
         input_.configure();
     }
@@ -618,6 +663,7 @@ void Menu::steering_section() {
     if (finding_wheel_ && input_.listening() == Input::Listen::none) {
         finding_wheel_ = false;
         if (auto heard = input_.heard(); heard && heard->kind == Binding::Kind::axis) {
+            s.remember_controls();   // the wheel bound until now keeps its setup
             s.wheel_axis = *heard;
             s.wheel_axis.value = 0;
             input_.configure();
@@ -635,18 +681,20 @@ void Menu::pedal_section() {
         const auto [rest, far] = input_.pedal_range();
         ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Press the pedal all the way down and let it go, then press Done.");
         if (!found.empty()) ImGui::Text("Found %s: released %.3f, floored %.3f", found.describe().c_str(), rest, far);
-        if (ImGui::Button("Done") && !found.empty()) {
+        if (ImGui::Button("Done##pedal") && !found.empty()) {
             s.pedal_axis = found;
             s.pedal.released = rest;
             s.pedal.floored = far;
             input_.stop_listening();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) input_.stop_listening();
+        if (ImGui::Button("Cancel##pedal")) input_.stop_listening();
     } else {
         if (ImGui::Button("Set up a pedal")) {
             listening_button_ = -1;
             finding_wheel_ = false;
+            measuring_ = false;
+            input_.end_wheel_measurement();
             input_.listen(Input::Listen::pedal);
         }
         if (!s.pedal_axis.empty()) {
@@ -657,9 +705,9 @@ void Menu::pedal_section() {
     if (!s.pedal_axis.empty()) {
         float released = static_cast<float>(s.pedal.released), floored = static_cast<float>(s.pedal.floored);
         float dead = static_cast<float>(s.pedal.deadzone);
-        if (ImGui::SliderFloat(labelled("Reading released"), &released, -1, 1, "%.3f")) s.pedal.released = released;
-        if (ImGui::SliderFloat(labelled("Reading floored"), &floored, -1, 1, "%.3f")) s.pedal.floored = floored;
-        if (ImGui::SliderFloat(labelled("Dead zone at each end"), &dead, 0, 0.2f, "%.2f")) s.pedal.deadzone = dead;
+        if (ImGui::SliderFloat(labelled("Reading released"), &released, -1, 1, "%.3f", ImGuiSliderFlags_AlwaysClamp)) s.pedal.released = released;
+        if (ImGui::SliderFloat(labelled("Reading floored"), &floored, -1, 1, "%.3f", ImGuiSliderFlags_AlwaysClamp)) s.pedal.floored = floored;
+        if (ImGui::SliderFloat(labelled("Dead zone at each end"), &dead, 0, 0.2f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) s.pedal.deadzone = dead;
         meter("axis", input_.read(s.pedal_axis), true);
     }
     meter("gas", input_.last_pedal, false);
@@ -727,7 +775,7 @@ void Menu::display_tab() {
     const auto apply = [&] {
         renderer_.set_scaling(d.scaling, d.smooth);
         renderer_.set_effect(d.effect, d.scanlines, d.mask);
-        renderer_.set_vsync(d.vsync);
+        renderer_.set_vsync(d.vsync && !no_vsync);
     };
     ImGui::SeparatorText("Window");
     bool fullscreen = d.fullscreen;
@@ -798,6 +846,7 @@ void Menu::display_tab() {
                             "multiples, or a large window: they fade out below about two screen pixels per line.");
     }
     changed |= ImGui::Checkbox("Vsync", &d.vsync);
+    if (no_vsync) ImGui::TextDisabled("Off for this run: apb was started with --no-vsync.");
     ImGui::Checkbox("Frame times (F3)", &d.performance_overlay);
     if (changed) apply();
 

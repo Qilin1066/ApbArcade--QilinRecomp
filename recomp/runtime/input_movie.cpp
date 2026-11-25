@@ -108,11 +108,12 @@ bool Reader::load(const std::string& path) {
     std::copy_n(header.begin() + 40, 512, eeprom_.begin());
     std::size_t at = 552;
     inputs_.push_back(decode(header, at));
+    std::vector<std::uint8_t> record;   // reused: one allocation, not one a frame
     for (;;) {
         const int type = input.get();
         if (type == EOF) break;
         if (type != 'F' && type != 'E') return fail("Invalid input recording record");
-        std::vector<std::uint8_t> record(type == 'F' ? 26 : 13);
+        record.assign(type == 'F' ? 26 : 13, 0);
         record[0] = static_cast<std::uint8_t>(type);
         if (!input.read(reinterpret_cast<char*>(record.data() + 1), static_cast<std::streamsize>(record.size() - 1))) break;
         if (!valid(record)) return fail("Input recording checksum failed");

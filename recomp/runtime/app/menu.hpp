@@ -28,7 +28,8 @@ inline constexpr double game_hz = 10e6 / 166400.0;
 // 2 at 120, up to 4 at 240), or 0 when it isn't (not asked for, or the
 // display's rate isn't within 1% of a whole multiple of the game's: the
 // game keeps its exact speed). *refresh gets the display's rate (0 unknown).
-[[nodiscard]] int display_repeats(SDL_Window* window, const DisplaySettings& d, double* refresh = nullptr);
+// 'vsync_allowed' false (--no-vsync): never locked, whatever is saved.
+[[nodiscard]] int display_repeats(SDL_Window* window, const DisplaySettings& d, double* refresh = nullptr, bool vsync_allowed = true);
 // The same arithmetic for a known refresh rate (tested).
 [[nodiscard]] int repeats_for(double refresh_hz);
 
@@ -54,6 +55,8 @@ public:
     [[nodiscard]] bool quit_requested() const noexcept { return quit_; }
     // Set by apb when locking to the display didn't hold (shown on the Display page).
     std::string speed_note;
+    // --no-vsync: vsync is off for this run, whatever the saved setting says.
+    bool no_vsync = false;
     // A line shown in the window's corner for a few seconds (a controller coming or going).
     void notify(std::string text);
 
@@ -70,6 +73,7 @@ private:
     void game_tab();
     void save();
     void draw_frame_times();
+    void apply_scale();
 
     // F3: the last 20 s of intervals between frames shown, in ms.
     static constexpr std::size_t frame_history = 1200;
@@ -93,6 +97,7 @@ private:
     int listening_button_ = -1;             // which cabinet button is waiting for a press
     bool finding_wheel_ = false;            // or the wheel is being looked for
     bool measuring_ = false;                // measuring the wheel's rotation...
+    float scale_ = 0.0f;                    // the content scale the style is sized for
     bool sdl_backend_ = false;              // ImGui's SDL3 backend is up (shut down even if Vulkan's never was)
 };
 

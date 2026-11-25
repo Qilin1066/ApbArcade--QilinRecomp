@@ -80,6 +80,12 @@ struct Image {  // 8-bit RGBA, rows top to bottom
     std::vector<uint8_t> rgba;
 };
 
+// A Vulkan failure the renderer can't go on from (the device lost: a driver
+// reset, a GPU removed; or the window's surface lost) ends the program. The
+// handler, if set, runs first, on the thread that was presenting: to save what
+// must be kept and tell the player why.
+void set_fatal_handler(std::function<void(const std::string& message)> handler);
+
 class Renderer {
 public:
     // Creates the renderer on a Vulkan 1.3 device, or returns null with the

@@ -105,7 +105,9 @@ void step_registers(const t11::Operand& op, bool byte, Registers& r) {
 
 State transfer(const t11::Instruction& insn, State in) {
     State s = in;
-    if (!insn.legal) {
+    // An illegal word, or a trap: the handler runs before the next
+    // instruction and may change any register, as a call may.
+    if (!insn.legal || insn.op == t11::Op::emt || insn.op == t11::Op::trap || insn.op == t11::Op::bpt || insn.op == t11::Op::iot) {
         return all_top();
     }
     auto& r = s.r;
@@ -122,7 +124,9 @@ State transfer(const t11::Instruction& insn, State in) {
 
     const auto write = [&](Interval value, bool v_clear) {
         r[d] = value;
-        cond = {Cond::result, static_cast<std::uint8_t>(d), 0, false, v_clear};
+        // A byte instruction's N and Z describe the low byte only: no
+        // condition on the whole register (R0 = 0x0101; DECB R0; BEQ is not R0 == 0).
+        cond = insn.byte ? Cond{} : Cond{Cond::result, static_cast<std::uint8_t>(d), 0, false, v_clear};
     };
     const auto no_signed_overflow = [](Interval a, Interval b, bool subtract) {
         const auto sa = signed_view(a), sb = signed_view(b);

@@ -34,7 +34,7 @@ function Invoke-Step([string]$what, [string]$exe, [string[]]$arguments) {
 
 # The first of these paths that exists.
 function Find-Built([string[]]$candidates) {
-    foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+    foreach ($c in $candidates) { if (Test-Path -LiteralPath $c) { return $c } }
     throw "built, but none of these exists: $($candidates -join ', ')"
 }
 
@@ -42,7 +42,7 @@ function Find-Built([string[]]$candidates) {
 function Add-Tool([string]$name, [string[]]$folders) {
     if (Get-Command $name -ErrorAction SilentlyContinue) { return $true }
     foreach ($f in $folders) {
-        if ($f -and (Test-Path (Join-Path $f "$name.exe"))) {
+        if ($f -and (Test-Path -LiteralPath (Join-Path $f "$name.exe"))) {
             $env:PATH = "$f;$env:PATH"
             return $true
         }
@@ -52,11 +52,17 @@ function Add-Tool([string]$name, [string[]]$folders) {
 if ($onWindows) {
     $vs = ""
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-    if (Test-Path $vswhere) { $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1 }
+    $vsVersion = ""
+    if (Test-Path -LiteralPath $vswhere) {
+        # The newest Visual Studio with the C++ tools (2022 or later).
+        $vsArgs = @("-latest", "-products", "*", "-version", "[17.10,", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64")
+        $vs = & $vswhere @vsArgs -property installationPath | Select-Object -First 1
+        $vsVersion = & $vswhere @vsArgs -property catalog_productLineVersion | Select-Object -First 1
+    }
     $ide = if ($vs) { Join-Path $vs "Common7\IDE\CommonExtensions\Microsoft" } else { "" }
     $haveCmake = Add-Tool "cmake" @($(if ($ide) { Join-Path $ide "CMake\CMake\bin" }), (Join-Path $env:ProgramFiles "CMake\bin"))
     $haveGit = Add-Tool "git" @((Join-Path $env:ProgramFiles "Git\cmd"), $(if ($ide) { Join-Path $ide "TeamFoundation\Team Explorer\Git\cmd" }))
-    if (-not $vs) { throw "Visual Studio 2022 wasn't found. Install it (the free Community edition) with 'Desktop development with C++'." }
+    if (-not $vs) { throw "Visual Studio 2022 (17.10) or newer with the C++ tools wasn't found. Install it (the free Community edition) with 'Desktop development with C++'." }
     if (-not $haveCmake) { throw "CMake wasn't found. In the Visual Studio Installer, add 'C++ CMake tools for Windows'." }
     if (-not $haveGit) { throw "Git wasn't found. Install Git for Windows (git-scm.com), or add 'Git for Windows' in the Visual Studio Installer." }
 } elseif (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
@@ -75,15 +81,15 @@ if (-not $RomDir) {
     # first time it runs).
     if ($onWindows) {
         $ini = Join-Path $env:LOCALAPPDATA "qilin\apb\apb.ini"
-        if (-not (Test-Path $ini)) { $ini = Join-Path $env:APPDATA "Qilin\apb\apb.ini" }
+        if (-not (Test-Path -LiteralPath $ini)) { $ini = Join-Path $env:APPDATA "Qilin\apb\apb.ini" }
     } else {
         $data = $env:XDG_DATA_HOME
         if (-not $data) { $data = Join-Path $HOME ".local/share" }
         $ini = Join-Path $data "qilin/apb/apb.ini"
-        if (-not (Test-Path $ini)) { $ini = Join-Path $data "Qilin/apb/apb.ini" }
+        if (-not (Test-Path -LiteralPath $ini)) { $ini = Join-Path $data "Qilin/apb/apb.ini" }
     }
-    if (Test-Path $ini) {
-        $line = Select-String -Path $ini -Pattern '^rom_dir = (.+)$' | Select-Object -First 1
+    if (Test-Path -LiteralPath $ini) {
+        $line = Select-String -LiteralPath $ini -Pattern '^rom_dir = (.+)$' | Select-Object -First 1
         if ($line) { $RomDir = $line.Matches[0].Groups[1].Value.Trim() }
     }
 }
@@ -92,24 +98,33 @@ if (-not $RomDir -and $onWindows) {
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
     $dialog.Description = "Choose the folder that holds your APB ROMs (the rev 7 set, 36 files)"
     $dialog.ShowNewFolderButton = $false
-    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $RomDir = $dialog.SelectedPath }
+    $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }   # else the dialog can open behind the console
+    $answer = $dialog.ShowDialog($owner)
+    $owner.Dispose()
+    if ($answer -eq [System.Windows.Forms.DialogResult]::OK) { $RomDir = $dialog.SelectedPath }
     else { throw "no ROM folder chosen" }
 }
 if (-not $RomDir) { $RomDir = Read-Host "The folder with your APB ROMs" }
-if (-not (Test-Path $RomDir -PathType Container)) { throw "no such folder: $RomDir" }
+if (-not (Test-Path -LiteralPath $RomDir -PathType Container)) { throw "no such folder: $RomDir (choose another with -RomDir <folder>)" }
 
 $build = Join-Path $root "build-apb"
 $gen = (Join-Path $root "gen") -replace '\\', '/'
 $genSound = (Join-Path $root "gen-sound") -replace '\\', '/'
 $configure = @("-S", $root, "-B", $build)
-if ($onWindows -and -not (Test-Path (Join-Path $build "CMakeCache.txt"))) { $configure += @("-G", "Visual Studio 17 2022", "-A", "x64") }
+if ($onWindows -and -not (Test-Path -LiteralPath (Join-Path $build "CMakeCache.txt"))) {
+    $generator = switch ($vsVersion) { "2022" { "Visual Studio 17 2022" } "2026" { "Visual Studio 18 2026" } default { "" } }
+    if ($generator) { $configure += @("-G", $generator) }   # else CMake picks the newest Visual Studio itself
+    $configure += @("-A", "x64")
+}
 if (-not $onWindows) { $configure += "-DCMAKE_BUILD_TYPE=Release" }
 
 Invoke-Step "Configuring" "cmake" $configure
 Invoke-Step "Building the recompiler" "cmake" @("--build", $build, "--config", "Release", "--target", "qilin", "--parallel")
 $exe = if ($onWindows) { ".exe" } else { "" }
 $qilin = Find-Built @((Join-Path $build "Release/qilin$exe"), (Join-Path $build "qilin$exe"))
-Invoke-Step "Checking the ROMs" $qilin @("verify", $RomDir)
+Write-Host "== Checking the ROMs" -ForegroundColor Cyan
+& $qilin verify $RomDir
+if ($LASTEXITCODE -ne 0) { throw "the ROMs in $RomDir aren't a complete rev 7 set (36 files, as MAME's apb, unzipped). Choose another folder with -RomDir <folder>." }
 Invoke-Step "Lifting the main CPU (T-11)" $qilin @("lift", $RomDir, "--out", $gen)
 Invoke-Step "Lifting the sound CPU (6502)" $qilin @("lift", $RomDir, "--cpu", "sound", "--out", $genSound)
 Invoke-Step "Configuring with the lifted code" "cmake" @("-S", $root, "-B", $build, "-DQILIN_GEN_DIR=$gen", "-DQILIN_SOUND_GEN_DIR=$genSound")
@@ -119,7 +134,8 @@ $apb = Find-Built @((Join-Path $build "Release/apb$exe"), (Join-Path $build "apb
 Write-Host "Built: $apb" -ForegroundColor Green
 if ($Run) {
     Write-Host "Starting APB..."
-    Start-Process -FilePath $apb -ArgumentList "`"$RomDir`"" -WorkingDirectory (Split-Path -Parent $apb)
+    # A trailing backslash would escape the closing quote ("E:\" reads as E:"): double it.
+    Start-Process -FilePath $apb -ArgumentList "`"$RomDir$(if ($RomDir.EndsWith('\')) { '\' })`"" -WorkingDirectory (Split-Path -Parent $apb)
 } else {
     Write-Host "Run it with:  & `"$apb`"   (it remembers the ROM folder)"
 }

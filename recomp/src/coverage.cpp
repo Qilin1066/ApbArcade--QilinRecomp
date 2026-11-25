@@ -125,7 +125,7 @@ int main_cpu(const rom::RomSet& set, const Options& options, const cfg::Program&
     // before the base as well as after (APB indexes its bit table at 9746
     // with negative offsets).
     if (!options.reads.empty()) {
-        const auto reads = cfg::read_seeds(options.reads);
+        const auto reads = cfg::read_seeds(rom::utf8_path(options.reads));
         if (!reads) {
             std::print(stderr, "qilin: {}\n", reads.error());
             return 1;
@@ -267,7 +267,7 @@ int main_cpu(const rom::RomSet& set, const Options& options, const cfg::Program&
     for (const auto& line : listing) std::print("{}\n", line);
 
     if (!options.check_seeds.empty()) {
-        const auto seeds = cfg::read_seeds(options.check_seeds);
+        const auto seeds = cfg::read_seeds(rom::utf8_path(options.check_seeds));
         if (!seeds) {
             std::print(stderr, "qilin: {}\n", seeds.error());
             return 1;

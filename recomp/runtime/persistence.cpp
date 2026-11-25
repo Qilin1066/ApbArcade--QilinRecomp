@@ -5,6 +5,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <string>
 #include <system_error>
 #include <vector>
 #ifdef _WIN32
@@ -64,8 +66,17 @@ bool adopt_folder(const std::string& from, const std::string& to, int* moved, st
         const fs::path target = current / file.filename();
         if (fs::exists(target, ec)) continue;   // the current folder's own wins
         ec.clear();
-        if (!fs::copy_file(file, target, ec) || ec) {
-            if (error) *error = "Could not copy " + from + " to " + to + ": " + ec.message();
+        // Copied as saves are written (flushed, then renamed into place), so a
+        // power cut can't leave a whole-size empty eeprom.bin with the original
+        // already gone: the original is removed only after every copy is complete.
+        std::ifstream in(file, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const auto name = target.u8string();
+        std::string why;
+        if (!in.good() && !in.eof()) why = "could not read it";
+        else if (!replace(std::string(name.begin(), name.end()), bytes, &why) && why.empty()) why = "could not write it";
+        if (!why.empty()) {
+            if (error) *error = "Could not copy " + from + " to " + to + ": " + why;
             for (const auto& made : copied) fs::remove(made, ec);
             return false;
         }
