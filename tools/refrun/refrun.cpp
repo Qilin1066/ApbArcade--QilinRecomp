@@ -205,6 +205,47 @@ int main(int argc, char** argv) {
         m6502.set_input_line(m6502_device::NMI_LINE, m.sound_nmi_line());
     };
 
+    // The sound CPU runs up to the main CPU's time: after each slice, and
+    // before a sound command or sound reset takes effect (as the native
+    // scheduler, and MAME, synchronise those writes). A reset pulse within
+    // a slice still resets it.
+    std::uint64_t pulses_seen = 0;
+    const auto catch_up_sound = [&] {
+        const auto sound_target = sys2::sound_cycles_at(m.main_time);
+        if (m.sound_held_in_reset()) {
+            m.sound_time = std::max(m.sound_time, sound_target);
+            sound_was_held = true;
+            pulses_seen = m.sound_reset_pulses();
+            return;
+        }
+        if (sound_was_held || m.sound_reset_pulses() != pulses_seen) {
+            m6502.reset();
+            sound_was_held = false;
+            pulses_seen = m.sound_reset_pulses();
+            ++sound_releases;
+        }
+        sync_lines();
+        while (m.sound_time < sound_target) {
+            const bool sequence = m6502.taking_interrupt() || m6502.resetting();
+            const std::uint16_t pc = m6502.npc();
+            sound_bus.cpu = &m6502;   // only within a step: its bus cycles are counted from the step's start
+            m.sound_time += m6502.step();
+            sound_bus.cpu = nullptr;
+            if (!sequence) {
+                if (pc < 0x4000) {
+                    ++sound_ram_code[pc];
+                } else if (!sound_seen[pc]) {
+                    sound_seen[pc] = 1;
+                    sound_arrivals.emplace(pc, last_sound_pc);
+                }
+                last_sound_pc = pc;
+                ++sound_instructions;
+            }
+            sync_lines();
+        }
+    };
+    m.sync_sound = catch_up_sound;
+
     std::uint64_t reported_second = 0;
     if (!capture.attach(*set, m)) return 1;
     script.attach(m);   // the controls change at each vblank, on the cycle qilin_run changes them
@@ -251,36 +292,7 @@ int main(int argc, char** argv) {
         }
 
         // The sound CPU catches up.
-        const auto sound_target = sys2::sound_cycles_at(m.main_time);
-        if (m.sound_held_in_reset()) {
-            m.sound_time = sound_target;
-            sound_was_held = true;
-        } else {
-            if (sound_was_held) {
-                m6502.reset();
-                sound_was_held = false;
-                ++sound_releases;
-            }
-            sync_lines();
-            while (m.sound_time < sound_target) {
-                const bool sequence = m6502.taking_interrupt() || m6502.resetting();
-                const std::uint16_t pc = m6502.npc();
-                sound_bus.cpu = &m6502;   // only within a step: its bus cycles are counted from the step's start
-                m.sound_time += m6502.step();
-                sound_bus.cpu = nullptr;
-                if (!sequence) {
-                    if (pc < 0x4000) {
-                        ++sound_ram_code[pc];
-                    } else if (!sound_seen[pc]) {
-                        sound_seen[pc] = 1;
-                        sound_arrivals.emplace(pc, last_sound_pc);
-                    }
-                    last_sound_pc = pc;
-                    ++sound_instructions;
-                }
-                sync_lines();
-            }
-        }
+        catch_up_sound();
 
         m.run_events(m.main_time);
         if (m.take_watchdog_expiry()) {

@@ -35,7 +35,8 @@ siren/start, fire and alternate siren; 5 inserts a coin. Gamepad: left stick
 or d-pad steers, right trigger or d-pad up accelerates, A or Start
 starts/sirens, B fires, X is alternate siren, Back (View) inserts a coin.
 
-F1 or Esc (gamepad: Back + Start together): the settings menu: wheels,
+F1 or Esc (gamepad: Back + Start together): the settings menu (Page Up /
+Page Down or LB / RB change its pages): wheels,
 pedals, buttons, the picture (presets, size, a CRT look, smoothed pixel art),
 full screen, the volume. F3: frame times. F11 or Alt+Enter: full screen.
 

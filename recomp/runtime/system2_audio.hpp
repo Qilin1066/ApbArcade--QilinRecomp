@@ -83,6 +83,12 @@ public:
 
     // Makes the sound up to a sound cycle.
     void advance(std::int64_t sound_time);
+    // The same for a batch that more will follow (each frame's): it stops one
+    // speech period short, so the last frames still have the speech sample
+    // after them to interpolate towards (the speech chip's samples reach only
+    // the batch's end). The rest comes with the next batch.
+    static constexpr std::int64_t speech_hold = 256;   // sound cycles: more than one 7.8 kHz speech period (229)
+    void advance_batch(std::int64_t sound_time) { advance(sound_time - speech_hold); }
     // Stereo frames made so far (left, right, ...), taken by the caller.
     std::vector<std::int16_t>& frames() noexcept { return frames_; }
 

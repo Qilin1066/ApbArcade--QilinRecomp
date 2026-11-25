@@ -64,7 +64,7 @@ void AudioWorker::run() {
                 case Kind::speech: audio_.speech_sample(static_cast<std::int16_t>(e.a), e.time); break;
                 }
             }
-            audio_.advance(batch.until);
+            audio_.advance_batch(batch.until);
             if (!output_(audio_.frames())) throw std::runtime_error("Audio output rejected samples");
             audio_.frames().clear(); batch.events.clear();
             {

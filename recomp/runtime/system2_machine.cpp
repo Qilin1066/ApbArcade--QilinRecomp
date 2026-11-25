@@ -81,8 +81,13 @@ Machine::Machine(std::span<const std::uint8_t> main_rom, std::span<const std::ui
 
 void Machine::reset() {
     speech_.reset(main_time);   // MAME resets every device with the machine
+    video_.reset_slapstic();
+    soundlatch_.pending = mainlatch_.pending = false;   // generic_latch_8's reset
     interrupt_enable_ = 0;
     pending_enable_ = -1;
+    scanline_int_ = video_int_ = false;
+    p2portwr_ = p2portrd_ = false;
+    watchdog_expired_ = false;
     sound_reset_w(1);
     watchdog_deadline_ = main_time + watchdog_period;
 }
@@ -171,7 +176,10 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
         }
         break;
     case Area::sound_reset:
-        if (low) sound_reset_w(static_cast<std::uint8_t>(data));
+        if (low) {
+            if (sync_sound && !mame) sync_sound();
+            sound_reset_w(static_cast<std::uint8_t>(data));
+        }
         break;
     case Area::scanline_ack:
         if (low) {
@@ -199,6 +207,7 @@ void Machine::main_write(std::uint16_t address, std::uint16_t data, std::uint16_
                 mame->soundlatch_w(static_cast<std::uint8_t>(data));
                 break;
             }
+            if (sync_sound) sync_sound();
             if (!soundlatch_.pending) ++nmi_edges_;
             soundlatch_ = {static_cast<std::uint8_t>(data), true};
         }

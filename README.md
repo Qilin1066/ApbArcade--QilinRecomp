@@ -63,6 +63,7 @@ tools/build-apb.sh "/path/to/APB ROMs" --run
 | Coin 1 / coin 2 / service coin | 5 / 6 / 9 | Back (coin 1) |
 | Self-test switch | F2 (toggles) | |
 | Settings menu (pauses the game) | F1 or Escape | Back + Start (Start alone closes it) |
+| Menu pages | Page Up / Page Down | LB / RB |
 | Frame times (on/off) | F3 | |
 | Full screen (on/off) | F11 or Alt+Enter | |
 

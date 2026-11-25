@@ -61,6 +61,22 @@ Scheduler::Scheduler(sys2::Machine& machine) : m_(machine) {
 
 Stop Scheduler::run(std::uint64_t frames) {
     stop_frames_ = frames;
+    // From the CPUs' reset: at power-on, or again after the board's reset
+    // (the watchdog's), the machine's time and frame count carrying on.
+    main_given_ = sound_given_ = 0;
+    sound_target_ = 0;
+    sound_held_ = m_.sound_held_in_reset();
+    nmi_edges_seen_ = m_.sound_nmi_edges();
+    reset_pulses_seen_ = m_.sound_reset_pulses();
+    nmi_pending_ = false;
+    decision_ = Decision::none;
+    decide_after_ = 0;
+    sampled_nmi_ = sampled_irq_ok_ = false;
+    main_interrupt_taken_ = false;
+    frames_seen_ = m_.frames();
+    // The 6502 caught up before a sound command or sound reset takes effect
+    // (MAME's mode does this its own way).
+    if (!external) m_.sync_sound = [this] { run_sound(); };
     main.cpu = {};
     main.cpu.r[6] = 0376;   // MAME's T-11 reset: SP, PC from the mode word, priority 7
     main.cpu.r[7] = t11_start;

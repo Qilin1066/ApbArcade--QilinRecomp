@@ -80,6 +80,8 @@ private:
     std::vector<float> frame_ms_ = std::vector<float>(frame_history, 0.0f);
     std::size_t frame_next_ = 0, frame_count_ = 0;
     std::uint64_t last_frame_ns_ = 0;
+    int page_ = 0;                          // the page showing: Controls, Display, Game
+    int select_page_ = -1;                  // a page asked for by Page Up/Down or a shoulder button
     bool peek_ = false;                     // "Look at the picture": the menu hidden until any key or button
     bool close_asked_ = false;              // the Close button (acted on after the frame is built)
 

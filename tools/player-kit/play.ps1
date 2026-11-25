@@ -6,14 +6,17 @@
 # them, and they're linked with the prebuilt rest into APB.exe. Then, and
 # every time after, it starts APB.exe.
 #
-#   play.ps1 [-Rebuild] [-BuildOnly] [-HardwareCheck]
+#   play.ps1 [-Rebuild] [-BuildOnly] [-HardwareCheck] [-LiftedFrom <folder>]
 #
 # -Rebuild compiles everything again, even if APB.exe is up to date;
-# -BuildOnly doesn't start the game afterwards.
+# -BuildOnly doesn't start the game afterwards. -LiftedFrom is for CI's
+# check of the download: that folder's C++ is compiled in place of the
+# code lifted from ROMs.
 param(
     [switch]$Rebuild,
     [switch]$BuildOnly,
-    [switch]$HardwareCheck
+    [switch]$HardwareCheck,
+    [string]$LiftedFrom = ""
 )
 $ErrorActionPreference = "Stop"
 trap {
@@ -158,55 +161,66 @@ if (Test-Path -LiteralPath $game) { Write-Host "Updating the game for this versi
 else { Write-Host "Building the game from your ROMs. This happens once (and after an update): a few minutes." }
 Write-Host ""
 
-# The ROM folder: the one APB used last, else ask (until one holds a verified set).
 $qilin = Join-Path $kit "qilin.exe"
-# The game's data folder: qilin\apb under the local application data. Up to
-# v0.21.0 it was Qilin\apb under the roaming one; the game moves that across
-# the first time it runs, so until then the settings are still read from there.
-$dataBase = if ($onWindows) { $env:LOCALAPPDATA } elseif ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME ".local/share" }
-$oldBase = if ($onWindows) { $env:APPDATA } else { $dataBase }
-$settingsFolder = Join-Path (Join-Path $dataBase "qilin") "apb"
-$oldSettingsFolder = Join-Path (Join-Path $oldBase "Qilin") "apb"
-if (-not (Test-Path -LiteralPath (Join-Path $settingsFolder "apb.ini")) -and (Test-Path -LiteralPath (Join-Path $oldSettingsFolder "apb.ini"))) { $settingsFolder = $oldSettingsFolder }
-$romDir = ""
-$ini = Join-Path $settingsFolder "apb.ini"
-if (Test-Path -LiteralPath $ini) {
-    $line = Select-String -LiteralPath $ini -Pattern '^rom_dir = (.+)$' | Select-Object -First 1
-    if ($line) { $romDir = $line.Matches[0].Groups[1].Value.Trim() }
-}
-while ($true) {
-    if ($romDir) {
-        $report = Read-Kit $qilin @("verify", $romDir)
-        if ($report.code -eq 0) { break }
-        Write-Host "The ROMs in $romDir aren't a complete rev 7 set:" -ForegroundColor Yellow
-        $reportLines = @($report.text.TrimEnd() -split "`r?`n")
-        if ($reportLines.Count -gt 7) { $reportLines = @($reportLines[0..5]) + @("...", $reportLines[-1]) }
-        Write-Host ($reportLines -join "`n")
-        if (@(Get-ChildItem -LiteralPath $romDir -Filter *.zip -ErrorAction SilentlyContinue).Count) {
-            Write-Host "That folder holds a .zip: unzip it (MAME's apb.zip) into a folder of its own and choose that folder." -ForegroundColor Yellow
+if ($LiftedFrom) {
+    # CI's check of the download, with no ROMs: the folder's C++ stands in for
+    # what qilin lift writes, and is compiled and linked as that would be.
+    foreach ($folder in @("gen", "gen-sound")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $work $folder) | Out-Null
+        Get-ChildItem -LiteralPath (Join-Path $work $folder) -Filter *.cpp | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+    }
+    Get-ChildItem -LiteralPath $LiftedFrom -Filter *.cpp | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $work "gen") }
+    $romDir = ""
+} else {
+    # The ROM folder: the one APB used last, else ask (until one holds a verified set).
+    # The game's data folder: qilin\apb under the local application data. Up to
+    # v0.21.0 it was Qilin\apb under the roaming one; the game moves that across
+    # the first time it runs, so until then the settings are still read from there.
+    $dataBase = if ($onWindows) { $env:LOCALAPPDATA } elseif ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME ".local/share" }
+    $oldBase = if ($onWindows) { $env:APPDATA } else { $dataBase }
+    $settingsFolder = Join-Path (Join-Path $dataBase "qilin") "apb"
+    $oldSettingsFolder = Join-Path (Join-Path $oldBase "Qilin") "apb"
+    if (-not (Test-Path -LiteralPath (Join-Path $settingsFolder "apb.ini")) -and (Test-Path -LiteralPath (Join-Path $oldSettingsFolder "apb.ini"))) { $settingsFolder = $oldSettingsFolder }
+    $romDir = ""
+    $ini = Join-Path $settingsFolder "apb.ini"
+    if (Test-Path -LiteralPath $ini) {
+        $line = Select-String -LiteralPath $ini -Pattern '^rom_dir = (.+)$' | Select-Object -First 1
+        if ($line) { $romDir = $line.Matches[0].Groups[1].Value.Trim() }
+    }
+    while ($true) {
+        if ($romDir) {
+            $report = Read-Kit $qilin @("verify", $romDir)
+            if ($report.code -eq 0) { break }
+            Write-Host "The ROMs in $romDir aren't a complete rev 7 set:" -ForegroundColor Yellow
+            $reportLines = @($report.text.TrimEnd() -split "`r?`n")
+            if ($reportLines.Count -gt 7) { $reportLines = @($reportLines[0..5]) + @("...", $reportLines[-1]) }
+            Write-Host ($reportLines -join "`n")
+            if (@(Get-ChildItem -LiteralPath $romDir -Filter *.zip -ErrorAction SilentlyContinue).Count) {
+                Write-Host "That folder holds a .zip: unzip it (MAME's apb.zip) into a folder of its own and choose that folder." -ForegroundColor Yellow
+            }
         }
+        if (-not $onWindows) { throw "no ROM folder: set rom_dir in $ini" }
+        Add-Type -AssemblyName System.Windows.Forms
+        $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dialog.Description = "Choose the folder that holds your APB ROMs (the rev 7 set: 36 files, as MAME's apb)"
+        $dialog.ShowNewFolderButton = $false
+        $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }   # else the dialog can open behind the console
+        $answer = $dialog.ShowDialog($owner)
+        $owner.Dispose()
+        if ($answer -ne [System.Windows.Forms.DialogResult]::OK) {
+            Write-Host "No ROM folder chosen."
+            exit 0
+        }
+        $romDir = $dialog.SelectedPath
     }
-    if (-not $onWindows) { throw "no ROM folder: set rom_dir in $ini" }
-    Add-Type -AssemblyName System.Windows.Forms
-    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "Choose the folder that holds your APB ROMs (the rev 7 set: 36 files, as MAME's apb)"
-    $dialog.ShowNewFolderButton = $false
-    $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }   # else the dialog can open behind the console
-    $answer = $dialog.ShowDialog($owner)
-    $owner.Dispose()
-    if ($answer -ne [System.Windows.Forms.DialogResult]::OK) {
-        Write-Host "No ROM folder chosen."
-        exit 0
-    }
-    $romDir = $dialog.SelectedPath
-}
-Write-Host "ROMs: $romDir"
+    Write-Host "ROMs: $romDir"
 
-# Lift both CPUs' programs (unchanged files are left alone).
-Write-Host "== Recompiling the main CPU's program" -ForegroundColor Cyan
-if ((Invoke-Kit $qilin @("lift", $romDir, "--out", (Join-Path $work "gen"))) -ne 0) { throw "qilin lift failed" }
-Write-Host "== Recompiling the sound CPU's program" -ForegroundColor Cyan
-if ((Invoke-Kit $qilin @("lift", $romDir, "--cpu", "sound", "--out", (Join-Path $work "gen-sound"))) -ne 0) { throw "qilin lift --cpu sound failed" }
+    # Lift both CPUs' programs (unchanged files are left alone).
+    Write-Host "== Recompiling the main CPU's program" -ForegroundColor Cyan
+    if ((Invoke-Kit $qilin @("lift", $romDir, "--out", (Join-Path $work "gen"))) -ne 0) { throw "qilin lift failed" }
+    Write-Host "== Recompiling the sound CPU's program" -ForegroundColor Cyan
+    if ((Invoke-Kit $qilin @("lift", $romDir, "--cpu", "sound", "--out", (Join-Path $work "gen-sound"))) -ne 0) { throw "qilin lift --cpu sound failed" }
+}
 
 # Compile and link: a ninja file over what the lift wrote, with the kit's
 # flags and libraries (kit.ninja). Paths are relative to the work folder, so

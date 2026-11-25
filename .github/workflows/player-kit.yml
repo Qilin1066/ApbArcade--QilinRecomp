@@ -59,10 +59,67 @@ jobs:
           name: ApbArcade--QilinRecomp-${{ env.VERSION }}-windows-x64
           path: ApbArcade--QilinRecomp-${{ env.VERSION }}-windows-x64.zip
           retention-days: 14
+    outputs:
+      version: ${{ env.VERSION }}
+
+  # The download as a player gets it, on Windows: unpacked into a folder
+  # whose name has spaces, brackets and a letter outside the ANSI code page,
+  # its own qilin.exe reading that path, and its own compiler, ninja and
+  # play.ps1 (under Windows PowerShell 5.1, as Play APB.bat runs it) building
+  # and linking APB.exe, with link_check.cpp standing in for the lifted ROMs.
+  check:
+    needs: package
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: tools/player-kit
+      - uses: actions/download-artifact@v4
+        with:
+          name: ApbArcade--QilinRecomp-${{ needs.package.outputs.version }}-windows-x64
+          path: ${{ runner.temp }}/download
+      - name: Build APB.exe with the download's own tools
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $place = Join-Path $env:RUNNER_TEMP ("Kit [check] " + [char]0x00e9 + [char]0x0142)
+          $zip = Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP "download") -Filter *.zip | Select-Object -First 1
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($zip.FullName, $place)   # not Expand-Archive: its destination is a wildcard pattern
+          $top = Join-Path $place "ApbArcade--QilinRecomp"
+          $qilin = Join-Path $top "kit\qilin.exe"
+          & $qilin --version
+          if ($LASTEXITCODE -ne 0) { throw "qilin --version failed" }
+          # A ROM folder named outside the ANSI code page: qilin must find the file in it (its SHA-1 is wrong, so it isn't "missing").
+          $roms = Join-Path $place ("ROMs " + [char]0x0142)
+          New-Item -ItemType Directory -Path $roms | Out-Null
+          [System.IO.File]::WriteAllBytes((Join-Path $roms "136051-1101.5t"), (New-Object byte[] 65536))
+          $report = (& $qilin verify $roms) -join "`n"
+          if ($LASTEXITCODE -eq 0 -or $report -notmatch "136051-1101\.5t +wrong SHA-1") { throw "qilin verify misread a Unicode folder:`n$report" }
+          $standIn = Join-Path $place "stand-in"
+          New-Item -ItemType Directory -Path $standIn | Out-Null
+          Copy-Item -LiteralPath "tools/player-kit/link_check.cpp" -Destination $standIn
+          $env:LOCALAPPDATA = Join-Path $place "local"
+          $env:APPDATA = Join-Path $place "roaming"
+          & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $top "kit\play.ps1") -BuildOnly -LiftedFrom $standIn
+          if ($LASTEXITCODE -ne 0) { throw "play.ps1 failed: $LASTEXITCODE" }
+          $apb = Get-Item -LiteralPath (Join-Path $top "APB.exe")
+          if ($apb.Length -lt 1MB) { throw "APB.exe is too small: $($apb.Length) bytes" }
+          Write-Host "Built $($apb.FullName), $($apb.Length) bytes"
+
+  release:
+    needs: [package, check]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ApbArcade--QilinRecomp-${{ needs.package.outputs.version }}-windows-x64
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.package.outputs.version }}
         run: |
           zip="ApbArcade--QilinRecomp-$VERSION-windows-x64.zip"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then

@@ -201,6 +201,12 @@ private:
     }
 
 public:
+    // The Slapstic's reset (with the board's): idle, its power-on bank. The RAM is kept.
+    constexpr void reset_slapstic() noexcept {
+        phase_ = Phase::idle;
+        bank_ = 3;
+        staged_ = 0;
+    }
     [[nodiscard]] constexpr unsigned bank() const noexcept { return bank_; }
     // The RAM behind the view: page 0 is bank 0 (alphanumerics, then motion
     // objects at word 0xC00), pages 1 and 2 banks 2 and 3 (the playfield).

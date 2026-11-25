@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
         if (worker || audio) machine.advance_speech(machine.sound_time);
         if (worker && !worker->submit(machine.sound_time)) throw game::Stop{game::Stop::frames, "audio worker failed"};
         if (audio) {
-            audio->advance(machine.sound_time);
+            audio->advance_batch(machine.sound_time);
             sound.insert(sound.end(), audio->frames().begin(), audio->frames().end());
             audio->frames().clear();
         }

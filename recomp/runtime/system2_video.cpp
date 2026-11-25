@@ -222,11 +222,19 @@ void to_bgra(const Frame& frame, const PaletteRam& palette, std::uint32_t* out) 
         const std::array<std::uint8_t, 4> bytes{c.blue, c.green, c.red, 255};
         std::memcpy(&lookup[i], bytes.data(), 4);
     }
-    // ROT270, as to_rgba: source row y becomes destination column y, read bottom to top.
-    for (unsigned y = 0; y < H; ++y) {
-        const std::uint16_t* row = &frame.pens[y * W];
-        for (unsigned x = 0; x < W; ++x) out[(W - 1 - x) * H + y] = lookup[row[x] & 0xff];
-    }
+    // ROT270, as to_rgba: source row y becomes destination column y, read
+    // bottom to top. In 32 x 32 blocks: each block's reads (32 rows of 64
+    // bytes) and writes (32 runs of 128 bytes) stay in the cache, where a
+    // whole column at a time wrote every pixel 1.5 KB from the last.
+    constexpr unsigned block = 32;
+    static_assert(W % block == 0 && H % block == 0);
+    for (unsigned y0 = 0; y0 < H; y0 += block)
+        for (unsigned x0 = 0; x0 < W; x0 += block)
+            for (unsigned x = x0; x < x0 + block; ++x) {
+                std::uint32_t* column = &out[(W - 1 - x) * H + y0];
+                const std::uint16_t* pens = &frame.pens[y0 * W + x];
+                for (unsigned i = 0; i < block; ++i) column[i] = lookup[pens[i * W] & 0xff];
+            }
 }
 
 } // namespace qilin::sys2

@@ -218,6 +218,12 @@ public:
     // frame count goes up (after the video sink), with the new count. Tools
     // change the controls here, so every run sees them change at the same moment.
     std::function<void(std::uint64_t frames)> on_vblank;
+    // Called before the main CPU's write to the sound command latch or the
+    // sound reset takes effect, main_time being the write's: the driver runs
+    // the sound CPU up to it first, so the 6502 sees the write when it was
+    // made, not from the start of the main CPU's slice (MAME synchronises
+    // these writes the same way).
+    std::function<void()> sync_sound;
 
     // Optional: told of every write that changes the sound, with the sound
     // cycle it happens on (the audio model makes the sound up to it first).

@@ -1155,7 +1155,7 @@ void test_audio_worker() {
             sink.speech_sample(static_cast<std::int16_t>((frame % 2 ? -1 : 1) * 12000), main_cycles_at(time + 6));
         };
         writes(reference); writes(worker);
-        reference.advance(time + 29999);
+        reference.advance_batch(time + 29999);
         expected.insert(expected.end(), reference.frames().begin(), reference.frames().end());
         reference.frames().clear();
         CHECK(worker.submit(time + 29999));

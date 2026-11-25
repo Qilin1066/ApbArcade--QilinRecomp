@@ -11,6 +11,17 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Added
+- The settings menu's pages change with Page Up and Page Down, or a controller's LB and RB.
+- CI checks the Windows download on Windows: unpacked into a folder whose name has spaces, brackets and letters outside the ANSI code page, its own `qilin.exe` reads a ROM folder named that way, and its own compiler, ninja and `play.ps1` (under Windows PowerShell 5.1) build and link `APB.exe`. A release is attached only once that check passes. (`play.ps1 -LiftedFrom <folder>` compiles a folder's C++ in place of the lifted ROMs, for this check.)
+
+### Changed
+- README rewritten to the layout shared by the QilinRecomp projects: what works and how to build and play it, without the development history.
+- The watchdog running out resets the board and the game starts again, as the cabinet's does, with a note in the window; it no longer ends APB. The board's reset also resets the Slapstic, the sound latches and the interrupt lines, as MAME's does.
+- A sound command or sound reset written by the main CPU reaches the 6502 when it is written: the sound CPU runs up to that moment first, as MAME synchronises these writes, rather than seeing it from the start of the main CPU's slice (up to 11 sound cycles early). The MAME-core reference run does the same, and the two still give identical frames.
+- Speech is interpolated to the end of every frame's sound: each frame's mix stops one speech period short and the next frame's carries on, where the last few output samples of a frame held the previous speech sample (a small 60 Hz artefact while speech played).
+- The picture's colour conversion works in 32 x 32 blocks: 0.08 ms a frame, from 0.45 ms (the largest per-frame cost in the player). Tile, sprite and character lookups wrap with a mask rather than a division: the CPU-side picture 12% faster. Pictures are identical.
+
 ### Fixed
 - **Settings menu (F1).** A controller alone can finish or cancel "Set up a pedal": the menu's navigation stays on while a pedal or wheel is being found, and Start closes it. Typed slider values are clamped to each slider's range, so no setting can make the steering dead or reversed, or overflow the friction force. A wheel's saved setup keeps every change made to it when another wheel is plugged in, found or chosen. "Back to the defaults" resets the controls in use and keeps the other wheels' setups and the MOZA SDK's place. The pedal meter and "Dial counts this frame" show live readings while the menu is open. Closing the menu with A, Space or Enter doesn't press that button in the game: every button held when play resumes is ignored until it is let go. Keys released while the menu was shut no longer leave it scrolling by itself, and the press that ends "Look at the picture" no longer opens it again. Escape closes an open drop-down first. A controller used in another window doesn't open or work the menu. The menu is sized by the display's content scale (no longer twice the size on a Retina Mac) and resizes when the window moves to a display with another scale. Escape, F1, F2, F3 and F11 can't be bound to a game control, even by editing apb.ini.
 - `--no-vsync` with "Match the display" saved no longer runs the game unlocked and too fast for two seconds at the start (with a false "Locking didn't hold" note); the Display page says vsync is off for the run, and changing a picture setting doesn't turn it back on.
@@ -20,14 +31,11 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 - Sound board: a reset pulse shorter than one main-CPU slice still resets the 6502. A command written just after the reset is released still interrupts it. The 244 Hz interrupt starts again from the release, as in MAME.
 - Moving the data folder copies each file as saves are written (flushed, then renamed into place) before removing the original, so a power cut can't lose the high scores.
 - The launcher and the build script work from folders with `[` or `]` in their names, and from a ROM folder at the root of a drive. Play opened from inside the zip says to unpack it instead of flashing shut, and a failed run always waits for a key. A second Play while one is building says so instead of building over it. A ROM folder holding a zip says to unpack it, and the verification's summary line is always shown. Replacing APB.exe is retried while an antivirus scan holds it, then says what to do. `-Rebuild` compiles everything again. A missing Vulkan driver is reported before building. The folder picker opens in front of the console.
-- `qilin` reads its command line as UTF-8 on Windows, so ROM and kit folders with characters outside the ANSI code page work.
+- `qilin` reads its command line as UTF-8 on Windows when built with MSVC (the build from source), so ROM folders with characters outside the ANSI code page work there as they already did with the download's own build.
 - `build-apb.ps1` finds Visual Studio 2022 17.10 or later with the C++ tools (2026 too) rather than any Visual Studio, and suggests `-RomDir` when the saved ROM folder doesn't verify.
 - Recompiler, none of which changes APB's lifted code: the T-11 analysis works each location out again from its latest bank state (a jump or call into a ROM window could keep a target from a visit with another bank). A byte instruction writing PC replaces only its low byte, as MAME does. `RTS SP` leaves SP as MAME does. MTPS takes an interrupt it unmasks even with no successor in its function. The value-range pass doesn't read a byte instruction's flags as the whole register's, and a trap's handler may change any register. Labels are worked out once a function rather than once a label.
 - `qilin_difftest` builds with libc++ (a missing `<algorithm>`). The launcher test runs under Windows PowerShell 5.1, the shell `Play APB.bat` uses, with the execution policy bypassed, from a folder with brackets in its name.
 - The player kit's launcher hashes files with .NET rather than `Get-FileHash`, which is missing when Windows PowerShell inherits a PowerShell 7 module path (started from pwsh, for example), and stopped the launcher. The hashes are the same, so existing builds aren't redone.
-
-### Changed
-- README rewritten to the layout shared by the QilinRecomp projects: what works and how to build and play it, without the development history.
 
 ## [0.23.0] - 2026-11-22
 

@@ -30,13 +30,18 @@ public:
     // The regions as RomSet lays them out: tiles, sprites, alphanumerics.
     Graphics(std::span<const std::uint8_t> tiles, std::span<const std::uint8_t> sprites, std::span<const std::uint8_t> chars);
 
-    [[nodiscard]] const std::uint8_t* tile(unsigned code) const noexcept { return &tiles_[(code % tile_count_) * 64]; }
-    [[nodiscard]] const std::uint8_t* sprite(unsigned code) const noexcept { return &sprites_[(code % sprite_count_) * 256]; }
-    [[nodiscard]] const std::uint8_t* character(unsigned code) const noexcept { return &chars_[(code % char_count_) * 64]; }
+    // A code past the end wraps, as MAME's (code % elements): a mask where the
+    // count is a power of two (APB's all are), not a division every lookup.
+    [[nodiscard]] const std::uint8_t* tile(unsigned code) const noexcept { return &tiles_[wrap(code, tile_count_) * 64]; }
+    [[nodiscard]] const std::uint8_t* sprite(unsigned code) const noexcept { return &sprites_[wrap(code, sprite_count_) * 256]; }
+    [[nodiscard]] const std::uint8_t* character(unsigned code) const noexcept { return &chars_[wrap(code, char_count_) * 64]; }
     // Bit r set: row r of the character has a visible pixel (pen 0 is transparent).
-    [[nodiscard]] std::uint8_t character_rows(unsigned code) const noexcept { return char_rows_[code % char_count_]; }
+    [[nodiscard]] std::uint8_t character_rows(unsigned code) const noexcept { return char_rows_[wrap(code, char_count_)]; }
 
 private:
+    [[nodiscard]] static std::size_t wrap(unsigned code, unsigned count) noexcept {
+        return (count & (count - 1)) == 0 ? code & (count - 1) : code % count;
+    }
     std::vector<std::uint8_t> tiles_, sprites_, chars_, char_rows_;
     unsigned tile_count_ = 0, sprite_count_ = 0, char_count_ = 0;
 };

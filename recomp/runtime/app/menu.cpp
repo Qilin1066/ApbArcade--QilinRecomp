@@ -214,6 +214,8 @@ void Menu::handle(const SDL_Event& e) {
             save();
         }
         if (e.key.key == SDLK_F1) toggle();
+        if (open_ && ok_ && (e.key.key == SDLK_PAGEUP || e.key.key == SDLK_PAGEDOWN) && listening_button_ < 0 && !ImGui::GetIO().WantTextInput)
+            select_page_ = (page_ + (e.key.key == SDLK_PAGEDOWN ? 1 : 2)) % 3;
         if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) {
             set_fullscreen(!input_.settings.display.fullscreen);
             save();
@@ -246,8 +248,13 @@ void Menu::handle(const SDL_Event& e) {
         // coin 1 and Start is siren/start; Input holds each back while the
         // other is pressed with it); with the menu open, Start alone closes
         // it too. Not while a control is being set: the press is that control.
-        if (e.gbutton.button != SDL_GAMEPAD_BUTTON_BACK && e.gbutton.button != SDL_GAMEPAD_BUTTON_START) break;
         if (!input_.focused()) break;   // a pad used in another window isn't APB's
+        if (open_ && listening_button_ < 0 && input_.listening() != Input::Listen::button &&
+            (e.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER || e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) {
+            select_page_ = (page_ + (e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER ? 1 : 2)) % 3;
+            break;
+        }
+        if (e.gbutton.button != SDL_GAMEPAD_BUTTON_BACK && e.gbutton.button != SDL_GAMEPAD_BUTTON_START) break;
         if (open_ && (input_.listening() == Input::Listen::button || listening_button_ >= 0)) break;
         SDL_Gamepad* pad = SDL_GetGamepadFromID(e.gbutton.which);
         const bool back = pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK);
@@ -351,18 +358,25 @@ void Menu::frame(bool away) {
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);   // sliders take half; their labels the rest
         ImGui::PushTextWrapPos(0.0f);   // APB's window is upright and narrow: text wraps
         if (ImGui::BeginTabBar("pages")) {
-            if (ImGui::BeginTabItem("Controls")) {
+            // Page Up and Page Down, or a controller's shoulder buttons, change page.
+            const auto page = [&](int index, const char* name) {
+                const bool open = ImGui::BeginTabItem(name, nullptr, select_page_ == index ? ImGuiTabItemFlags_SetSelected : 0);
+                if (open) page_ = index;
+                return open;
+            };
+            if (page(0, "Controls")) {
                 controls_tab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Display")) {
+            if (page(1, "Display")) {
                 display_tab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Game")) {
+            if (page(2, "Game")) {
                 game_tab();
                 ImGui::EndTabItem();
             }
+            select_page_ = -1;
             ImGui::EndTabBar();
         }
         ImGui::PopTextWrapPos();
@@ -460,7 +474,7 @@ void Menu::controls_tab() {
         input_.configure();
     }
     ImGui::TextDisabled("Escape, F1, F2, F3 and F11 are kept for the program.");
-    ImGui::TextDisabled("F1 or Esc (controller: Back + Start): this menu. F2: the self-test switch. F3: frame times. F11 or Alt+Enter: full screen.");
+    ImGui::TextDisabled("F1 or Esc (controller: Back + Start): this menu. Page Up / Page Down (controller: LB / RB): its pages. F2: the self-test switch. F3: frame times. F11 or Alt+Enter: full screen.");
 }
 
 void Menu::steering_section() {

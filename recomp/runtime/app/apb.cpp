@@ -585,7 +585,16 @@ int main(int argc, char** argv) {
         { profile::Scope measured(profiler.get(), profile::Stage::present); renderer->present(); }
     };
     const auto limit = options.frames ? options.frames : ~0ull;
-    const auto stop = scheduler.run(options.replay.empty() ? limit : std::min<std::uint64_t>(limit, replay.duration()));
+    const auto frames_to_run = options.replay.empty() ? limit : std::min<std::uint64_t>(limit, replay.duration());
+    auto stop = scheduler.run(frames_to_run);
+    // The watchdog ran out (the game stuck): the board resets, as the
+    // cabinet's does, and the game starts again; the EEPROM is kept.
+    while (stop.reason == game::Stop::watchdog && !quit) {
+        std::fprintf(stderr, "apb: %s: the board resets\n", stop.detail.c_str());
+        menu.notify("The game stopped responding; the board was reset, as the cabinet's watchdog does");
+        machine.reset();
+        stop = scheduler.run(frames_to_run);
+    }
     if (recording.active() && !recording.finish(machine.frames())) std::fprintf(stderr, "apb: %s\n", recording.error().c_str());
 
     if (options.replay.empty() && !eeprom.save(machine.eeprom())) {
