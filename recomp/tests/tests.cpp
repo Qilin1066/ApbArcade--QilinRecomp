@@ -873,37 +873,31 @@ void test_speech() {
 // The wheel, the stick and the pedal arithmetic (recomp/runtime/app/controls.hpp).
 void test_controls() {
     using namespace qilin::controls;
-    // A 900-degree wheel at 160 counts a turn: a quarter turn right is 40 counts.
-    Wheel wheel({900, 160, 1.0, 0, false});
+    // A wrapping axis whose cycle (-1 to 1) is one turn, at 160 counts a turn: a quarter turn
+    // right (half of the axis) is 40 counts.
+    Wheel wheel({360, 160, false});
     CHECK(wheel.update(0) == 0);                       // the first reading only sets where it is
     int total = 0;
-    for (int i = 1; i <= 50; ++i) total += wheel.update(0.2 * i / 50);   // 0.2 of half of 900 = 90 degrees
+    for (int i = 1; i <= 50; ++i) total += wheel.update(0.5 * i / 50);
     CHECK(total == 40);
-    for (int i = 49; i >= 0; --i) total += wheel.update(0.2 * i / 50);
+    CHECK(wheel.update(0.5) == 0);                     // held still: nothing (there is no lock to spin at)
+    for (int i = 49; i >= 0; --i) total += wheel.update(0.5 * i / 50);
     CHECK(total == 0);                                 // back to where it started, nothing lost or gained
     // Slow turns aren't lost to rounding: 1000 tiny steps add up.
-    Wheel slow({900, 160, 1.0, 0, false});
+    Wheel slow({360, 160, false});
     slow.update(0);
     total = 0;
-    for (int i = 1; i <= 1000; ++i) total += slow.update(0.2 * i / 1000);
+    for (int i = 1; i <= 1000; ++i) total += slow.update(0.5 * i / 1000);
     CHECK(total == 40);
-    // Held at the lock, a stopped wheel keeps the dial turning; at the edge's start, not yet.
-    Wheel lock({900, 160, 0.9, 6, false});
-    lock.update(1.0);
-    CHECK(lock.update(1.0) == 6);
-    CHECK(lock.update(1.0) == 6);
-    Wheel left({900, 160, 0.9, 6, false});
-    left.update(-1.0);
-    CHECK(left.update(-1.0) == -6);
-    Wheel edge({900, 160, 0.9, 6, false});
-    edge.update(0.9);
-    CHECK(edge.update(0.9) == 0);
-    Wheel inverted({900, 160, 1.0, 0, true});
+    // Held at an end of the axis, nothing either.
+    Wheel held({360, 160, false});
+    held.update(1.0);
+    CHECK(held.update(1.0) == 0);
+    Wheel inverted({360, 160, true});
     inverted.update(0);
     CHECK(inverted.update(0.1) < 0);
-    // A continuous axis crossing its seam keeps the same direction, and
-    // holding near that seam must never invoke the limited-wheel edge spin.
-    Wheel continuous({360, 160, 0.9, 6, false, true});
+    // Crossing the axis's seam keeps the same direction.
+    Wheel continuous({360, 160, false});
     continuous.update(0.75);
     CHECK(continuous.update(-0.75) == 40);
     CHECK(continuous.update(-0.95) == -16);
@@ -918,13 +912,13 @@ void test_controls() {
         continuous.observe(axis);
     }
     CHECK(continuous.update(0) == 480);
-    Wheel reversed_wrap({360, 160, 1.0, 0, true, true});
+    Wheel reversed_wrap({360, 160, true});
     reversed_wrap.update(0.75);
     CHECK(reversed_wrap.update(-0.75) == -40);
-    // A G920 has real endpoints: a large move must not be mistaken for a seam.
-    Wheel bounded({900, 160, 1.0, 0, false});
-    bounded.update(0.9);
-    CHECK(bounded.update(-0.9) == -360);
+    // Degrees per cycle scale it: an axis cycling every two turns counts twice as much.
+    Wheel two_turns({720, 160, false});
+    two_turns.update(0);
+    CHECK(two_turns.update(0.5) == 80);
     // A physical-angle provider has no finite SDL axis range. Its first
     // reading/reconnection is a baseline, including a large turn count.
     Wheel physical;
@@ -939,7 +933,7 @@ void test_controls() {
     // Measuring one full turn works even when it ends on its starting
     // reading: signed travel includes the seam, rather than end minus start.
     AxisTravel measured;
-    measured.reset(true);
+    measured.reset();
     measured.observe(0);
     for (int i = 1; i <= 16; ++i) {
         double axis = std::fmod(i / 8.0, 2.0);

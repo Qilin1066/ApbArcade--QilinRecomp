@@ -39,7 +39,7 @@ The final run's simulation p95 was 0.855 ms; audio-worker batches averaged 0.193
 
 ## Actual-machine capture
 
-The Windows download includes **Check controls and performance.bat**. It builds/updates the player through the normal launcher and creates a fresh folder under `Hardware checks`. Complete its checklist, play for at least two minutes and quit normally. The folder contains `performance.txt`, `controllers.txt`, `inputs.qir`, stdout/stderr logs and the checklist. Each run gets a unique folder; repeat separately with the R5 and G920. No report is uploaded automatically. Fill in the driver/firmware versions and observations that software cannot infer.
+The Windows download includes **Check controls and performance.bat**. It builds/updates the player through the normal launcher and creates a fresh folder under `Hardware checks`. Complete its checklist, play for at least two minutes and quit normally. The folder contains `performance.txt`, `controllers.txt`, `inputs.qir`, stdout/stderr logs and the checklist. Each run gets a unique folder; repeat separately for each wheel. No report is uploaded automatically. Fill in the driver/firmware versions and observations that software cannot infer.
 
 For a source build:
 

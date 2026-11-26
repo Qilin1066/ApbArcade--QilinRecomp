@@ -37,7 +37,7 @@ The 14.5–20 second coin window has stereo correlation approximately **0.746**,
 
 These results do not reproduce the older changelog's broad claim of matching pictures and 0.9985 audio correlation. Do not loosen thresholds to turn this into a pass. Next investigate actual input/coin read cycles, scheduling after startup, and device state with read/write traces. At this initial baseline, the board's POKEY `RANDOM` register used a cycle-count hash instead of the hardware polynomial; version 0.18 corrected that separate gap.
 
-Separately, the audio worker preserves the synchronous model's WAV **byte for byte** over a 6,000-frame credited game with steering, throttle and speech. This establishes that moving mixing off the game thread does not introduce the independent differences above; it does not establish that the underlying mix is identical to MAME. Physical playback and MOZA R5 / Logitech G920 behaviour still need testing on the actual hardware.
+Separately, the audio worker preserves the synchronous model's WAV **byte for byte** over a 6,000-frame credited game with steering, throttle and speech. This establishes that moving mixing off the game thread does not introduce the independent differences above; it does not establish that the underlying mix is identical to MAME. Physical playback and MOZA R5 behaviour still need testing on the actual hardware.
 
 
 ## Version 0.18 follow-up traces

@@ -1,5 +1,5 @@
 // The controls layer (input.cpp) on SDL's virtual joysticks: a wheel and a
-// set of pedals as separate devices, as a Moza or Logitech set shows up.
+// set of pedals as separate devices, as a MOZA set shows up.
 // Needs SDL3 and no window or real device.
 
 #include "input.hpp"
@@ -85,33 +85,31 @@ int main(int argc, char** argv) {
     CHECK(heard && heard->kind == app::Binding::Kind::axis && heard->index == 0 && heard->name == "Test wheel");
     if (!heard) return 1;
 
-    // Steering with it: a 900-degree wheel, 160 counts a turn. A quarter turn
-    // right (0.2 of the axis) over 20 frames is 40 counts on the dial.
+    // Steering with it: a wrapping axis a turn a cycle, 160 counts a turn. A quarter
+    // turn right (half of the axis) over 20 frames is 40 counts on the dial.
     input.settings.steering = app::Steering::wheel;
     input.settings.wheel_axis = *heard;
-    input.settings.wheel = {900, 160, 0.92, 6, false};
+    input.settings.wheel = {360, 160, false};
     input.configure();
     SDL_SetJoystickVirtualAxis(wheel, 0, 0);
     in.leta[0] = 0;
     frame(input, in);
     const std::uint8_t start = in.leta[0];
     for (int i = 1; i <= 20; ++i) {
-        SDL_SetJoystickVirtualAxis(wheel, 0, static_cast<Sint16>(32767 * 0.2 * i / 20));
+        SDL_SetJoystickVirtualAxis(wheel, 0, static_cast<Sint16>(32767 * 0.5 * i / 20));
         frame(input, in);
     }
     // (39.998 counts: the axis's whole-number steps; the fraction is carried, not lost)
     const int moved = static_cast<std::uint8_t>(in.leta[0] - start);
     CHECK(moved == 39 || moved == 40);
-    // Held at the right lock, it keeps turning: 6 counts a frame.
-    SDL_SetJoystickVirtualAxis(wheel, 0, 32767);
+    // Held still, it adds nothing.
+    const std::uint8_t held_still = in.leta[0];
     frame(input, in);
-    const std::uint8_t at_lock = in.leta[0];
-    frame(input, in);
-    CHECK(static_cast<std::uint8_t>(in.leta[0] - at_lock) == 6);
+    CHECK(in.leta[0] == held_still);
 
-    // A wrapping wheel makes three turns in a single game frame, ending
-    // at its initial axis position. Sampling only that position loses them.
-    input.settings.wheel = {360, 160, 0.9, 6, false, true};
+    // The wheel makes three turns in a single game frame, ending at its
+    // initial axis position. Sampling only that position loses them.
+    input.settings.wheel = {360, 160, false};
     SDL_SetJoystickVirtualAxis(wheel, 0, 0);
     frame(input, in);
     input.configure();
@@ -151,7 +149,7 @@ int main(int argc, char** argv) {
     input.set_playing(true);
     frame(input, in);
     CHECK(input.last_counts == 0);
-    input.settings.wheel = {900, 160, 0.92, 6, false};
+    input.settings.wheel = {360, 160, false};
     input.configure();
     CHECK(!input.devices().front().force_status.empty());
 
@@ -197,7 +195,6 @@ int main(int argc, char** argv) {
     input.settings.display.performance_overlay = true;
     input.settings.sound.volume = 35;
     input.settings.rom_dir = "D:\\APB Arcade Project";
-    input.settings.wheel.wrap = true;
     input.settings.moza_angle = true;
     input.settings.moza_sdk = "D:\\Wheel tools\\MOZA_SDK.dll";
     CHECK(input.settings.save(path));
@@ -205,7 +202,7 @@ int main(int argc, char** argv) {
     CHECK(loaded.load(path));
     CHECK(loaded.steering == app::Steering::wheel && loaded.wheel_axis.text() == input.settings.wheel_axis.text());
     CHECK(loaded.wheel_axis.name == "Test wheel");
-    CHECK(loaded.wheel.wrap && loaded.moza_angle && loaded.moza_sdk == input.settings.moza_sdk);
+    CHECK(loaded.moza_angle && loaded.moza_sdk == input.settings.moza_sdk);
     CHECK(loaded.pedal_axis.text() == input.settings.pedal_axis.text() && std::abs(loaded.pedal.floored - far) < 1e-6);
     CHECK(loaded.buttons[0].text() == input.settings.buttons[0].text());
     CHECK(loaded.display.scaling == gfx::Scaling::stretch && !loaded.display.smooth && !loaded.display.vsync && loaded.display.fullscreen);
@@ -246,12 +243,34 @@ int main(int argc, char** argv) {
                    "pedal_released = -inf\npedal_floored = nan\ncrt_scanlines = nan\ncrt_mask = inf\n"
                    "button1 = key:-1\n";
     }
+    {
+        // A wheel set up for limited rotation by an older version (a G920 at 900 degrees): no
+        // longer supported, so steering goes back to the keys and gamepad, the angle to the default.
+        const auto old_path = (std::filesystem::temp_directory_path() / "apb_input_test_limited.ini").string();
+        {
+            std::ofstream old(old_path, std::ios::trunc);
+            old << "steering = wheel\nwheel_axis = axis:0300abcd:0:0\nwheel_rotation = 900\nwheel_edge = 0.92\n"
+                   "wheel_edge_rate = 6\nwheel_invert = 0\nwheel_wrap = 0\nmoza_angle = 0\n";
+        }
+        app::Settings limited;
+        CHECK(limited.load(old_path));
+        CHECK(limited.steering == app::Steering::keys_and_pad && limited.wheel.rotation == app::Settings{}.wheel.rotation);
+        {
+            std::ofstream old(old_path, std::ios::trunc);   // the same, set up as a wrapping axis: kept
+            old << "steering = wheel\nwheel_axis = axis:0300abcd:0:0\nwheel_rotation = 720\nwheel_edge = 0.92\n"
+                   "wheel_edge_rate = 6\nwheel_invert = 0\nwheel_wrap = 1\nmoza_angle = 0\n";
+        }
+        app::Settings wrapping;
+        CHECK(wrapping.load(old_path));
+        CHECK(wrapping.steering == app::Steering::wheel && wrapping.wheel.rotation == 720);
+        std::filesystem::remove(old_path);
+    }
     app::Settings recovered;
     const app::Settings defaults;
     CHECK(recovered.load(path));
     CHECK(recovered.buttons[0].empty());
     CHECK(recovered.wheel.rotation == defaults.wheel.rotation);
-    CHECK(recovered.wheel.counts_per_turn == defaults.wheel.counts_per_turn && recovered.wheel.edge == defaults.wheel.edge);
+    CHECK(recovered.wheel.counts_per_turn == defaults.wheel.counts_per_turn);
     CHECK(recovered.mouse_counts == defaults.mouse_counts && recovered.stick_speed == defaults.stick_speed);
     CHECK(recovered.stick_curve == defaults.stick_curve && recovered.friction == defaults.friction);
     CHECK(recovered.pedal.released == defaults.pedal.released && recovered.pedal.floored == defaults.pedal.floored);
@@ -520,7 +539,6 @@ int main(int argc, char** argv) {
     input.settings = app::Settings{};
     input.settings.steering = app::Steering::wheel;
     input.settings.wheel_axis = *heard;
-    input.settings.wheel.edge = 1;
     input.configure();
     SDL_SetJoystickVirtualAxis(wheel, 0, 16000);
     frame(input, in);
@@ -539,8 +557,7 @@ int main(int argc, char** argv) {
     input.settings = app::Settings{};
     input.settings.steering = app::Steering::wheel;
     input.settings.wheel_axis = *heard;
-    input.settings.wheel.rotation = 900;
-    input.settings.wheel.wrap = false;
+    input.settings.wheel.rotation = 720;
     input.settings.friction = 17;
     input.configure();
     const std::string first_guid = input.settings.wheel_axis.device;
@@ -552,7 +569,6 @@ int main(int argc, char** argv) {
     CHECK(first_guid != other_guid && other_guid.size() == 32);
     input.settings.wheel_axis.device = other_guid;
     input.settings.wheel.rotation = 360;
-    input.settings.wheel.wrap = true;
     input.settings.friction = 31;
     input.settings.pedal_axis.device = other_guid;
     input.settings.pedal_axis.kind = app::Binding::Kind::axis;
@@ -565,13 +581,13 @@ int main(int argc, char** argv) {
     app::Settings restored;
     CHECK(restored.load(path) && restored.profiles.size() == 2);
     CHECK(restored.select_profile(first_guid));
-    CHECK(restored.wheel.rotation == 900 && !restored.wheel.wrap && restored.friction == 17);
+    CHECK(restored.wheel.rotation == 720 && restored.friction == 17);
     CHECK(restored.display.mask == 0.42f && restored.rom_dir == "shared-ROM-folder");
     CHECK(restored.select_profile(other_guid));
-    CHECK(restored.wheel.wrap && restored.friction == 31 && restored.pedal_axis.device == other_guid);
+    CHECK(restored.wheel.rotation == 360 && restored.friction == 31 && restored.pedal_axis.device == other_guid);
     input.settings.wheel_axis.device = first_guid;
     input.configure();
-    CHECK(input.settings.wheel.rotation == 900 && input.settings.friction == 17);
+    CHECK(input.settings.wheel.rotation == 720 && input.settings.friction == 17);
     // Losing focus releases controls; returning rebases motion. Opening a
     // menu while unfocused must not accidentally reactivate the controls.
     SDL_Event focus{};

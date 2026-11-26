@@ -37,6 +37,8 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 - `qilin_difftest` builds with libc++ (a missing `<algorithm>`). The launcher test runs under Windows PowerShell 5.1, the shell `Play APB.bat` uses, with the execution policy bypassed, from a folder with brackets in its name.
 - The player kit's launcher hashes files with .NET rather than `Get-FileHash`, which is missing when Windows PowerShell inherits a PowerShell 7 module path (started from pwsh, for example), and stopped the launcher. The hashes are the same, so existing builds aren't redone.
 
+### Removed
+- **Wheels that stop at a lock** (belt or gear driven, such as the Logitech G920, or a direct-drive base with a software stop). APB's cabinet wheel spins freely and never stops; only a direct-drive wheel turning freely can drive it, through the MOZA physical angle or a wrapping joystick axis, besides the keyboard, gamepads and a mouse or spinner. Gone: the *Limited rotation* wheel behaviour, its maximum angle and presets, the G920 setup and the held-at-stop steering (`wheel_edge`, `wheel_edge_rate`, `wheel_wrap` are no longer written). A settings file from an older version with a wheel set up for limited rotation loads with steering back on the keys and gamepad; one set up as a wrapping axis keeps its wheel. A wrapping axis's degrees per cycle now defaults to 360.
 ## [0.23.0] - 2026-11-22
 
 ### Fixed

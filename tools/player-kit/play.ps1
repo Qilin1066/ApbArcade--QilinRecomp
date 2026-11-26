@@ -84,10 +84,9 @@ function Start-APB([string]$roms = "") {
 APB hardware check - kit $kitVersion
 
 1. Test one wheel setup per run. Open F1 / Controls and select your saved setup.
-2. R5: turn several full turns each way. Check the physical-angle reading keeps
-   tracking beyond the ordinary joystick endpoints. Note Pit House and firmware.
-   G920: match the maximum angle to G HUB (usually 900 degrees), turn both ways,
-   and check held-at-lock steering if enabled. Note G HUB and firmware.
+2. Turn several full turns each way. R5: check the physical-angle reading keeps
+   tracking beyond the ordinary joystick endpoints. A wrapping axis: check the
+   dial keeps turning as the reading rolls over. Note Pit House and firmware.
 3. Fully press/release the pedal. Test siren/start, fire and coin bindings.
 4. Open F1, turn the wheel, then resume. Confirm no unwanted steering jump.
    Repeat with Alt-Tab. Check reconnect behaviour while the wheel is stationary.
@@ -97,10 +96,10 @@ APB hardware check - kit $kitVersion
 
 Fill these in, then return the folder's files for analysis:
 Wheel model:
-Driver / Pit House / G HUB version:
+Driver / Pit House version:
 Firmware:
 Display refresh / connection:
-Continuous R5 angle or G920 endpoints correct:
+Continuous turning correct:
 Pedal / buttons correct:
 Pause / Alt-Tab / reconnect correct:
 Force feel:

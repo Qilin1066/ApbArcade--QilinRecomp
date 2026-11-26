@@ -510,34 +510,17 @@ void Menu::steering_section() {
             }
         }
         ImGui::TextWrapped("Each bound wheel remembers its calibration, pedals, buttons and friction. Display settings stay shared.");
-        int behaviour = (s.moza_angle || s.wheel.wrap) ? 0 : 1;
-        ImGui::TextUnformatted("Wheel behaviour");   // above it: the choices are long
+        ImGui::TextWrapped("A direct-drive wheel that turns freely, with no stop, as the cabinet's does. Wheels that stop at a lock "
+                           "(belt or gear driven, such as a Logitech G920) can't drive APB's wheel.");
+        int source = s.moza_angle ? 0 : 1;
+        ImGui::TextUnformatted("Wheel input");   // above it: the choices are long
         ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::Combo("##Wheel behaviour", &behaviour, "Free rotation / direct drive\0Limited rotation / belt or gear driven\0")) {
+        if (ImGui::Combo("##Wheel input", &source, "MOZA physical angle (Windows SDK)\0Wrapping joystick axis\0")) {
+            s.moza_angle = source == 0;
             measuring_ = false;
             input_.end_wheel_measurement();
-            s.moza_angle = false;
-            s.wheel.wrap = behaviour == 0;
             input_.configure();
         }
-        ImGui::TextWrapped("Choose how your wheel is configured. A direct-drive wheel with a software stop can use Limited rotation too.");
-        if (ImGui::SmallButton("MOZA R5 (free rotation)")) {
-            measuring_ = false;
-            input_.end_wheel_measurement();
-            s.moza_angle = true;
-            s.wheel.wrap = false;
-            input_.configure();
-        }
-        if (ImGui::SmallButton("Logitech G920 (900 degrees)")) {
-            measuring_ = false;
-            input_.end_wheel_measurement();
-            s.moza_angle = false;
-            s.wheel.wrap = false;
-            s.wheel.rotation = 900;
-            s.wheel.edge = 0.92;
-            input_.configure();
-        }
-        const bool limited = !s.moza_angle && !s.wheel.wrap;
         if (s.moza_angle && ImGui::BeginCombo(labelled("Wheel device"), s.wheel_axis.name.empty() ? "Choose the MOZA base" : s.wheel_axis.name.c_str())) {
             for (const auto& d : input_.devices()) {
                 if (SDL_GetNumJoystickAxes(d.joystick) == 0) continue;
@@ -568,60 +551,22 @@ void Menu::steering_section() {
         }
         bool changed = false;
         float rotation = static_cast<float>(s.wheel.rotation);
-        if (limited) {
-            if (ImGui::InputFloat(labelled("Maximum angle (degrees)"), &rotation, 90, 360, "%.0f")) {
-                if (std::isfinite(rotation) && rotation >= 90 && rotation <= 10000) changed = true;
-                else rotation = static_cast<float>(s.wheel.rotation);
-            }
-            ImGui::TextWrapped("Total travel from left stop to right stop: 900 degrees means 450 each way. Match your wheel driver's setting (90-10000 degrees).");
-            for (const int preset : {360, 540, 900, 1080, 1440, 2160, 2700}) {
-                const std::string degrees = std::to_string(preset);
-                if (preset != 360) beside(ImGui::CalcTextSize(degrees.c_str()).x + 2 * ImGui::GetStyle().FramePadding.x);
-                if (ImGui::SmallButton(degrees.c_str())) {
-                    rotation = static_cast<float>(preset);
-                    changed = true;
-                }
-            }
-        } else {
-            ImGui::TextWrapped("Free rotation has no maximum steering angle. The input must keep reporting movement through repeated turns.");
-        }
         if (s.moza_angle) {
             ImGui::TextWrapped("%s", input_.moza_status().c_str());
             if (const auto angle = input_.moza_degrees()) ImGui::Text("Physical angle: %.2f degrees", *angle);
         }
         float counts = static_cast<float>(s.wheel.counts_per_turn);
         changed |= ImGui::SliderFloat(labelled("Sensitivity (dial counts per turn)"), &counts, 32, 512, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-        bool edge = s.wheel.edge < 1.0;
-        if (limited)
-            changed |= ImGui::Checkbox("Keep turning while held at a stop", &edge);
-        float edge_start = static_cast<float>(s.wheel.edge < 1.0 ? s.wheel.edge : controls::WheelSettings{}.edge);
-        float edge_rate = static_cast<float>(s.wheel.edge_rate);
-        if (limited && edge) {
-            changed |= ImGui::SliderFloat(labelled("Starts this far to the stop"), &edge_start, 0.6f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-            changed |= ImGui::SliderFloat(labelled("Turning speed at the stop (counts a frame)"), &edge_rate, 1, 16, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-        }
         changed |= ImGui::Checkbox("Reverse the wheel", &s.wheel.invert);
         if (ImGui::CollapsingHeader("Advanced wheel input", measuring_ ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
-            if (!limited) {
-                int source = s.moza_angle ? 0 : 1;
-                if (ImGui::Combo(labelled("Continuous input source"), &source, "MOZA physical angle (Windows SDK)\0Wrapping joystick axis\0")) {
-                    s.moza_angle = source == 0;
-                    s.wheel.wrap = source == 1;
-                    measuring_ = false;
-                    input_.end_wheel_measurement();
-                    input_.configure();
-                }
-            }
             if (s.moza_angle) {
                 ImGui::TextWrapped("Use MOZA SDK 1.0.1.8's MSVC2022-64 MOZA_SDK.dll beside apb.exe, with SDK-enabled Pit House running. "
-                                   "This reads physical degrees independently of the joystick's limited axis.");
+                                   "This reads physical degrees independently of the joystick axis, which the driver clips.");
                 if (ImGui::Button("Retry MOZA connection")) input_.retry_moza();
             } else {
-                if (s.wheel.wrap) {
-                    changed |= ImGui::SliderFloat(labelled("Degrees per reported axis cycle"), &rotation, 90, 10000, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-                    ImGui::TextWrapped("This calibrates the input scale; it does not limit physical rotation. Use a wrapping axis only if its reading rolls "
-                                       "from one endpoint to the other as you keep turning. A clipped axis needs a physical-angle source.");
-                }
+                changed |= ImGui::SliderFloat(labelled("Degrees per reported axis cycle"), &rotation, 90, 10000, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+                ImGui::TextWrapped("This calibrates the input scale; it does not limit rotation. The axis must roll from one end to the "
+                                   "other as you keep turning. An axis that stops at an end needs a physical-angle source.");
                 if (!s.wheel_axis.empty()) {
                     if (!measuring_) {
                         if (ImGui::Button("Measure: turn the wheel one full turn")) {
@@ -646,8 +591,6 @@ void Menu::steering_section() {
         if (changed) {
             s.wheel.rotation = rotation;
             s.wheel.counts_per_turn = counts;
-            s.wheel.edge = edge ? edge_start : 1.0;
-            s.wheel.edge_rate = edge_rate;
             input_.configure();
         }
         if (ImGui::SliderInt(labelled("Force feedback: friction (%)"), &s.friction, 0, 100, "%d", ImGuiSliderFlags_AlwaysClamp)) input_.configure();

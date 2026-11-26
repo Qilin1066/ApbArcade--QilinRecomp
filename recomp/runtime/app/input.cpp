@@ -179,11 +179,16 @@ bool Settings::load(const std::string& path) {
         c.wheel_axis = binding("wheel_axis");
         c.wheel.rotation = std::clamp(num("wheel_rotation", c.wheel.rotation), 90.0, 10000.0);
         c.wheel.counts_per_turn = std::clamp(num("wheel_counts_per_turn", c.wheel.counts_per_turn), 8.0, 2048.0);
-        c.wheel.edge = std::clamp(num("wheel_edge", c.wheel.edge), 0.5, 1.0);
-        c.wheel.edge_rate = std::clamp(num("wheel_edge_rate", c.wheel.edge_rate), 0.0, 32.0);
         c.wheel.invert = num("wheel_invert", 0) != 0;
-        c.wheel.wrap = num("wheel_wrap", 0) != 0;
         c.moza_angle = num("moza_angle", 0) != 0;
+        // A wheel set up for limited rotation by an older version (it wrote wheel_edge, and
+        // wheel_wrap = 1 only for a wrapping axis): a G920 or the like, no longer supported. Its
+        // axis read as a wrapping one would steer wrongly, so steering goes back to the keys and
+        // gamepad, and its lock-to-lock angle isn't kept as a wrapping axis's.
+        if (!get("wheel_edge").empty() && get("wheel_wrap") != "1" && !c.moza_angle) {
+            if (c.steering == Steering::wheel) c.steering = Steering::keys_and_pad;
+            c.wheel.rotation = controls::WheelSettings{}.rotation;
+        }
         c.moza_sdk = std::string(get("moza_sdk"));
         c.pedal_axis = binding("pedal_axis");
         c.pedal.released = std::clamp(num("pedal_released", c.pedal.released), -1.0, 1.0);
@@ -238,9 +243,9 @@ void write_controls(std::ostream& destination, const ControlSettings& c, const s
     for (std::size_t i = 0; i < c.buttons.size(); ++i) binding(button_keys[i], c.buttons[i]);
     out << "steering = " << (c.steering == Steering::wheel ? "wheel" : c.steering == Steering::mouse ? "mouse" : "keys") << '\n';
     binding("wheel_axis", c.wheel_axis);
-    out << strf("wheel_rotation = %.9g\nwheel_counts_per_turn = %.9g\nwheel_edge = %.9g\nwheel_edge_rate = %.9g\nwheel_invert = %d\n",
-                c.wheel.rotation, c.wheel.counts_per_turn, c.wheel.edge, c.wheel.edge_rate, c.wheel.invert ? 1 : 0);
-    out << "wheel_wrap = " << (c.wheel.wrap ? 1 : 0) << "\nmoza_angle = " << (c.moza_angle ? 1 : 0) << "\nmoza_sdk = " << c.moza_sdk << '\n';
+    out << strf("wheel_rotation = %.9g\nwheel_counts_per_turn = %.9g\nwheel_invert = %d\n",
+                c.wheel.rotation, c.wheel.counts_per_turn, c.wheel.invert ? 1 : 0);
+    out << "moza_angle = " << (c.moza_angle ? 1 : 0) << "\nmoza_sdk = " << c.moza_sdk << '\n';
     binding("pedal_axis", c.pedal_axis);
     out << strf("pedal_released = %.9g\npedal_floored = %.9g\npedal_deadzone = %.9g\n", c.pedal.released, c.pedal.floored, c.pedal.deadzone);
     out << strf("mouse_counts = %.9g\nstick_speed = %.9g\nstick_curve = %.9g\nfriction = %d\n", c.mouse_counts, c.stick_speed, c.stick_curve, c.friction);
@@ -480,7 +485,7 @@ void Input::set_focused(bool value) {
 }
 
 void Input::begin_wheel_measurement() {
-    measurement_.reset(settings.wheel.wrap);
+    measurement_.reset();
     measurement_.observe(read(settings.wheel_axis));
     measuring_wheel_ = true;
 }
@@ -765,8 +770,7 @@ std::string Input::diagnostics() const {
         << "\nSDL version: " << SDL_GetVersion() << "\nFocused: " << focused_ << "  Playing: " << playing
         << "\nSteering source: " << (settings.moza_angle ? "MOZA physical angle" : settings.steering == Steering::wheel ? "SDL wheel axis" : settings.steering == Steering::mouse ? "mouse/spinner" : "keys/gamepad")
         << "\nWheel binding: " << settings.wheel_axis.describe()
-        << "\nRotation mode: " << (settings.moza_angle || settings.wheel.wrap ? "free/continuous" : "limited")
-        << "\nConfigured full axis travel (degrees): " << settings.wheel.rotation
+        << "\nDegrees per wrapping axis cycle: " << settings.wheel.rotation
         << "\nEncoder counts per turn: " << settings.wheel.counts_per_turn
         << "\nInvert: " << settings.wheel.invert << "  Friction percent: " << settings.friction
         << "\nPedal binding: " << settings.pedal_axis.describe()
@@ -776,7 +780,7 @@ std::string Input::diagnostics() const {
     if (moza_min_ && moza_max_) out << "Observed SDK angle min/max: " << *moza_min_ << " / " << *moza_max_ << " degrees\n";
     out << "Supported MOZA SDK ABI: 1.0.1.8 Windows x64\n";
     out << "Turn each wheel through its intended range and fully press/release pedals before exporting.\n"
-        << "SDL endpoints can mean a normal steering lock, wrap seam or clipping; this report does not prove unlimited hardware rotation.\n";
+        << "A wheel must turn freely: an SDL axis that stops at an endpoint is a steering lock or a clipped axis, which can't drive APB's wheel.\n";
     for (const auto& d : devices_) {
         const char* serial = SDL_GetJoystickSerial(d.joystick);
         const char* path = SDL_GetJoystickPath(d.joystick);

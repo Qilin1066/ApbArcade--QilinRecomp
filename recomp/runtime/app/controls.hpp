@@ -4,14 +4,13 @@
 //
 // APB's wheel is a free-spinning optical encoder read by the LETA chip as a
 // count that wraps (MAME's IPT_DIAL): the game sees how far the wheel turned,
-// never where it is. A PC wheel reports where it is, as an axis across its
-// rotation range. So the dial is driven by how far the axis moves each frame,
-// scaled to counts per turn of the wheel. Continuous axes must be unwrapped;
-// a driver that clips its axis needs an actual-angle source instead. A wheel
-// that stops at a lock (a Logitech G920 at 900 degrees) can't go on turning,
-// so past an edge near each lock the dial keeps turning on its own while
-// the wheel is held there, faster the harder into the lock: the player turns
-// to the lock and holds it to keep spinning, and comes back off it to stop.
+// never where it is. The PC wheel for it is a direct-drive base that turns
+// freely, with no stop, as the cabinet's does. It reports either a wrapping
+// axis, whose reading rolls from one end to the other as the wheel keeps
+// turning, or (the MOZA SDK) its physical angle. The dial is driven by how far
+// that moves each frame, scaled to counts per turn of the wheel. Wheels that
+// stop at a lock (belt or gear driven, a Logitech G920 and the like) aren't
+// supported: nothing they report can keep the cabinet's wheel turning.
 // Sticks and keys turn the dial at a rate.
 
 #include <algorithm>
@@ -22,33 +21,28 @@
 namespace qilin::controls {
 
 struct WheelSettings {
-    double rotation = 900;          // degrees lock to lock the axis spans, as the wheel's driver is set
+    double rotation = 360;          // degrees the wheel turns in one full cycle of its wrapping axis (-1 to 1)
     double counts_per_turn = 160;   // dial counts for one full turn of the wheel
-    double edge = 0.92;             // past this fraction of the way to a lock, holding turns the dial on its own...
-    double edge_rate = 6;           // ...at up to this many counts a frame, at the lock
     bool invert = false;
-    bool wrap = false;             // axis wraps from +1 to -1; rotation is the degrees in one full axis period
 };
 
-// Tracks signed travel, including crossings of a continuous axis's seam.
-// Sampling each input event avoids losing whole turns between game frames.
+// Tracks signed travel along a wrapping axis, through its seam: a move of more
+// than half the axis is the shorter way round, across the seam. Sampling each
+// input event avoids losing whole turns between game frames.
 class AxisTravel {
 public:
-    void reset(bool wrap) { wrap_ = wrap; last_.reset(); travel_ = 0; }
+    void reset() { last_.reset(); travel_ = 0; }
     double observe(double axis) {
         axis = std::clamp(axis, -1.0, 1.0);
         double delta = last_ ? axis - *last_ : 0;
-        if (wrap_) {
-            if (delta > 1) delta -= 2;
-            else if (delta < -1) delta += 2;
-        }
+        if (delta > 1) delta -= 2;
+        else if (delta < -1) delta += 2;
         last_ = axis;
         travel_ += delta;
         return delta;
     }
     [[nodiscard]] double travel() const { return travel_; }
 private:
-    bool wrap_ = false;
     std::optional<double> last_;
     double travel_ = 0;
 };
@@ -58,7 +52,7 @@ class Wheel {
 public:
     explicit Wheel(const WheelSettings& settings = {}) : s_(settings) { reset(); }
     void configure(const WheelSettings& settings) { s_ = settings; reset(); }
-    void reset() { motion_.reset(s_.wrap); last_degrees_.reset(); carry_ = 0; }
+    void reset() { motion_.reset(); last_degrees_.reset(); carry_ = 0; }
 
     // Called for each SDL axis event, not just the last position each frame.
     void observe(double axis) {
@@ -66,22 +60,15 @@ public:
         carry_ += delta * 0.5 * s_.rotation / 360.0 * s_.counts_per_turn;
     }
 
-    // 'axis' is the wheel's position, -1 (left lock) to 1 (right lock).
+    // 'axis' is the wrapping axis's reading this frame, -1 to 1.
     // Returns the counts to add to the dial this frame (positive: right).
     int update(double axis) {
         observe(axis);
-        axis = std::clamp(s_.invert ? -axis : axis, -1.0, 1.0);
-        double counts = 0;
-        if (!s_.wrap && s_.edge < 1 && std::abs(axis) > s_.edge) {
-            // edge < 1 here; the floor only keeps MSVC (C4723) from seeing a 0 divisor where a test sets edge to 1.
-            const double into = (std::abs(axis) - s_.edge) / std::max(1 - s_.edge, 1e-9);
-            counts += std::copysign(s_.edge_rate * std::min(into, 1.0), axis);
-        }
-        return take(counts);
+        return take(0);
     }
 
     // A physical angle in degrees (MOZA SDK), independent of a clipped SDL
-    // axis. No lock simulation or finite rotation range is involved.
+    // axis: it has no range to wrap in.
     int update_degrees(double degrees) {
         if (!std::isfinite(degrees)) { reset(); return 0; }
         degrees = s_.invert ? -degrees : degrees;

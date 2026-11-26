@@ -23,7 +23,7 @@ The recompiled game runs from attract mode through credited games, with music, s
 | Sound: YM2151 (ymfm), two POKEYs, MAME's mixer | ✅ music on coin-up and in the game |
 | Speech: TMS5220C | 🔨 the chip speaks in a credited game; not yet listened to |
 | `apb` player (SDL3 window, input, audio, EEPROM, Dear ImGui menu) | ✅ runs on Linux under a virtual X display; not yet played with real controls |
-| Controls: wheels, pedals, gamepads, mice, spinners | 🔨 tested on SDL's virtual wheel and pedals (`qilin_input_tests`, in CI); real MOZA R5 and Logitech G920 unverified |
+| Controls: direct-drive wheels, pedals, gamepads, mice, spinners | 🔨 tested on SDL's virtual wheel and pedals (`qilin_input_tests`, in CI); a real MOZA R5 unverified |
 
 The latest validation record is [`docs/reliability-0.23.md`](docs/reliability-0.23.md).
 
@@ -71,7 +71,7 @@ The settings menu has Controls, Display and Game pages. Back counts as a coin on
 
 ### Wheels, pedals and spinners
 
-The keyboard and gamepads need no setting up; the settings menu sets up everything else. APB's cabinet wheel spins freely, so a PC wheel drives it by how far its angle moves each frame. Choose **Free rotation / direct drive** or **Limited rotation / belt or gear driven** (with a **Maximum angle (degrees)**, the total range). There are setups for the **MOZA R5** (physical degrees through your own copy of the optional MOZA SDK 1.0.1.8 DLL on Windows x64; none is bundled) and the **Logitech G920** (900°, as set in G HUB), plus continuous wrapping axes, pedals, any button, key, hat or axis on any device, and a mouse or spinner. Each wheel keeps its own saved profile. See [wheel setup and verification](docs/wheels.md).
+The keyboard and gamepads need no setting up; the settings menu sets up everything else. APB's cabinet wheel spins freely, so a PC wheel drives it by how far its angle moves each frame, and it must turn freely too: a direct-drive wheel with no stop. Wheels that stop at a lock (belt or gear driven, such as the Logitech G920) aren't supported. A wheel's input is the **MOZA physical angle** (the R5: physical degrees through your own copy of the optional MOZA SDK 1.0.1.8 DLL on Windows x64; none is bundled) or a **wrapping joystick axis**; plus pedals, any button, key, hat or axis on any device, and a mouse or spinner. Each wheel keeps its own saved profile. See [wheel setup and verification](docs/wheels.md).
 
 ### Display
 
