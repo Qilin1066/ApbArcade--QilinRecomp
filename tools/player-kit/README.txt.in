@@ -1,0 +1,106 @@
+@TITLE@ QilinRecomp for Windows (64-bit)
+====================================
+
+APB - All Points Bulletin (@STUDIO@), recompiled to run
+natively: the arcade board's two processors' programs translated into
+C++ and compiled for your PC, checked against MAME's processor
+cores, drawn with Vulkan.
+
+No game data is included. You need your own copy of the ROMs:
+@RELEASE@ (136051-1101.5t to 136051-7129.6n),
+unzipped into a folder of their own.
+MAME's apb.zip is that set zipped: unzip it first.
+
+
+Playing
+-------
+1. Unzip the download anywhere. Building the game needs about 1 GB free.
+2. Open the folder and double-click "Play @TITLE@.exe".
+3. Click "Choose your ROM set" and pick the folder holding the ROM files,
+   or drag the folder onto the window. It tells you straight away if files
+   are missing or damaged, or if it is another revision of APB.
+4. Wait for the first build: a few minutes. Your ROMs never leave your PC.
+5. Click Play. The window hides while the game runs. "Add a desktop
+   shortcut" puts Play @TITLE@ on your desktop.
+
+After that, Play @TITLE@.exe remembers your ROM folder (even in a new
+download folder), and Play starts the game straight away. After an update
+it builds the game again first, recompiling only what changed.
+
+The game's output is in work\run.log and work\run-errors.log, and the
+build's in work\build.log. Send them when reporting a problem.
+
+If Windows says "Windows protected your PC": More info, then Run anyway.
+(The download isn't signed.) Or before unpacking, right-click the zip,
+Properties, tick Unblock, OK.
+
+Needs: Windows 10 or 11, 64-bit, and a graphics driver with Vulkan 1.3
+(any recent NVIDIA, AMD or Intel driver).
+
+
+Controls
+--------
+Keyboard: arrows steer and accelerate; Left Ctrl, Left Alt, Space are the
+siren/start, fire and alternate siren; 5 inserts a coin. Gamepad: left stick
+or d-pad steers, right trigger or d-pad up accelerates, A or Start
+starts/sirens, B fires, X is alternate siren, Back (View) inserts a coin.
+
+F1 or Esc (gamepad: Back + Start together): the settings menu (Page Up /
+Page Down or LB / RB change its pages): wheels, pedals, buttons, the
+picture (presets, size, a CRT look, smoothed pixel art), full screen, the
+volume. F3: frame times. F11 or Alt+Enter: full screen. Wheels: a
+direct-drive (free-turning) wheel, a mouse or a spinner; see the Controls
+page.
+
+Settings and high scores are kept in %LOCALAPPDATA%\qilin\@GAME@ (the Game
+page of the menu shows the folder), with the ROM folder you chose and the
+build's cache of compiled files (build-cache).
+
+
+Checking a wheel and performance
+--------------------------------
+Once the game is built, double-click "Check controls and performance.bat".
+It starts a normal session with an input recording, performance timings and
+a controller report, in a new folder under "Hardware checks" with a
+checklist printed in the window: one wheel setup, pedals and buttons, full
+turns, pausing, Alt-Tab and reconnecting, then two minutes of play, then
+quit normally. Fill in the checklist; nothing is uploaded. The controller
+report includes serials and device paths; the recording includes the
+starting high scores and settings, but no ROMs.
+
+
+What's in here
+--------------
+Play @TITLE@.exe        chooses your ROMs, builds the game (once), starts it
+kit\qilin.exe       the recompiler: turns the ROMs' programs into C++
+kit\lib, include    the prebuilt rest of the game: the board, video, sound,
+                    the window and controls (SDL3), the menu (Dear ImGui)
+kit\toolchain       LLVM-MinGW, a C++ compiler for Windows (Clang)
+kit\files.txt       every file this release holds (see below)
+work\               made when building: the game (@EXE@), built from your
+                    ROMs, the recompiled code, the build's files and the logs
+LICENSES\           the licences of everything included
+
+Source, changes and issues: https://github.com/Qilin1066/ApbArcade--QilinRecomp
+
+
+Updates and recovery
+--------------------
+"Check for updates" in Play @TITLE@.exe asks GitHub for a newer release
+(it sends nothing about you or your PC). If there is one, it downloads it,
+unpacks it beside this folder and swaps in the new kit and launcher, then
+starts again and builds the game for the new version. If anything fails on
+the way, the old version is left as it was. You can also unzip a new
+download anywhere, even over this folder: it finds your ROM folder and the
+cache by itself, and at its first start it removes what an older version
+left behind (the Play @TITLE@.bat and play.ps1 of the earlier downloads, files
+the new kit no longer has: anything in kit\ or LICENSES\ that kit\files.txt
+doesn't name). Your settings and high scores are never in this folder, so
+nothing of yours is touched. (Downloads before the launcher kept the ROM
+folder in apb.ini only: choose it once more.)
+
+The game is compiled for this PC's processor; moved to another PC, it is
+built again. Compiled files come from the cache when nothing they're made
+from has changed. A failed build leaves the working game as it was; the one
+before a new build is kept as work\@EXE@.previous until the new one has run
+and closed normally. "Build again from scratch" compiles everything anew.

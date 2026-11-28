@@ -29,11 +29,20 @@ The latest validation record is [`docs/reliability-0.23.md`](docs/reliability-0.
 
 ## Playing
 
-### Windows download
+### The downloads: Windows, Linux, macOS
 
-Each release has `ApbArcade--QilinRecomp-<version>-windows-x64.zip`, built by GitHub (`.github/workflows/player-kit.yml`). Unpack it and double-click **`Play APB.bat`**. The first time, it asks for your ROM folder and builds the game from it in a couple of minutes, with the compiler included in the download (LLVM-MinGW). After that it starts the game at once.
+Each release on the [Releases page](https://github.com/Qilin1066/ApbArcade--QilinRecomp/releases) has a download for each system, built and checked by GitHub (`.github/workflows/player-kit*.yml`):
 
-The download holds everything prebuilt except the game's own code, which is made on your PC from your own ROMs and never distributed; that is why there is no ready-made `apb.exe`. The kit is built from `tools/player-kit/`.
+| System | Download | Then |
+|---|---|---|
+| Windows 10 or 11, 64-bit | `ApbArcade--QilinRecomp-<version>-windows-x64.zip` | unzip it, double-click **`Play APB.exe`** |
+| Linux on x86-64 | `ApbArcade--QilinRecomp-<version>-linux-x86_64.tar.gz` | unpack it, double-click **`Play APB`** |
+| Linux on ARM64: a Raspberry Pi 4 or 5 with the 64-bit Raspberry Pi OS | `ApbArcade--QilinRecomp-<version>-linux-arm64.tar.gz` | the same |
+| macOS 14.5 or newer, Apple silicon or Intel | `ApbArcade--QilinRecomp-<version>-macos.dmg` | drag **APB.app** onto Applications and open it; the first time, allow it with *Open Anyway* in System Settings, Privacy & Security |
+
+`Play APB` asks for your ROM folder: the 36 files of the rev 7 set (MAME's `apb`), unzipped into a folder of their own (MAME's `apb.zip` must be unzipped first). It tells you at once if a file is missing or damaged, or if the folder holds another revision or another game (`qilin identify`). The first start builds the game from your ROMs in a few minutes, with the compiler the download brings (LLVM-MinGW on Windows, zig on Linux; on a Mac, Apple's own, which the app offers to install). Then **Play** starts it, and later starts it straight away. The launcher also checks for updates, keeps a desktop shortcut or menu entry, and rebuilds only what changed after an update.
+
+Each download holds everything prebuilt except the game's own code, which is made on your computer from your own ROMs and never distributed; that is why there is no ready-made `apb`. Each README.txt says what the download holds. The launcher (`tools/player-kit/launcher/`) is the one the QilinRecomp projects share, copied unchanged from ToyCommander--QilinRecomp (its `LAUNCHER_VERSION` says which); this project gives it `kit/game.txt` (written by `tools/player-kit/games.sh`) and `qilin identify`.
 
 ### From the source on Windows
 
@@ -44,7 +53,7 @@ With Visual Studio 2022 (17.10 or newer, with "Desktop development with C++") an
 
 Both find Visual Studio's CMake and Git themselves. If something stops, the window stays open with the reason in red. They run `tools/build-apb.ps1 [-RomDir <folder>] [-Run] [-Pull]`.
 
-### Linux and macOS
+### From the source on Linux and macOS
 
 ```sh
 tools/build-apb.sh "/path/to/APB ROMs" --run
@@ -83,7 +92,7 @@ Settings go in `apb.ini` and the EEPROM (high scores, audits, the game's own set
 
 ### Checking real hardware
 
-The Windows download includes **`Check controls and performance.bat`**, which records a session and collects controller and performance reports and a checklist in a `Hardware checks` folder ([actual-machine capture](docs/profiling.md#actual-machine-capture)). From the source, `apb --controller-report FILE` writes the report at exit.
+The Windows download includes **`Check controls and performance.bat`**: once `Play APB.exe` has built the game, it records a session and collects controller and performance reports and a checklist in a `Hardware checks` folder ([actual-machine capture](docs/profiling.md#actual-machine-capture)). The Linux and macOS READMEs give the same as a command line. From the source, `apb --controller-report FILE` writes the report at exit.
 
 ## Building
 
@@ -181,7 +190,7 @@ No window or Vulkan driver is needed. Leave `QILIN_ROM_DIR` empty for the tests 
 
 | Path | What |
 |---|---|
-| `recomp/src/` | Recompiler core: `romset` (the rev 7 set), `t11_decoder`, `cfg` (control flow), `vrange` (value ranges), `coverage`, `lifter` (T-11 → C++); `m6502_decoder`, `m6502_cfg`, `m6502_lifter` (the sound CPU); `main` (the `qilin` CLI) |
+| `recomp/src/` | Recompiler core: `romset` (the rev 7 set), `identify` (what a ROM folder is, for the launcher), `t11_decoder`, `cfg` (control flow), `vrange` (value ranges), `coverage`, `lifter` (T-11 → C++); `m6502_decoder`, `m6502_cfg`, `m6502_lifter` (the sound CPU); `main` (the `qilin` CLI) |
 | `recomp/runtime/` | Runtime: `t11_rt.hpp` and `m6502_rt.hpp` (CPU state, dispatch), `system2*` (the board, video, sound and speech), the audio worker, persistence, input recordings, profiling |
 | `recomp/runtime/app/` | The `apb` player: input, audio output, the settings menu, MOZA support |
 | `recomp/runtime/gfx/` | The renderer: Vulkan 1.3, loaded at run time |
@@ -191,7 +200,7 @@ No window or Vulkan driver is needed. Leave `QILIN_ROM_DIR` empty for the tests 
 | `tools/difftest/`, `tools/difftest6502/` | Differential tests: lifted game functions against MAME's T-11 and 6502 cores |
 | `tools/check/` | Checks against MAME: both decoders on every opcode, both lifters on every instruction form, the parity tests |
 | `tools/handoff/`, `tools/audio_trace/`, `tools/video_trace/` | Diagnostics: hand a native run over to MAME's cores; trace audio and video state |
-| `tools/player-kit/` | The Windows download: packaging, the launcher, the hardware check |
+| `tools/player-kit/` | The downloads: the launcher (`launcher/`, shared with the other QilinRecomp projects), packaging for Windows, Linux and macOS, their checks, the README templates, the hardware check |
 | `tools/build-apb.sh`, `tools/build-apb.ps1` | One-step build of the game from your ROMs |
 | `third_party/` | Vendored: the Vulkan headers, volk, Dear ImGui, ymfm, and MAME's T-11, 6502 and TMS5220 cores. See `third_party/README.md` |
 | `docs/` | Design targets and roadmap, the board, the recompiler, wheels, profiling, validation records, naming |
@@ -204,7 +213,7 @@ Releases are tagged `vX.Y.Z` on GitHub, and every release is recorded in [`CHANG
 
 This project's own code and documentation are under the [GNU General Public License, version 3](LICENSE) (GPL-3.0): you may use, share, change and sell it, but anything you distribute that is built from it must come with its full source under the same licence. Versions before 2026-11-21 were released under MIT, and those copies stay under MIT.
 
-The vendored code in `third_party/` keeps its own licences: MAME's T-11, 6502 and TMS5220 cores and ymfm (BSD-3-Clause), Dear ImGui (MIT), volk (MIT) and the Vulkan headers (Apache-2.0 or MIT). The MAME scheduler port in `recomp/runtime/mame/` follows MAME's BSD-3-Clause. SDL3 (zlib), fetched at build time, and LLVM-MinGW and Ninja (Apache-2.0) in the Windows download keep theirs. See `third_party/README.md`.
+The vendored code in `third_party/` keeps its own licences: MAME's T-11, 6502 and TMS5220 cores and ymfm (BSD-3-Clause), Dear ImGui (MIT), volk (MIT) and the Vulkan headers (Apache-2.0 or MIT). The MAME scheduler port in `recomp/runtime/mame/` follows MAME's BSD-3-Clause. SDL3 (zlib), fetched at build time, and what the downloads bundle keep theirs: LLVM-MinGW on Windows, zig on Linux, and MoltenVK on macOS (Apache-2.0 or MIT, with what they contain). Each download carries every licence in `LICENSES/`. See `third_party/README.md`.
 
 The game itself is Atari Games' and is not covered by anything here: you need your own ROMs, and nothing built from them may be shared.
 

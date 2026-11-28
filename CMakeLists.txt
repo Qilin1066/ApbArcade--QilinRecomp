@@ -102,6 +102,7 @@ configure_file("${CMAKE_CURRENT_BINARY_DIR}/generated/om6502_lst.inc.tmp" "${CMA
 add_library(qilin_core STATIC
     recomp/src/cfg.cpp
     recomp/src/coverage.cpp
+    recomp/src/identify.cpp
     recomp/src/lifter.cpp
     recomp/src/m6502_cfg.cpp
     recomp/src/m6502_decoder.cpp
@@ -129,21 +130,20 @@ target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qil
 target_include_directories(qilin_tests PRIVATE recomp/runtime/app tools/common)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
-if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
-    find_program(QILIN_POWERSHELL NAMES powershell pwsh)   # Windows PowerShell 5.1 first: the one Play APB.bat runs
-    if(QILIN_POWERSHELL)
-        add_executable(qilin_launcher_stub tools/check/launcher_stub.cpp)
-        target_include_directories(qilin_launcher_stub PRIVATE recomp/runtime)
-        target_link_libraries(qilin_launcher_stub PRIVATE qilin_warnings shell32)
-        add_test(NAME qilin_launcher_check COMMAND "${QILIN_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/launcher_check.ps1"
-            -Stub "$<TARGET_FILE:qilin_launcher_stub>"
-            -Launcher "${CMAKE_CURRENT_SOURCE_DIR}/tools/player-kit/play.ps1"
-            -Out "${CMAKE_CURRENT_BINARY_DIR}/launcher-check/$<CONFIG>")
-        set_tests_properties(qilin_launcher_check PROPERTIES TIMEOUT 60)
-    endif()
-endif()
 
+# ---- The players' launcher (tools/player-kit/launcher) ----
+# `Play APB`, the downloads' launcher: copied unchanged from
+# ToyCommander--QilinRecomp, where it is kept (its ADOPTING.md says how, and
+# LAUNCHER_VERSION how far behind this copy is). Its core and tests here, its
+# program below (qilin_launcher_program, where SDL3 and Dear ImGui are
+# known). Its build test runs the real build with stand-in children, and
+# qilin's identify.
+option(QILIN_REQUIRE_LAUNCHER_TESTS "Require the launcher's build test (CI): a native build, not a cross-compile" OFF)
+if(QILIN_REQUIRE_LAUNCHER_TESTS AND CMAKE_CROSSCOMPILING)
+    message(FATAL_ERROR "the launcher's build test needs a native build")
+endif()
+set(QILIN_LAUNCHER_QILIN qilin)
+include(tools/player-kit/launcher/launcher.cmake)
 
 # ---- Reference: MAME's T-11 core and disassembler (BSD-3-Clause), for checks only ----
 add_library(qilin_mame_t11 STATIC third_party/mame-t11/t11_reference.cpp third_party/mame-t11/t11dasm.cpp)
@@ -305,9 +305,18 @@ if(NOT SDL3_FOUND AND QILIN_FETCH_SDL3)
     set(SDL_STATIC ON CACHE BOOL "" FORCE)
     set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
     set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(SDL3 GIT_REPOSITORY https://github.com/libsdl-org/SDL.git GIT_TAG release-3.4.20 GIT_SHALLOW TRUE)
     FetchContent_MakeAvailable(SDL3)
     set(SDL3_FOUND TRUE)
+    # SDL's Wayland protocol headers, made from its own XML, before the
+    # system's (as Toy Commander's): SDL adds them as a system folder, and
+    # zig's compiler (the Linux download's) searches the system's
+    # /usr/include first, whose older wayland-client-protocol.h lacks what SDL
+    # uses. SDL includes them in quotes, and -iquote folders come first.
+    if(TARGET SDL3-static AND EXISTS "${sdl3_BINARY_DIR}/wayland-generated-protocols" AND NOT MSVC)
+        target_compile_options(SDL3-static BEFORE PRIVATE "-iquote${sdl3_BINARY_DIR}/wayland-generated-protocols")
+    endif()
 endif()
 if(SDL3_FOUND)
     # Dear ImGui (MIT) for the settings menu: its core and its SDL3 and
@@ -324,6 +333,11 @@ if(SDL3_FOUND)
     else()
         target_compile_options(qilin_imgui PRIVATE -w)
     endif()
+    # The downloads' launcher, `Play APB` (Windows: .exe; macOS: the app's
+    # program): Dear ImGui over SDL_Renderer (launcher.cmake). Its icon is the
+    # game's too, linked in on the player's PC (the player kit's icon.o).
+    qilin_launcher_program(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+                           LIBRARIES qilin_imgui qilin_volk SDL3::SDL3 Threads::Threads)
     # The controls (any wheel, pedals, gamepads, mice) and the settings menu.
     add_library(qilin_app STATIC recomp/runtime/app/audio_output.cpp recomp/runtime/app/input.cpp recomp/runtime/app/menu.cpp recomp/runtime/app/moza.cpp)
     target_include_directories(qilin_app PUBLIC recomp/runtime/app)
@@ -353,13 +367,18 @@ if(SDL3_FOUND)
 endif()
 
 # ---- The player kit: everything apb needs but the code lifted from the ROMs ----
-# For the Windows download (tools/player-kit): apb's main program, the
-# scheduler and every library apb links, merged into one archive, with the
-# headers the lifted code includes, qilin, and the flags and libraries to
-# build the rest with (kit.ninja). A player's own PC lifts its ROMs and
-# compiles only that code, with the same compiler, against the kit. Needs
-# SDL3 linked statically (the fetched one).
+# For the downloads (tools/player-kit): apb's main program and every library
+# it links, merged into one archive (libapb_kit.a), with the headers the
+# lifted code includes, qilin, and build-flags.txt, how the launcher
+# compiles and links the code it lifts from the player's own ROMs. Windows:
+# cross-compiled on Linux with llvm-mingw (package.sh). Linux: built with the
+# zig the download bundles, so the archive's libc++ is the one the player's
+# link uses (package-linux.sh). macOS: universal, merged by Apple's libtool
+# (macos.cmake, package-macos.sh). Needs SDL3 linked statically (the fetched one).
 option(QILIN_PLAYER_KIT "Build the player kit (tools/player-kit)" OFF)
+if(APPLE)
+    include(tools/player-kit/macos.cmake)
+endif()
 if(QILIN_PLAYER_KIT)
     if(NOT TARGET SDL3-static OR NOT TARGET qilin_app)
         message(FATAL_ERROR "the player kit needs SDL3 linked statically: configure with QILIN_FETCH_SDL3=ON and no installed SDL3")
@@ -368,42 +387,78 @@ if(QILIN_PLAYER_KIT)
     target_include_directories(qilin_kit_main PRIVATE recomp/runtime/game)
     target_link_libraries(qilin_kit_main PRIVATE qilin_app qilin_core qilin_video qilin_audio qilin_gfx qilin_board SDL3::SDL3 qilin_warnings)
     set(kit_libraries qilin_app qilin_core qilin_video qilin_audio qilin_persistence qilin_input_movie qilin_profile qilin_gfx qilin_imgui qilin_volk qilin_board qilin_tms5220 qilin_ymfm SDL3-static)
-    set(kit_archive "${CMAKE_BINARY_DIR}/libapb_kit.a")
-    set(mri "CREATE ${kit_archive}\n")
-    foreach(library IN LISTS kit_libraries)
-        string(APPEND mri "ADDLIB $<TARGET_FILE:${library}>\n")
-    endforeach()
-    string(APPEND mri "ADDMOD $<JOIN:$<TARGET_OBJECTS:qilin_kit_main>,\nADDMOD >\nSAVE\nEND\n")
-    file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/apb_kit.mri" CONTENT "${mri}")
-    set(kit_depends qilin_kit_main ${kit_libraries})
-    add_custom_command(OUTPUT "${kit_archive}"
-        COMMAND "${CMAKE_COMMAND}" "-DAR=${CMAKE_AR}" "-DMRI=${CMAKE_BINARY_DIR}/apb_kit.mri" "-DOUT=${kit_archive}"
-                -P "${CMAKE_SOURCE_DIR}/tools/player-kit/merge.cmake"
-        DEPENDS ${kit_depends} $<TARGET_OBJECTS:qilin_kit_main> "${CMAKE_BINARY_DIR}/apb_kit.mri"
-        COMMENT "Merging the player kit's libraries" VERBATIM)
-    add_custom_target(qilin_kit ALL DEPENDS "${kit_archive}")
-    # The system libraries SDL3 and the renderer need (MinGW names).
-    set(kit_system_libraries -lm -lkernel32 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -ladvapi32
-        -lsetupapi -lshell32 -ldinput8 -lwinspool -lcomdlg32)
-    string(JOIN " " kit_system_text ${kit_system_libraries})
-    # What the lifted code is compiled and linked with: kit.ninja, included by
-    # the build.ninja the player's script writes ($kit is the kit's folder).
-    file(WRITE "${CMAKE_BINARY_DIR}/kit.ninja"
-        "# Written by CMake for the player kit (QILIN_PLAYER_KIT).\n"
-        "cxxflags = -O3 -DNDEBUG -std=c++23 -w -I$kit/include\n"
-        "ldflags = -static -O3\n"
-        "libs = $kit/lib/libapb_kit.a ${kit_system_text}\n")
+    set(kit_dir "${CMAKE_BINARY_DIR}/kit")
+    set(kit_archive "${kit_dir}/libapb_kit.a")
+    # What the lifted code is compiled with on the player's computer (the
+    # flags the downloads have always used), then the launcher's -Igen and
+    # this processor's own flag (build-flags.txt's `native`).
+    set(kit_cxxflags "-O3 -DNDEBUG -std=c++23 -w -I$kit/include")
+    if(APPLE)
+        qilin_player_kit_macos()   # tools/player-kit/macos.cmake
+    else()
+        set(mri "CREATE ${kit_archive}\n")
+        foreach(library IN LISTS kit_libraries)
+            string(APPEND mri "ADDLIB $<TARGET_FILE:${library}>\n")
+        endforeach()
+        string(APPEND mri "ADDMOD $<JOIN:$<TARGET_OBJECTS:qilin_kit_main>,\nADDMOD >\nSAVE\nEND\n")
+        file(GENERATE OUTPUT "${kit_dir}/apb_kit.mri" CONTENT "${mri}")
+        add_custom_command(OUTPUT "${kit_archive}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${kit_dir}"
+            COMMAND "${CMAKE_COMMAND}" "-DAR=${CMAKE_AR}" "-DMRI=${kit_dir}/apb_kit.mri" "-DOUT=${kit_archive}"
+                    -P "${CMAKE_SOURCE_DIR}/tools/player-kit/merge.cmake"
+            DEPENDS qilin_kit_main ${kit_libraries} $<TARGET_OBJECTS:qilin_kit_main> "${kit_dir}/apb_kit.mri"
+            COMMENT "Merging the player kit's libraries" VERBATIM)
+        add_custom_target(apb_kit ALL DEPENDS "${kit_archive}")
+        if(WIN32)
+            # The system libraries SDL3 and the renderer need (MinGW names),
+            # and the game's icon (the launcher's).
+            set(kit_system_libraries -lm -lkernel32 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -ladvapi32
+                -lsetupapi -lshell32 -ldinput8 -lwinspool -lcomdlg32)
+            set(kit_ldflags "-static -O3")
+            set(kit_icon " $kit/lib/icon.o")
+            set(kit_native "")   # the launcher's default, -march=native
+            if(NOT QILIN_WINDOWS_RESOURCES)
+                message(FATAL_ERROR "the player kit needs QILIN_WINDOWS_RESOURCES=ON (the game's icon)")
+            endif()
+            add_library(qilin_game_icon OBJECT tools/player-kit/game_icon.rc)
+            add_dependencies(apb_kit qilin_game_icon)
+            install(FILES $<TARGET_OBJECTS:qilin_game_icon> DESTINATION kit/lib RENAME icon.o COMPONENT apb)
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            # SDL3 loads X11, Wayland, the sound servers and Vulkan at run
+            # time: the game links only glibc's own libraries (and zig's libc++).
+            set(kit_system_libraries -lm -ldl -lpthread -lrt)
+            set(kit_ldflags "-O3")
+            set(kit_icon "")
+            # For the player's processor: x86-64's -march, ARM's -mcpu.
+            if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+                set(kit_native "native = -mcpu=native\n")
+            else()
+                set(kit_native "native = -march=native\n")
+            endif()
+        else()
+            message(FATAL_ERROR "no player kit for ${CMAKE_SYSTEM_NAME}")
+        endif()
+        string(JOIN " " kit_system_text ${kit_system_libraries})
+        # Read by the launcher (tools/player-kit/launcher/build.cpp): `name =
+        # value` lines, $kit the kit's folder.
+        file(WRITE "${kit_dir}/build-flags.txt"
+            "# Written by CMake for the player kit (QILIN_PLAYER_KIT).\n"
+            "cxxflags = ${kit_cxxflags}\n"
+            "${kit_native}"
+            "ldflags = ${kit_ldflags}\n"
+            "libs = $kit/lib/libapb_kit.a${kit_icon} ${kit_system_text}\n")
+    endif()
     # Linked with stand-ins for the lifted code: the kit is complete.
-    add_executable(qilin_kit_link_check tools/player-kit/link_check.cpp)
-    target_include_directories(qilin_kit_link_check PRIVATE recomp/runtime recomp/runtime/game third_party/mame-tms5220)
-    target_link_libraries(qilin_kit_link_check PRIVATE "${kit_archive}" ${kit_system_libraries})
-    add_dependencies(qilin_kit_link_check qilin_kit)
+    add_executable(apb_kit_link_check tools/player-kit/link_check.cpp)
+    target_include_directories(apb_kit_link_check PRIVATE recomp/runtime recomp/runtime/game third_party/mame-tms5220)
+    target_link_libraries(apb_kit_link_check PRIVATE "${kit_archive}" ${kit_system_libraries})
+    add_dependencies(apb_kit_link_check apb_kit)
 
-    install(TARGETS qilin RUNTIME DESTINATION kit COMPONENT player)
-    install(FILES "${kit_archive}" DESTINATION kit/lib COMPONENT player)
-    install(FILES "${CMAKE_BINARY_DIR}/kit.ninja" DESTINATION kit COMPONENT player)
+    install(TARGETS qilin RUNTIME DESTINATION kit COMPONENT apb)
+    install(FILES "${kit_archive}" DESTINATION kit/lib COMPONENT apb)
+    install(FILES "${kit_dir}/build-flags.txt" DESTINATION kit COMPONENT apb)
     file(GLOB kit_headers recomp/runtime/*.hpp recomp/runtime/game/*.hpp third_party/mame-tms5220/*.h third_party/mame-tms5220/*.hxx)
-    install(FILES ${kit_headers} DESTINATION kit/include COMPONENT player)
+    install(FILES ${kit_headers} DESTINATION kit/include COMPONENT apb)
 endif()
 
 if(QILIN_GEN_DIR AND QILIN_SOUND_GEN_DIR)

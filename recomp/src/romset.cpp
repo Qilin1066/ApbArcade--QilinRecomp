@@ -111,8 +111,12 @@ std::span<const File> rev7_files() noexcept {
 }
 
 std::vector<FileCheck> verify(const std::filesystem::path& dir) {
+    return verify(dir, files);
+}
+
+std::vector<FileCheck> verify(const std::filesystem::path& dir, std::span<const File> list) {
     std::vector<FileCheck> result;
-    for (const auto& file : files) {
+    for (const auto& file : list) {
         result.push_back(check(file, read_file(dir / file.name)));
     }
     return result;
