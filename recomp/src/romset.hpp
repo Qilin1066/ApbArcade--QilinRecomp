@@ -64,6 +64,8 @@ struct FileCheck {
 
 // Checks every rev 7 file's size and SHA-1 in 'dir'.
 [[nodiscard]] std::vector<FileCheck> verify(const std::filesystem::path& dir);
+// The same for any list of files (the tests give their own).
+[[nodiscard]] std::vector<FileCheck> verify(const std::filesystem::path& dir, std::span<const File> files);
 
 // The loaded set: each region as MAME builds it, and which bytes a file filled.
 class RomSet {

@@ -1,0 +1,133 @@
+@TITLE@ QilinRecomp for Linux (64-bit)
+==================================
+
+Raspberry Pi: this needs the 64-bit Raspberry Pi OS. On the 32-bit one,
+"Play @TITLE@" can't start (the system says it can't execute it, or that
+the file isn't found). In a terminal, "getconf LONG_BIT" says 64 on a
+64-bit system.
+
+APB - All Points Bulletin (@STUDIO@), recompiled to run
+natively: the arcade board's two processors' programs translated into
+C++ and compiled for your computer, checked against MAME's processor
+cores, drawn with Vulkan.
+
+No game data is included. You need your own copy of the ROMs:
+@RELEASE@ (136051-1101.5t to 136051-7129.6n),
+unzipped into a folder of their own.
+MAME's apb.zip is that set zipped: unzip it first.
+
+
+Playing
+-------
+1. Unpack the download anywhere you can write to (your home folder is
+   fine): double-click it in your file manager, or in a terminal
+   "tar xzf @PACKAGE@-*.tar.gz".
+   Building the game needs about 1 GB free.
+2. Open the @PACKAGE@ folder and double-click "Play @TITLE@"
+   (if your file manager asks, choose Execute or Run). From a terminal:
+   ./"Play @TITLE@"
+3. Click "Choose your ROM set" and pick the folder holding the ROM files,
+   or drag the folder onto the window. (Where the desktop has no folder
+   chooser, type or paste the folder's path.) It tells you straight away
+   if files are missing or damaged, or if it is another revision of APB.
+   ROM file names are matched exactly, in lower case, as MAME has them.
+4. Wait for the first build: a few minutes on a desktop PC. Your ROMs
+   never leave your computer.
+5. Click Play. The window hides while the game runs. "Add to the
+   applications menu" puts @TITLE@ in your desktop's menu.
+
+After that, Play @TITLE@ remembers your ROM folder (even in a new download
+folder), and Play starts the game straight away. After an update it builds
+the game again first, recompiling only what changed.
+
+The game's output is in work/run.log and work/run-errors.log, and the
+build's in work/build.log. Send them when reporting a problem.
+
+Needs: a 64-bit Linux on x86-64 (the linux-x86_64 download) or ARM64 (the
+linux-arm64 download) with glibc 2.35 or later (Ubuntu 22.04, Debian 12,
+Fedora 36, Raspberry Pi OS Bookworm or later), and a graphics driver with
+Vulkan 1.3: Mesa's Vulkan drivers (on Debian and Ubuntu, the
+mesa-vulkan-drivers package) or NVIDIA's. Before building, Play @TITLE@
+checks that there is one and says what to install if not. Updates use
+curl (or wget) and tar, which nearly every Linux has.
+
+
+Raspberry Pi
+------------
+- The 64-bit Raspberry Pi OS (see the top of this file), on a Raspberry Pi
+  4 or 5 with 2 GB of memory or more. Use the linux-arm64 download.
+- Vulkan 1.3 for the Pi's graphics arrived with Mesa 24.3: Raspberry Pi OS
+  Trixie (October 2025) or later has it. On an older Raspberry Pi OS, Play
+  @TITLE@ says so before building: update Raspberry Pi OS.
+- The first build compiles the whole game on the Pi itself, so it takes a
+  while: much longer than on a desktop PC, and longer on a Pi 4 than a Pi
+  5, and on a 2 GB Pi, which compiles one file at a time. Leave it
+  running. Later builds take compiled files from the cache.
+- "Add to the applications menu" (once the game is built) puts @TITLE@ in
+  the Raspberry Pi menu, under Games.
+
+
+Controls
+--------
+Keyboard: arrows steer and accelerate; Left Ctrl, Left Alt, Space are the
+siren/start, fire and alternate siren; 5 inserts a coin. Gamepad: left stick
+or d-pad steers, right trigger or d-pad up accelerates, A or Start
+starts/sirens, B fires, X is alternate siren, Back inserts a coin.
+
+F1 or Esc (gamepad: Back + Start together): the settings menu (Page Up /
+Page Down or LB / RB change its pages): wheels, pedals, buttons, the
+picture (presets, size, a CRT look, smoothed pixel art), full screen, the
+volume. F3: frame times. F11 or Alt+Enter: full screen. Wheels: a
+direct-drive (free-turning) wheel, a mouse or a spinner; see the Controls
+page.
+
+Settings and high scores are kept in ~/.local/share/qilin/@GAME@ (or
+$XDG_DATA_HOME/qilin/@GAME@), with the ROM folder you chose and the build's
+cache of compiled files (build-cache).
+
+Checking a wheel and performance: once the game is built, start it from
+the download's folder with an input recording, performance timings and a
+controller report, play for a couple of minutes and quit normally:
+  work/@EXE_LINUX@ --record check.qir --profile performance.txt \
+      --controller-report controllers.txt
+controllers.txt includes serials and device paths; the recording includes
+the starting high scores and settings, but no ROMs.
+
+
+What's in here
+--------------
+Play @TITLE@            chooses your ROMs, builds the game (once), starts it
+kit/qilin           the recompiler: turns the ROMs' programs into C++
+kit/lib, include    the prebuilt rest of the game: the board, video, sound,
+                    the window and controls (SDL3), the menu (Dear ImGui)
+kit/toolchain/zig   zig, a C++ compiler (Clang, with its own libc++)
+kit/icon.png        the menu entry's icon
+kit/files.txt       every file this release holds (see below)
+work/               made when building: the game (@EXE_LINUX@), built from your
+                    ROMs, the recompiled code, the build's files and the logs
+LICENSES/           the licences of everything included
+
+zig keeps its own cache of compiled libraries in ~/.cache/zig.
+
+Source, changes and issues: https://github.com/Qilin1066/ApbArcade--QilinRecomp
+
+
+Updates and recovery
+--------------------
+"Check for updates" in Play @TITLE@ asks GitHub for a newer release (it
+sends nothing about you or your computer). If there is one, it downloads
+it, unpacks it beside this folder and swaps in the new kit and launcher,
+then starts again and builds the game for the new version. If anything
+fails on the way, the old version is left as it was. You can also unpack a
+new download anywhere, even over this folder: it finds your ROM folder and
+the cache by itself, and at its first start it removes files the new kit
+no longer has (anything in kit/ or LICENSES/ that kit/files.txt doesn't
+name). Your settings and high scores are never in this folder, so nothing
+of yours is touched.
+
+The game is compiled for this computer's processor; moved to another
+computer, it is built again. Compiled files come from the cache when
+nothing they're made from has changed. A failed build leaves the working
+game as it was; the one before a new build is kept as
+work/@EXE_LINUX@.previous until the new one has run and closed normally.
+"Build again from scratch" compiles everything anew.

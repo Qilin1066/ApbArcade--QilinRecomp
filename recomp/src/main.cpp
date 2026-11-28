@@ -2,6 +2,10 @@
 //
 //   qilin --version
 //   qilin verify <rom-dir>                      check the 36 rev 7 files (size and SHA-1)
+//   qilin identify <rom-dir> --json [--build <title>]
+//                                               what the folder is, for the players' launcher:
+//                                               one JSON object (identify.hpp); exit 0 the rev 7
+//                                               set, 3 another set, 2 not usable
 //   qilin insns  <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]
 //                                               linear listing at CPU addresses: T-11
 //                                               (main, the default) or 6502 (sound)
@@ -17,6 +21,7 @@
 #include "cfg.hpp"
 #include "command_line.hpp"
 #include "coverage.hpp"
+#include "identify.hpp"
 #include "lifter.hpp"
 #include "m6502_cfg.hpp"
 #include "m6502_decoder.hpp"
@@ -51,6 +56,7 @@ int usage() {
     std::print(stderr,
                "usage: qilin --version\n"
                "       qilin verify <rom-dir>\n"
+               "       qilin identify <rom-dir> --json [--build <title>]\n"
                "       qilin insns <rom-dir> [--cpu main|sound] [--banks B0,B1] [--from HEX] [--to HEX] [-o FILE]\n"
                "       qilin cfg <rom-dir> [--cpu main|sound] [--seeds FILE] [--all] [--why FILE]\n"
                "       qilin lift <rom-dir> [--cpu main|sound] [--seeds FILE] [--service-interval CYCLES] --out DIR\n"
@@ -94,6 +100,44 @@ int verify(const std::vector<std::string_view>& args) {
     }
     std::print("APB rev 7: {} of {} files match by size and SHA-1.\n", matched, checks.size());
     return matched == checks.size() ? 0 : 1;
+}
+
+// The launcher's contract (identify.hpp): JSON whatever happens, and only
+// exit codes 0, 3 and 2.
+int identify(const std::vector<std::string_view>& args) {
+    std::optional<std::string_view> path, build;
+    bool json = false;
+    std::string problem;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--json") {
+            json = true;
+        } else if (args[i] == "--build" && i + 1 < args.size()) {
+            build = args[++i];
+        } else if (!args[i].starts_with("-") && !path) {
+            path = args[i];
+        } else {
+            problem = std::format("identify: unexpected argument {}.", args[i]);
+        }
+    }
+    if (!path) problem = "identify takes one folder.";
+    if (!json) problem = "identify needs --json.";
+    if (problem.empty() && build && *build != rom::rev7_title) {
+        problem = std::format("This recompiler knows no set called {}.", *build);
+    }
+    rom::Identity id;
+    if (!problem.empty()) {
+        id.message = problem;
+    } else {
+        try {
+            id = rom::identify(rom::utf8_path(*path));
+        } catch (const std::exception& e) {
+            id = rom::Identity{};
+            id.message = std::format("The recompiler failed: {}.", e.what());
+        }
+    }
+    std::print("{}", rom::to_json(id));
+    std::fflush(stdout);
+    return id.code;
 }
 
 int insns(const std::vector<std::string_view>& args) {
@@ -557,6 +601,9 @@ int main(int argc, char** argv) {
     args.erase(args.begin());
     if (command == "verify") {
         return verify(args);
+    }
+    if (command == "identify") {
+        return identify(args);
     }
     if (command == "insns") {
         return insns(args);

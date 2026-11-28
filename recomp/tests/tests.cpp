@@ -7,6 +7,7 @@
 
 #include "cfg.hpp"
 #include "controls.hpp"
+#include "identify.hpp"
 #include "script.hpp"
 #include "wav.hpp"
 #include "input_movie.hpp"
@@ -21,6 +22,7 @@
 #include "system2_video.hpp"
 #include "t11_decoder.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <filesystem>
@@ -1271,8 +1273,113 @@ void test_persistence() {
     fs::remove_all(dir);
 }
 
+// `qilin identify`, the launcher's contract (identify.hpp), on a made-up set
+// of three files and one other set that replaces one of them; then the real
+// tables' consistency, and the real set's answer for folders without it.
+void test_identify() {
+    namespace fs = std::filesystem;
+    const auto bytes = [](std::string_view text) {
+        return std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(text.data()), text.size());
+    };
+    const std::string sha_a = rom::sha1(bytes("alpha")), sha_b = rom::sha1(bytes("bravo")), sha_c = rom::sha1(bytes("charlie"));
+    const std::string sha_b2 = rom::sha1(bytes("bravo2"));
+    const std::array<rom::File, 3> files{{
+        {"a.rom", 5, sha_a, rom::Region::chars, false, {{{0, 5}, {}}}},
+        {"b.rom", 5, sha_b, rom::Region::chars, false, {{{8, 5}, {}}}},
+        {"c.rom", 7, sha_c, rom::Region::chars, false, {{{16, 7}, {}}}},
+    }};
+    const std::array<rom::Known, 1> other_files{{{"b2.rom", 6, sha_b2}}};
+    const std::array<std::string_view, 1> other_instead{"b.rom"};
+    const std::array<rom::OtherSet, 1> others{{{"apbx", "APB - All Points Bulletin (rev X)", "X", other_files, other_instead}}};
+
+    const fs::path top = fs::temp_directory_path() / fs::path(u8"qilin-identify-\u00e9\u0142 [test]");
+    fs::remove_all(top);
+    fs::create_directories(top);
+    int folders = 0;
+    const auto folder = [&](std::initializer_list<std::pair<std::string_view, std::string_view>> contents) {
+        const fs::path dir = top / std::to_string(folders++);
+        fs::create_directories(dir);
+        for (const auto& [name, text] : contents) {
+            std::ofstream(dir / std::string(name), std::ios::binary) << text;
+        }
+        return dir;
+    };
+    const auto ask = [&](const fs::path& input) {
+        const rom::Identity i = rom::identify(input, files, others);
+        CHECK(i.ok == (i.code == 0));
+        CHECK(i.code == 0 || i.code == 2 || i.code == 3);
+        CHECK(!i.message.empty() && i.message.back() == '.');
+        return i;
+    };
+    const auto says = [](const rom::Identity& i, std::string_view text) { return i.message.find(text) != std::string::npos; };
+
+    // The set: right; with another set's files beside it (MAME's merged set), still right.
+    auto i = ask(folder({{"a.rom", "alpha"}, {"b.rom", "bravo"}, {"c.rom", "charlie"}}));
+    CHECK(i.code == 0 && i.ok && i.id == "apb" && i.version == "7" && i.title == rom::rev7_title && says(i, "the right ROM set"));
+    i = ask(folder({{"a.rom", "alpha"}, {"b.rom", "bravo"}, {"c.rom", "charlie"}, {"b2.rom", "bravo2"}}));
+    CHECK(i.code == 0);
+    // The other set: named, exit 3.
+    i = ask(folder({{"a.rom", "alpha"}, {"b2.rom", "bravo2"}, {"c.rom", "charlie"}}));
+    CHECK(i.code == 3 && !i.ok && i.id == "apbx" && i.version == "X" && says(i, "rev X") && says(i, "MAME's apbx"));
+    // A merged set missing a shared file is the set, incomplete: the file is named.
+    i = ask(folder({{"b.rom", "bravo"}, {"b2.rom", "bravo2"}, {"c.rom", "charlie"}}));
+    CHECK(i.code == 2 && says(i, "1 of its 3 files is missing (a.rom)"));
+    // Missing files, named; a damaged one.
+    i = ask(folder({{"a.rom", "alpha"}}));
+    CHECK(i.code == 2 && says(i, "2 of its 3 files are missing (b.rom and c.rom)"));
+    i = ask(folder({{"a.rom", "alphA"}, {"b.rom", "bravo"}, {"c.rom", "charlie!"}}));
+    CHECK(i.code == 2 && says(i, "2 files have the wrong size or contents (a.rom and c.rom)") && !says(i, "missing"));
+    // No APB files: empty, MAME's zip, a folder called apb, another game's ROMs.
+    i = ask(folder({}));
+    CHECK(i.code == 2 && says(i, "empty"));
+    i = ask(folder({{"apb.zip", "PK"}}));
+    CHECK(i.code == 2 && says(i, "apb.zip") && says(i, "Unzip"));
+    i = ask(folder({{"pacman.zip", "PK"}}));
+    CHECK(i.code == 2 && says(i, ".zip files"));
+    const fs::path outer = folder({});
+    fs::create_directories(outer / "apb");
+    i = ask(outer);
+    CHECK(i.code == 2 && says(i, "called apb"));
+    i = ask(folder({{"pacman.6e", "ROM"}, {"pacman.6f", "ROM"}}));
+    CHECK(i.code == 3 && says(i, "no APB ROMs"));
+    // Not a folder; not there.
+    i = ask(top / "0" / "a.rom");
+    CHECK(i.code == 2 && says(i, "a.rom is a file, not a folder"));
+    i = ask(top / "7" / "apb.zip");
+    CHECK(i.code == 2 && says(i, "apb.zip is a .zip file"));
+    i = ask(top / "nowhere");
+    CHECK(i.code == 2 && says(i, "Can't find"));
+
+    // The JSON line: every field, quotes and controls escaped, UTF-8 kept.
+    rom::Identity j;
+    j.title = "A \"quoted\" title";
+    j.message = "Line\nbreak \\ and \u00e9.";
+    const std::string json = rom::to_json(j);
+    CHECK(json == "{\"ok\": false, \"title\": \"A \\\"quoted\\\" title\", \"id\": \"\", \"version\": \"\", \"message\": \"Line\\nbreak \\\\ and \u00e9.\"}\n");
+
+    // The real tables: other sets' own files aren't rev 7's, and what they
+    // replace is; the real set in a folder without it.
+    for (const auto& o : rom::other_sets()) {
+        CHECK(!o.files.empty() && !o.instead.empty() && o.title.starts_with("APB - All Points Bulletin ("));
+        for (const auto& k : o.files) {
+            CHECK(k.sha1.size() == 40 && (k.size == 0x4000 || k.size == 0x10000));
+            CHECK(std::ranges::none_of(rom::rev7_files(), [&](const rom::File& f) { return f.name == k.name; }));
+        }
+        for (const auto name : o.instead) {
+            CHECK(std::ranges::any_of(rom::rev7_files(), [&](const rom::File& f) { return f.name == name; }));
+        }
+    }
+    CHECK(rom::other_sets().size() == 8);
+    i = rom::identify(folder({}));
+    CHECK(i.code == 2 && says(i, "MAME's apb: its 36 files"));
+    i = rom::identify(folder({{"136051-1101.5t", "not really"}}));
+    CHECK(i.code == 2 && says(i, "35 of its 36 files are missing") && says(i, "and 30 more") && says(i, "136051-1101.5t"));
+    fs::remove_all(top);
+}
+
 int main() {
     test_sha1();
+    test_identify();
     test_persistence();
     test_script();
     test_wav_clock();

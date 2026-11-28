@@ -24,6 +24,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      # Compiler errors and warnings become annotations on the commit (file,
+      # line and message), readable on GitHub without opening the log.
+      - name: Annotate compiler messages
+        shell: bash
+        run: echo "::add-matcher::.github/matchers/compilers.json"
       # GCC 14's libstdc++ provides <print>; Clang on Linux uses it too.
       - name: Install compilers
         if: runner.os == 'Linux'
@@ -43,6 +48,10 @@ jobs:
           if [ -n "${{ matrix.cxx }}" ]; then
             args+=(-DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }})
           fi
+          # The launcher's build test (tools/player-kit/launcher) must be built and run there.
+          if [ "${{ runner.os }}" = Windows ]; then
+            args+=(-DQILIN_REQUIRE_LAUNCHER_TESTS=ON)
+          fi
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DQILIN_WERROR=ON "${args[@]}"
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -50,11 +59,3 @@ jobs:
         env:
           QILIN_REQUIRE_VULKAN: ${{ runner.os == 'Linux' && '1' || '' }}
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Check Windows launcher syntax
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $tokens = $null
-          $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/tools/player-kit/play.ps1", [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List; exit 1 }

@@ -1,0 +1,124 @@
+@TITLE@ QilinRecomp for macOS (Apple silicon and Intel)
+===================================================
+
+APB - All Points Bulletin (@STUDIO@), recompiled to run
+natively: the arcade board's two processors' programs translated into
+C++ and compiled for your Mac, checked against MAME's processor
+cores, drawn with Vulkan
+(through MoltenVK, which comes with the app).
+
+No game data is included. You need your own copy of the ROMs:
+@RELEASE@ (136051-1101.5t to 136051-7129.6n),
+unzipped into a folder of their own.
+MAME's apb.zip is that set zipped: double-click it in Finder to unzip it.
+
+
+Playing
+-------
+1. Drag @TITLE@.app onto Applications (in this disk image's window). Building
+   the game needs about 1 GB free.
+2. Open @TITLE@ from Applications. The first time, macOS stops it (the app
+   isn't signed by an Apple developer account, see below): open System
+   Settings, Privacy & Security, scroll down to "@TITLE@ was blocked", click
+   Open Anyway and confirm with your password. macOS asks only once.
+3. The game is compiled with Apple's own compiler, free from Apple (its
+   licence doesn't let it come with this download). If your Mac doesn't have
+   it yet, the app says so: click "Install Apple's command line tools",
+   follow Apple's installer (a few minutes), then click "Check again".
+4. Click "Choose your ROM set" and pick the folder holding the ROM files,
+   or drag the folder onto the window. It tells you straight away if files
+   are missing or damaged, or if it is another revision of APB.
+5. Wait for the first build: a few minutes. Your ROMs never leave your Mac.
+6. Click Play. The window hides while the game runs.
+
+After that, the app remembers your ROM folder, and Play starts the game
+straight away. After an update it builds the game again first, recompiling
+only what changed.
+
+The game's output is in run.log and run-errors.log, and the build's in
+build.log, all in ~/Library/Application Support/qilin/@GAME@/work (in Finder:
+Go, Go to Folder). Send them when reporting a problem.
+
+About "Open Anyway": the app is signed only by itself ("ad hoc"), not by an
+Apple developer account, so Gatekeeper can't name who made it. Check that you
+downloaded it from the project's GitHub releases page (below) before you
+open it. Nothing in it changes that check or works around it.
+
+Needs: macOS 14.5 (Sonoma) or newer, on an Apple silicon or Intel Mac, and
+Apple's command line tools from Xcode 16 or newer, which need that macOS
+(the app checks; older tools are updated with System Settings, General,
+Software Update). Graphics go through MoltenVK, Vulkan over Apple's Metal.
+
+
+Controls
+--------
+Keyboard: arrows steer and accelerate; Left Control, Left Option, Space are
+the siren/start, fire and alternate siren; 5 inserts a coin. Gamepad: left
+stick or d-pad steers, right trigger or d-pad up accelerates, A or Start
+starts/sirens, B fires, X is alternate siren, Back inserts a coin.
+
+F1 or Esc (gamepad: Back + Start together): the settings menu (Page Up /
+Page Down or LB / RB change its pages): wheels, pedals, buttons, the
+picture (presets, size, a CRT look, smoothed pixel art), full screen, the
+volume. F3: frame times. F11, Option+Return or the window's green button:
+full screen. On a Mac keyboard the F keys may need the fn key. Wheels: a
+direct-drive (free-turning) wheel, a mouse or a spinner; see the Controls
+page.
+
+Settings and high scores are kept in ~/Library/Application
+Support/qilin/@GAME@, with the ROM folder you chose, the build (work) and
+its cache of compiled files (build-cache).
+
+Checking a wheel and performance: once the game is built, start it in
+Terminal with an input recording, performance timings and a controller
+report (the first line finds the app's MoltenVK), play for a couple of
+minutes and quit normally:
+  export DYLD_FALLBACK_LIBRARY_PATH=/Applications/@TITLE@.app/Contents/Frameworks
+  cd ~/Library/Application\ Support/qilin/@GAME@
+  work/@EXE@ --record check.qir --profile performance.txt \
+      --controller-report controllers.txt
+controllers.txt includes serials and device paths; the recording includes
+the starting high scores and settings, but no ROMs.
+
+
+What's in the app
+-----------------
+Right-click @TITLE@.app, Show Package Contents:
+
+Contents/MacOS/Play @TITLE@           chooses your ROM folder, builds the
+                                  game (once) and starts it
+Contents/Resources/kit/qilin      the recompiler: turns the ROMs' programs
+                                  into C++
+Contents/Resources/kit/lib, include
+                                  the prebuilt rest of the game: the
+                                  board, video, sound, the window and
+                                  controls (SDL3), the menu (Dear ImGui)
+Contents/Resources/kit/files.txt  every file this release holds (see below)
+Contents/Frameworks/libMoltenVK.dylib
+                                  MoltenVK: Vulkan over Metal (Khronos)
+Contents/Resources/LICENSES       the licences of everything included
+
+The game itself (@EXE@), built from your ROMs, is in the work folder above,
+not in the app: the app is never changed by building.
+
+Source, changes and issues: https://github.com/Qilin1066/ApbArcade--QilinRecomp
+
+
+Updates and recovery
+--------------------
+"Check for updates" in the app asks GitHub for a newer release (it sends
+nothing about you or your Mac). If there is one, it downloads the disk
+image, copies the new app beside this one and swaps it in, then starts
+again and builds the game for the new version. If anything fails on the
+way, the old version is left as it was. The app must be somewhere you can
+write to for that (Applications is, for an administrator): run from the disk
+image itself, it can't update. You can also drag a new download's app over
+this one in Applications: it finds your ROM folder and the cache by itself.
+Your settings and high scores are never in the app, so nothing of yours is
+touched.
+
+The game is compiled for this Mac's processor; on another Mac, it is built
+again. Compiled files come from the cache when nothing they're made from has
+changed. A failed build leaves the working game as it was; the one before a
+new build is kept as work/@EXE@.previous until the new one has run and
+closed normally. "Build again from scratch" compiles everything anew.
