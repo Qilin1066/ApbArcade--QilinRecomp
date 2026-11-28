@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "gfx.hpp"
+#include "../path.hpp"
 
 namespace qilin::gfx {
 namespace {
@@ -77,7 +78,11 @@ bool write_png(const std::string& path, const Image& image) {
     chunk(out, "IHDR", ihdr);
     chunk(out, "IDAT", z);
     chunk(out, "IEND", {});
+#ifdef _WIN32
+    std::FILE* f = _wfopen(native_path(path).c_str(), L"wb");   // UTF-8 text, not the ANSI code page
+#else
     std::FILE* f = std::fopen(path.c_str(), "wb");
+#endif
     if (!f) return false;
     const bool ok = std::fwrite(out.data(), 1, out.size(), f) == out.size();
     return std::fclose(f) == 0 && ok;

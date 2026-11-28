@@ -11,6 +11,12 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+### Fixed
+- **Every path given as text is UTF-8 on Windows too**: `qilin`'s output file for its listings (`-o`) and the PNG writer of the development tools opened their files through the ANSI code page, so a name outside it (Japanese, many accents on a Western system) failed. The conversion now lives in one place, `recomp/runtime/path.hpp` (`native_path`, `utf8_path`: Toy Commander's), in place of `rom::utf8_path`/`utf8_text` and the runtime's own copies in the input recording, saving, settings, menu and `apb`; `command_line.hpp` includes it, as Toy Commander's does.
+
+### Added
+- Test `qilin_identify_unicode` (`tools/check/identify_unicode.cmake`): the real `qilin identify` on a folder and a `.zip` named with Japanese and accented letters, on every system; the folder must be found and read and the names come back intact in the JSON. It fails when `qilin` reads its arguments through the ANSI code page.
+
 ## [0.24.1] - 2026-11-28
 
 ### Fixed

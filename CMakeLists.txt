@@ -130,6 +130,11 @@ target_link_libraries(qilin_tests PRIVATE qilin_core qilin_video qilin_audio qil
 target_include_directories(qilin_tests PRIVATE recomp/runtime/app tools/common)
 qilin_tool(qilin_tests)
 add_test(NAME qilin_tests COMMAND qilin_tests)
+# The real `qilin identify` on Japanese and accented folder and file names (the UTF-16 command line on Windows).
+add_test(NAME qilin_identify_unicode COMMAND "${CMAKE_COMMAND}"
+    "-DQILIN=$<TARGET_FILE:qilin>"
+    "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/identify-unicode/$<CONFIG>"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check/identify_unicode.cmake")
 
 # ---- The players' launcher (tools/player-kit/launcher) ----
 # `Play APB`, the downloads' launcher: copied unchanged from

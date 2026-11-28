@@ -81,7 +81,7 @@ int verify(const std::vector<std::string_view>& args) {
         return usage();
     }
     unsigned matched = 0;
-    const auto checks = rom::verify(rom::utf8_path(args[0]));
+    const auto checks = rom::verify(qilin::native_path(args[0]));
     for (const auto& c : checks) {
         switch (c.status) {
         case rom::FileCheck::Status::ok:
@@ -129,7 +129,7 @@ int identify(const std::vector<std::string_view>& args) {
         id.message = problem;
     } else {
         try {
-            id = rom::identify(rom::utf8_path(*path));
+            id = rom::identify(qilin::native_path(*path));
         } catch (const std::exception& e) {
             id = rom::Identity{};
             id.message = std::format("The recompiler failed: {}.", e.what());
@@ -185,7 +185,7 @@ int insns(const std::vector<std::string_view>& args) {
         std::print(stderr, "qilin: the listing covers ROM (0x4000-0xFFFF)\n");
         return 2;
     }
-    const auto set = rom::RomSet::load(rom::utf8_path(args[0]));
+    const auto set = rom::RomSet::load(qilin::native_path(args[0]));
     if (!set) {
         std::print(stderr, "qilin: {}\n", set.error());
         return 1;
@@ -193,7 +193,7 @@ int insns(const std::vector<std::string_view>& args) {
 
     std::ofstream file;
     if (!output.empty()) {
-        file.open(output, std::ios::binary | std::ios::trunc);
+        file.open(qilin::native_path(output), std::ios::binary | std::ios::trunc);
         if (!file) {
             std::print(stderr, "qilin: can't write {}\n", output);
             return 1;
@@ -306,14 +306,14 @@ int cfg_report(const std::vector<std::string_view>& args) {
         if (args[i] == "--all") {
             all = true;
         } else if (args[i] == "--why" && i + 1 < args.size()) {
-            auto loaded = qilin::cfg::read_seeds(rom::utf8_path(args[++i]));
+            auto loaded = qilin::cfg::read_seeds(qilin::native_path(args[++i]));
             if (!loaded) {
                 std::print(stderr, "qilin: {}\n", loaded.error());
                 return 1;
             }
             why = std::move(*loaded);
         } else if (args[i] == "--seeds" && i + 1 < args.size()) {
-            auto loaded = qilin::cfg::read_seeds(rom::utf8_path(args[++i]));
+            auto loaded = qilin::cfg::read_seeds(qilin::native_path(args[++i]));
             if (!loaded) {
                 std::print(stderr, "qilin: {}\n", loaded.error());
                 return 1;
@@ -330,7 +330,7 @@ int cfg_report(const std::vector<std::string_view>& args) {
     if (args.empty()) {
         return usage();
     }
-    const auto set = rom::RomSet::load(rom::utf8_path(args[0]));
+    const auto set = rom::RomSet::load(qilin::native_path(args[0]));
     if (!set) {
         std::print(stderr, "qilin: {}\n", set.error());
         return 1;
@@ -465,7 +465,7 @@ int lift(const std::vector<std::string_view>& args) {
             if (std::from_chars(v.data(), v.data() + v.size(), options.service_interval).ec != std::errc{}) return usage();
             service_interval_given = true;
         } else if (args[i] == "--seeds" && i + 1 < args.size()) {
-            auto loaded = qilin::cfg::read_seeds(rom::utf8_path(args[++i]));
+            auto loaded = qilin::cfg::read_seeds(qilin::native_path(args[++i]));
             if (!loaded) {
                 std::print(stderr, "qilin: {}\n", loaded.error());
                 return 1;
@@ -480,7 +480,7 @@ int lift(const std::vector<std::string_view>& args) {
     if (args.empty() || out_dir.empty()) {
         return usage();
     }
-    const auto set = rom::RomSet::load(rom::utf8_path(args[0]));
+    const auto set = rom::RomSet::load(qilin::native_path(args[0]));
     if (!set) {
         std::print(stderr, "qilin: {}\n", set.error());
         return 1;
@@ -513,7 +513,7 @@ int lift(const std::vector<std::string_view>& args) {
         std::print(stderr, "qilin: {} instructions can't be lifted; nothing written\n", failures.size());
         return 3;
     }
-    const std::filesystem::path out = rom::utf8_path(out_dir);
+    const std::filesystem::path out = qilin::native_path(out_dir);
     std::error_code error;
     std::filesystem::create_directories(out, error);
     // Files already as they'd be written are left alone, so a build doesn't
@@ -532,15 +532,15 @@ int lift(const std::vector<std::string_view>& args) {
         std::ofstream stream(out / name, std::ios::binary | std::ios::trunc);
         stream << text;
         if (!stream) {
-            std::print(stderr, "qilin: can't write {}\n", rom::utf8_text(out / name));
+            std::print(stderr, "qilin: can't write {}\n", qilin::utf8_path(out / name));
             return 1;
         }
         ++changed;
     }
     const std::string prefix = sound ? "sound" : "lifted";
     for (const auto& entry : std::filesystem::directory_iterator(out, error)) {
-        const std::string name = rom::utf8_text(entry.path().filename());
-        const std::string ext = rom::utf8_text(entry.path().extension());
+        const std::string name = qilin::utf8_path(entry.path().filename());
+        const std::string ext = qilin::utf8_path(entry.path().extension());
         if (entry.is_regular_file() && name.starts_with(prefix) && (ext == ".cpp" || ext == ".hpp") && !written.contains(name)) {
             std::filesystem::remove(entry.path(), error);
             ++removed;
@@ -548,7 +548,7 @@ int lift(const std::vector<std::string_view>& args) {
     }
     std::print("Lifted {} {} functions ({} instructions with shared code counted per function) into {} files, {} KiB, in {}: "
                "{} written, {} unchanged{}.\n",
-               functions, sound ? "6502" : "T-11", instructions, files.size(), bytes / 1024, rom::utf8_text(out), changed,
+               functions, sound ? "6502" : "T-11", instructions, files.size(), bytes / 1024, qilin::utf8_path(out), changed,
                files.size() - changed, removed ? std::format(", {} left over from an earlier lift removed", removed) : std::string());
     return 0;
 }
@@ -564,7 +564,7 @@ int coverage_report(const std::vector<std::string_view>& args) {
         if (args[i] == "--list") {
             options.list = true;
         } else if (args[i] == "--seeds" && i + 1 < args.size()) {
-            auto loaded = qilin::cfg::read_seeds(rom::utf8_path(args[++i]));
+            auto loaded = qilin::cfg::read_seeds(qilin::native_path(args[++i]));
             if (!loaded) {
                 std::print(stderr, "qilin: {}\n", loaded.error());
                 return 1;
@@ -578,7 +578,7 @@ int coverage_report(const std::vector<std::string_view>& args) {
             return usage();
         }
     }
-    const auto set = rom::RomSet::load(rom::utf8_path(args[0]));
+    const auto set = rom::RomSet::load(qilin::native_path(args[0]));
     if (!set) {
         std::print(stderr, "qilin: {}\n", set.error());
         return 1;

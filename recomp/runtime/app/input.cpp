@@ -1,4 +1,5 @@
 #include "input.hpp"
+#include "path.hpp"
 #include "persistence.hpp"
 #include "profile.hpp"
 
@@ -143,7 +144,7 @@ int matching_preset(const DisplaySettings& d) {
 }
 
 bool Settings::load(const std::string& path) {
-    std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())));
+    std::ifstream in(qilin::native_path(path));
     if (!in) return false;
     std::map<std::string, std::string, std::less<>> kv;
     bool first_line = true;

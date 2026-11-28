@@ -1,4 +1,5 @@
 #include "persistence.hpp"
+#include "path.hpp"
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -23,9 +24,8 @@
 
 namespace qilin::persist {
 namespace {
-std::filesystem::path native(const std::string& path) { return std::filesystem::path(std::u8string(path.begin(), path.end())); }
 bool read_eeprom(const std::string& path, Eeprom::Bytes& bytes) {
-    std::ifstream in(native(path), std::ios::binary | std::ios::ate);
+    std::ifstream in(native_path(path), std::ios::binary | std::ios::ate);
     if (!in || in.tellg() != static_cast<std::streamoff>(bytes.size())) return false;
     in.seekg(0);
     Eeprom::Bytes candidate;
@@ -39,7 +39,7 @@ bool adopt_folder(const std::string& from, const std::string& to, int* moved, st
     namespace fs = std::filesystem;
     if (moved) *moved = 0;
     if (error) error->clear();
-    const fs::path old = native(from), current = native(to);
+    const fs::path old = native_path(from), current = native_path(to);
     std::error_code ec;
     const bool old_directory = fs::is_directory(old, ec);
     if (ec && ec != std::errc::no_such_file_or_directory) {
@@ -104,11 +104,11 @@ bool replace(const std::string& path, std::span<const std::uint8_t> bytes, std::
 #else
     const int pid = static_cast<int>(getpid());
 #endif
-    const auto destination = native(path);
+    const auto destination = native_path(path);
     std::filesystem::path temporary;
     std::FILE* file = nullptr;
     for (int attempt = 0; attempt < 32 && !file; ++attempt) {
-        temporary = native(path + ".tmp." + std::to_string(pid) + "." + std::to_string(serial.fetch_add(1)));
+        temporary = native_path(path + ".tmp." + std::to_string(pid) + "." + std::to_string(serial.fetch_add(1)));
 #ifdef _WIN32
         file = _wfopen(temporary.c_str(), L"wbx");
 #else
@@ -156,10 +156,10 @@ Eeprom::Loaded Eeprom::load(Bytes& bytes) {
         if (read_eeprom(path_ + ".bak", bytes)) { result = Loaded::backup; repair_ = true; }
         else {
             std::error_code ec;
-            const bool primary = std::filesystem::exists(native(path_), ec);
+            const bool primary = std::filesystem::exists(native_path(path_), ec);
             const bool primary_error = static_cast<bool>(ec);
             ec.clear();
-            const bool backup = std::filesystem::exists(native(path_ + ".bak"), ec);
+            const bool backup = std::filesystem::exists(native_path(path_ + ".bak"), ec);
             const bool exists = primary || backup || primary_error || static_cast<bool>(ec);
             writable_ = !exists;
             if (exists) error_ = "EEPROM files are incomplete or unreadable; saves disabled to preserve them. Repair or move them aside, then restart";

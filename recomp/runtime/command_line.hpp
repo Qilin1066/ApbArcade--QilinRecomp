@@ -1,6 +1,7 @@
 #pragma once
 // Windows' narrow main() arguments use the active code page. All runtime
 // paths are UTF-8, so read the original UTF-16 command line there instead.
+#include "path.hpp"
 #include <stdexcept>
 #include <string>
 #include <utility>
