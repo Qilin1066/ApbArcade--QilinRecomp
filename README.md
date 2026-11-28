@@ -42,7 +42,7 @@ Each release on the [Releases page](https://github.com/Qilin1066/ApbArcade--Qili
 
 `Play APB` asks for your ROM folder: the 36 files of the rev 7 set (MAME's `apb`), unzipped into a folder of their own (MAME's `apb.zip` must be unzipped first). It tells you at once if a file is missing or damaged, or if the folder holds another revision or another game (`qilin identify`). The first start builds the game from your ROMs in a few minutes, with the compiler the download brings (LLVM-MinGW on Windows, zig on Linux; on a Mac, Apple's own, which the app offers to install). Then **Play** starts it, and later starts it straight away. The launcher also checks for updates, keeps a desktop shortcut or menu entry, and rebuilds only what changed after an update.
 
-Each download holds everything prebuilt except the game's own code, which is made on your computer from your own ROMs and never distributed; that is why there is no ready-made `apb`. Each README.txt says what the download holds. The launcher (`tools/player-kit/launcher/`) is the one the QilinRecomp projects share, copied unchanged from ToyCommander--QilinRecomp; this project gives it `kit/game.txt` (written by `tools/player-kit/games.sh`) and `qilin identify`.
+Each download holds everything prebuilt except the game's own code, which is made on your computer from your own ROMs and never distributed; that is why there is no ready-made `apb`. Each README.txt says what the download holds. The launcher (`tools/player-kit/launcher/`) is the one the QilinRecomp projects share, copied unchanged from ToyCommander--QilinRecomp (its `LAUNCHER_VERSION` says which); this project gives it `kit/game.txt` (written by `tools/player-kit/games.sh`) and `qilin identify`.
 
 ### From the source on Windows
 

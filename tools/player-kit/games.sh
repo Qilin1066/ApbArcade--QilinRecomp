@@ -18,6 +18,29 @@ fill() {
         -e "s|@BUILD_TITLE@|$BUILD_TITLE|g" -e "s|@RELEASE@|$RELEASE|g" -e "s|@STUDIO@|$STUDIO|g" "$1"
 }
 
+# What the Windows downloads before the launcher (up to 0.22.0: Play APB.bat
+# and kit/play.ps1) left that the launcher doesn't remove by itself (it
+# knows the .bat, the top-level APB.exe and Ninja's work/build.ninja and
+# logs): play.ps1, Ninja and kit.ninja in kit/ (files.txt would catch those
+# too), its lock, the sound CPU's lift in work/gen-sound, and the objects
+# and dependency files under work/obj/gen and work/obj/gen-sound (the main
+# lift has been 13 files and its table; up to 24 are named). Not
+# `old_input_file`: play.ps1 kept the ROM folder only as apb.ini's rom_dir,
+# the game's own settings file in the data folder, which the key can't
+# name (it takes a file's first line, inside the download, and deletes it).
+old_files() {
+    list="kit/play.ps1;kit/ninja.exe;kit/kit.ninja;work/build.lock"
+    for f in sound_0.cpp sound_1.cpp sound_2.cpp sound_3.cpp sound_4.cpp sound_5.cpp sound_dispatch.cpp sound_lifted.hpp; do
+        list="$list;work/gen-sound/$f"
+    done
+    for n in 0 1 2 3 4 5; do list="$list;work/obj/gen-sound/sound_$n.o;work/obj/gen-sound/sound_$n.o.d"; done
+    list="$list;work/obj/gen-sound/sound_dispatch.o;work/obj/gen-sound/sound_dispatch.o.d"
+    n=0
+    while [ "$n" -lt 24 ]; do list="$list;work/obj/gen/lifted_$n.o;work/obj/gen/lifted_$n.o.d"; n=$((n + 1)); done
+    list="$list;work/obj/gen/lifted_dispatch.o;work/obj/gen/lifted_dispatch.o.d"
+    printf '%s' "$list"
+}
+
 # Writes kit/game.txt, one name=value a line:
 #   write_game_txt <file> <exe> <compiler> [<compiler_args>]
 # with Windows line ends where GAME_TXT_CRLF=1. Every key is written, the
@@ -39,6 +62,7 @@ write_game_txt() {
         printf 'step.1={qilin} lift {input} --out {gen}\n'
         printf 'step.2={qilin} lift {input} --cpu sound --out {gen}/sound\n'
         printf 'compile_memory_mb=1200\nbuild_space_mb=1024\ncache_mb=1024\nrun_args={input}\n'
+        printf 'old_files=%s\n' "$(old_files)"
         printf 'compiler=%s\n' "$3"
         if [ -n "${4:-}" ]; then printf 'compiler_args=%s\n' "$4"; fi
     } | if [ "${GAME_TXT_CRLF:-0}" = 1 ]; then sed 's/$/\r/'; else cat; fi > "$1"
