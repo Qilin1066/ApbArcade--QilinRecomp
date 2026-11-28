@@ -1,4 +1,5 @@
 #include "input_movie.hpp"
+#include "path.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -46,7 +47,6 @@ bool valid(std::span<const std::uint8_t> bytes) {
     std::size_t at = bytes.size() - 4;
     return crc(bytes.first(at)) == get(bytes, at, 4);
 }
-std::filesystem::path native(const std::string& path) { return std::filesystem::path(std::u8string(path.begin(), path.end())); }
 }
 Writer::~Writer() { if (file_) std::fclose(file_); }
 bool Writer::failed(const std::string& message) {
@@ -64,9 +64,9 @@ bool Writer::flush() {
 bool Writer::open(const std::string& path, const std::array<std::uint8_t, 512>& eeprom, const sys2::Inputs& initial) {
     if (file_) return false;
 #ifdef _WIN32
-    file_ = _wfopen(native(path).c_str(), L"wbx");
+    file_ = _wfopen(native_path(path).c_str(), L"wbx");
 #else
-    file_ = std::fopen(native(path).c_str(), "wbx");
+    file_ = std::fopen(native_path(path).c_str(), "wbx");
 #endif
     if (!file_) { error_ = "Cannot create input recording: " + std::string(std::strerror(errno)); return false; }
     error_.clear(); next_ = 1;
@@ -99,7 +99,7 @@ bool Writer::finish(std::uint64_t duration) {
 bool Reader::load(const std::string& path) {
     inputs_.clear(); error_.clear(); duration_ = 0; interrupted_ = false;
     auto fail = [&](const std::string& message) { error_ = message; inputs_.clear(); return false; };
-    std::ifstream input(native(path), std::ios::binary);
+    std::ifstream input(native_path(path), std::ios::binary);
     std::vector<std::uint8_t> header(header_size);
     if (!input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size())) ||
         std::memcmp(header.data(), "APBMOV1\0", 8) || !valid(header)) return fail("Invalid or truncated input recording header");

@@ -1,4 +1,5 @@
 #include "menu.hpp"
+#include "path.hpp"
 #include "persistence.hpp"
 #include <filesystem>
 #include "text.hpp"
@@ -443,7 +444,7 @@ void Menu::controls_tab() {
                           SDL_GetNumJoystickButtons(d.joystick), SDL_IsJoystickHaptic(d.joystick) ? "; force feedback" : "");
     }
     if (ImGui::Button("Save controller diagnostics")) {
-        auto path = std::filesystem::path(std::u8string(path_.begin(), path_.end())).parent_path() / "controllers.txt";
+        auto path = qilin::native_path(path_).parent_path() / "controllers.txt";
         const auto utf8 = path.u8string();
         const std::string output(utf8.begin(), utf8.end());
         std::string error;
@@ -861,7 +862,7 @@ void Menu::game_tab() {
     ImGui::TextWrapped("APB QilinRecomp %s: a static recompilation, the game's own code compiled for this computer.", QILIN_APP_VERSION);
     ImGui::TextWrapped("APB: Atari Games, 1987. Graphics: Vulkan. Window, sound and input: SDL3 (zlib). Menu: Dear ImGui (MIT).");
     ImGui::TextWrapped("Settings file: %s", path_.c_str());
-    const auto folder = std::filesystem::path(std::u8string(path_.begin(), path_.end())).parent_path().u8string();
+    const auto folder = qilin::native_path(path_).parent_path().u8string();
     ImGui::TextWrapped("Saves (high scores and audits): %s", std::string(folder.begin(), folder.end()).c_str());
 }
 

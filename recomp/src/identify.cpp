@@ -118,7 +118,7 @@ std::optional<std::vector<std::uint8_t>> read_sized(const fs::path& path, std::u
 }
 
 bool matches(const fs::path& dir, const Known& k) {
-    const auto bytes = read_sized(dir / utf8_path(k.name), k.size);
+    const auto bytes = read_sized(dir / native_path(k.name), k.size);
     return bytes && sha1(*bytes) == k.sha1;
 }
 
@@ -163,15 +163,15 @@ std::span<const OtherSet> other_sets() noexcept {
 }
 
 Identity identify(const fs::path& input, std::span<const File> files, std::span<const OtherSet> other) {
-    const std::string shown = utf8_text(input);
+    const std::string shown = utf8_path(input);
     std::error_code ec;
     const fs::file_status status = fs::status(input, ec);
     if (ec || !fs::exists(status)) return answer(2, std::format("Can't find {}.", shown));
     if (!fs::is_directory(status)) {
-        if (lower(utf8_text(input.extension())) == ".zip")
+        if (lower(utf8_path(input.extension())) == ".zip")
             return answer(2, std::format("{} is a .zip file. Unzip it into a folder of its own, then choose that folder. {}",
-                                         utf8_text(input.filename()), kNeeded));
-        return answer(2, std::format("{} is a file, not a folder. {}", utf8_text(input.filename()), kNeeded));
+                                         utf8_path(input.filename()), kNeeded));
+        return answer(2, std::format("{} is a file, not a folder. {}", utf8_path(input.filename()), kNeeded));
     }
 
     // The supported set, file by file.
@@ -212,7 +212,7 @@ Identity identify(const fs::path& input, std::span<const File> files, std::span<
         bool zip = false, apb_zip = false, any = false, apb_folder = false;
         for (fs::directory_iterator it(input, ec), end; !ec && it != end; it.increment(ec)) {
             std::error_code type;
-            const std::string name = lower(utf8_text(it->path().filename()));
+            const std::string name = lower(utf8_path(it->path().filename()));
             if (it->is_directory(type)) {
                 apb_folder = apb_folder || name == rev7_set;
                 continue;

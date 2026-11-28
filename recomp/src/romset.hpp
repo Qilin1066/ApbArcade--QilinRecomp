@@ -15,17 +15,9 @@
 #include <string_view>
 #include <vector>
 
-namespace qilin::rom {
+#include "path.hpp"   // native_path, utf8_path: paths as UTF-8 text on every system
 
-// Paths given as UTF-8 text (the command line, apb.ini) and back, the same on
-// every system: a narrow std::filesystem::path on Windows means the ANSI code page.
-[[nodiscard]] inline std::filesystem::path utf8_path(std::string_view text) {
-    return std::filesystem::path(std::u8string(text.begin(), text.end()));
-}
-[[nodiscard]] inline std::string utf8_text(const std::filesystem::path& path) {
-    const auto text = path.u8string();
-    return std::string(text.begin(), text.end());
-}
+namespace qilin::rom {
 
 enum class Region : std::uint8_t { main_cpu, sound_cpu, tiles, sprites, chars };
 inline constexpr std::size_t region_count = 5;

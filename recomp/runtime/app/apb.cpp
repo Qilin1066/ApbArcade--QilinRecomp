@@ -207,7 +207,7 @@ const std::string& data_folder() {
         if (base.empty()) return sdl_folder();
         const std::string current = base + sep + "qilin" + sep + "apb";
         std::error_code ec;
-        std::filesystem::create_directories(std::filesystem::path(std::u8string(current.begin(), current.end())), ec);
+        std::filesystem::create_directories(qilin::native_path(current), ec);
         if (ec) {
             std::fprintf(stderr, "apb: can't create %s (%s)\n", current.c_str(), ec.message().c_str());
             return sdl_folder();
@@ -261,8 +261,7 @@ int main(int argc, char** argv) {
     // The ROMs: the folder given, else the one used last time, else ask (and
     // ask again while the folder chosen doesn't hold a verified set).
     std::string rom_dir = options.rom_dir ? options.rom_dir : saved.rom_dir;
-    auto rom_path = [](const std::string& text) { return std::filesystem::path(std::u8string(text.begin(), text.end())); };
-    auto set = rom::RomSet::load(rom_path(rom_dir.empty() ? "." : rom_dir));
+    auto set = rom::RomSet::load(qilin::native_path(rom_dir.empty() ? "." : rom_dir));
     if (!set && options.rom_dir) fail(set.error());   // given on the command line: say what's wrong with it
     std::string why;
     if (!set) why = rom_dir.empty() ? "Where are your APB ROMs?" : "The ROMs in " + rom_dir + " aren't a complete rev 7 set: " + short_error(set.error());
@@ -273,7 +272,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         rom_dir = *folder;
-        set = rom::RomSet::load(rom_path(rom_dir));
+        set = rom::RomSet::load(qilin::native_path(rom_dir));
         if (!set) why = "The ROMs in " + rom_dir + " aren't a complete rev 7 set: " + short_error(set.error());
     }
     if (rom_dir != saved.rom_dir) {
