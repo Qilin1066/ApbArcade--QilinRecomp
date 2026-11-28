@@ -11,6 +11,8 @@ Each release is a git tag (`vX.Y.Z`). The version is set once, in `project(... V
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-28
+
 ### Added
 - **Downloads for Linux and macOS, and a launcher for all three.** Each release gets `-windows-x64.zip`, `-linux-x86_64.tar.gz`, `-linux-arm64.tar.gz` (a Raspberry Pi 4 or 5 with the 64-bit Raspberry Pi OS) and a universal `-macos.dmg` (Apple silicon and Intel, with MoltenVK). In each, **Play APB** (`Play APB.exe`, `APB.app`) asks for the ROM folder (or takes it dropped onto its window), checks it, builds the game from it with the compiler the download brings (LLVM-MinGW on Windows, zig on Linux, Apple's clang on a Mac, whose installer it offers), and starts it; it remembers the folder, checks for updates, adds a desktop shortcut or menu entry and rebuilds only what changed. The launcher is the QilinRecomp projects' shared one (`tools/player-kit/launcher/`, copied unchanged from ToyCommander--QilinRecomp at launcher version 2); `tools/player-kit/games.sh` writes its `kit/game.txt`: a folder input, both CPUs' lifts (the sound CPU's into `gen/sound`), 1.2 GB per compiler, the ROM folder as `apb`'s argument.
 - `qilin identify <rom-dir> --json`: what a ROM folder is, as the launcher's contract has it (one JSON object; exit 0 for the rev 7 set, 3 for another set, 2 for a folder that can't be used), in words for the player: the right set; which files are missing or damaged; MAME's other APB sets (revisions 1 to 6, the German and French versions) by the program ROMs only each has; another game's ROMs; an empty folder, a folder with `apb.zip` still zipped, or a file. Unit tests on a made-up set, and the launcher's own build test on the real one.
